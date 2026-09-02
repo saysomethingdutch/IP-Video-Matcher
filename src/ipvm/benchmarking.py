@@ -63,6 +63,61 @@ def _make_clip(source: Path, target: Path, start: float, duration: float, vf: st
     _ffmpeg(args)
 
 
+def _make_platform_transcode_clip(
+    source: Path,
+    target: Path,
+    start: float,
+    duration: float,
+    codec: str,
+    scale: str,
+    bitrate: str,
+    maxrate: str,
+    bufsize: str,
+    codec_params_flag: str | None = None,
+    codec_params: str | None = None,
+) -> None:
+    """Create a platform-like transcode proxy without cropping or changing speed.
+
+    `codec_params` pins the encoder to deterministic single-threaded settings so a
+    benchmark re-run reproduces identical bytes; multi-threaded x264/x265 is not
+    bit-deterministic.
+    """
+    args = ["-ss", f"{start:.3f}", "-i", str(source)]
+    filters = [
+        f"trim=duration={duration:.3f}",
+        "setpts=PTS-STARTPTS",
+        f"scale={scale}:flags=area",
+    ]
+    args += ["-vf", ",".join(filters)]
+    args += [
+        "-an",
+        "-threads", "1",
+        "-c:v", codec,
+        "-preset", "veryfast",
+        "-b:v", bitrate,
+        "-maxrate", maxrate,
+        "-bufsize", bufsize,
+        "-pix_fmt", "yuv420p",
+    ]
+    if codec_params_flag and codec_params:
+        args += [codec_params_flag, codec_params]
+    args += [str(target)]
+    _ffmpeg(args)
+
+
+def _encoder_available(codec: str) -> bool:
+    try:
+        result = subprocess.run(
+            ["ffmpeg", "-hide_banner", "-encoders"],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+    except (FileNotFoundError, subprocess.CalledProcessError):
+        return False
+    return codec in result.stdout
+
+
 def _concat(clips: list[Path], target: Path, crf: int = 18) -> None:
     args: list[str] = []
     for clip in clips:

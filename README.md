@@ -7,6 +7,8 @@ Phase 1 Gate                         FAIL
 Phase 1.5                            CONDITIONAL PASS
 Phase 1.5.1 Safety Closure           completed
 Phase 2A-0 Retrieval Characterization harness completed
+Phase 2A-0.1 Platform-like Transcode Characterization completed
+Phase 2A-0.2 Statistical / Reporting Hardening completed
 Temporal Alignment v2                not started
 ```
 
@@ -63,14 +65,16 @@ python -m ipvm retrieval-benchmark
 python -m ipvm doctor
 ```
 
-`retrieval-benchmark` 要求现有原片索引状态为 `COMPLETE`，按全片时间位置分层，并在每集内随机打散、均衡覆盖 10 个 source-grid phase 桶，以避免 phase 固定绑定 source 时间位置。Direct query 在 seek 后重置 PTS，再按本地 2 FPS 网格取帧；ordinary re-encode 使用相同区间。两者均测量对 2 FPS source index 的 recall@1/8/32/128：
+`retrieval-benchmark` 要求现有原片索引状态为 `COMPLETE`，按全片时间位置分层，并在每集内随机打散、均衡覆盖 10 个 source-grid phase 桶，以避免 phase 固定绑定 source 时间位置。Direct query 在 seek 后重置 PTS，再按本地 2 FPS 网格取帧；platform-like transcode proxies 使用相同区间，只改变 compression / resolution / codec。所有 profile 均测量对 2 FPS source index 的 strict `recall@1/8/32/128` 与 `alignment_usable_recall@1/8/32/128`（±1 source grid step）：
 
 ```bash
 python -m ipvm retrieval-benchmark \
   --samples-per-episode 3 \
   --query-duration 6 \
   --mode direct \
-  --mode reencode
+  --mode p1 \
+  --mode p2 \
+  --mode p3
 ```
 
 默认输出：
@@ -81,7 +85,7 @@ output/retrieval/retrieval_characterization_aggregate.json
 output/retrieval/retrieval_characterization.md
 ```
 
-报告使用 `E001` 形式的匿名 episode alias，不写原文件名、路径、SHA-256 或案件标识。完整 JSON 的逐帧观测只保存在 ignored output；另一个 aggregate JSON、CLI 和 Markdown 输出匿名聚合，包括 episode、query mode、source 时间五分位、query/source sub-frame phase 与抽样区间。Harness 只输出测量，不选择后续路线。
+报告使用 `E001` 形式的匿名 episode alias，不写原文件名、路径、SHA-256 或案件标识。完整 JSON 的逐帧观测只保存在 ignored output；另一个 aggregate JSON、CLI 和 Markdown 输出匿名聚合。每个 profile 包含 interval count、distinct content position count、effective sample size、ICC、interval-level cluster bootstrap 95% CI，以及 `ABOVE / STRADDLES / BELOW` 三态 threshold band。Harness 只输出测量，不选择后续路线。
 
 ## 安全语义
 
@@ -118,9 +122,15 @@ Phase 1 gate subset 仍为 FAIL：source-aware recall 71.4%、precision 78.1%，
 
 ## Phase 2A-0 状态
 
-Retrieval harness 已可运行并带 JSON schema、匿名 aggregate template 与测试。当前仓库 `input/originals/` 没有真实原片，因此没有执行真实素材测量，也没有用 synthetic 数字代替真实 recall 结论。
+Retrieval harness 已可运行并带 JSON schema、匿名 aggregate template 与测试。Phase 2A-0.1 新增 `p1` / `p2` / `p3` platform-like transcode proxies；Phase 2A-0.2 新增 `alignment_usable_recall@k`、interval-level cluster bootstrap CI、ICC / effective sample size，以及 `ABOVE / STRADDLES / BELOW` 三态 threshold band。
 
-Architecture Owner 收到真实 recall@k 后按既定决策树裁定。当前代码不实现或预选 Temporal Alignment v2、扩大 top-k/VectorIndex、提高 source FPS 或 DINOv2 中的任何路线。
+已提交的匿名 aggregate 位于 `benchmark/retrieval/results/`，只含 `E001` / `E002`、`E001-I017` 别名、归一化 source position、benchmark config、aggregate statistics、CI 与 profile 名；不含真实文件名、路径、SHA-256 或案件标识。真实逐帧观测仍在 ignored output 中。
+
+Phase 2A-0.3 Safety & Semantics Closure：readiness gate 指标定为 `alignment_usable_recall@8`（ADR-0005），strict recall 保留为 localization diagnostic；裸 `threshold_band` 移除，改为 `strict_threshold_band` 与 `alignment_usable_threshold_band` 两个具名四态 band（`ABOVE / STRADDLES / BELOW / UNKNOWN`）；ICC / design effect / effective sample size / CI 按 strict 与 alignment_usable 分别建模；`source_grid_period_seconds` 由 `1.0 / coarse_fps` 推导；platform transcode 使用确定性单线程编码参数。
+
+平台档结果的正确解释：**compression / resolution / codec 的扰动低于当前低频 DCT descriptor 的主要灵敏度范围**（实测 `1 - cos ≈ 6e-6 ~ 1.3e-5`，比 median score margin `3.7e-3` 低 2–3 个数量级）。不得泛化为 crop / mirror / subtitle / picture-in-picture / 摄像头翻拍 的 robustness 结论。
+
+Architecture Owner 收到 real recall@k 与平台档结果后按既定决策树裁定。当前代码不实现或预选 Temporal Alignment v2、扩大 top-k/VectorIndex、提高 source FPS 或 DINOv2 中的任何路线。
 
 ## 测试
 
@@ -128,7 +138,7 @@ Architecture Owner 收到真实 recall@k 后按既定决策树裁定。当前代
 pytest
 ```
 
-当前结果：`26 passed`。覆盖 one-to-one evaluator、重复 prediction FP、duration/slope 自洽、tier metrics、candidate GREEN 降级、CRF20/CRF26 跨集歧义、alternative DB 持久化、局部 conflict graph、短跨度 speed ratio、cache/schema 路径、原子迁移故障回滚、retrieval rank/recall 与匿名 summary，以及 FFmpeg 端到端匹配。
+当前结果：`39 passed`。在原有 coverage 之上新增 alignment-usable 边界、cluster bootstrap determinism、threshold 三态、profile isolation、interval count、真实 decode off-grid 与 anonymized aggregate 敏感性测试。
 
 ## Schema migration
 
@@ -169,6 +179,6 @@ IP-Video-Matcher/
 - Phase 1 Gate 仍未通过；off-grid retrieval 和当前 constant-offset alignment 都有测量到的失败。
 - Candidate GREEN 在完整 diagnostic 中仍可能错误，所以自动放行保持禁用。
 - Temporal Alignment v2 只有 ADR 草案，未实现。
-- 没有真实 golden set、真实 retrieval recall@k 或真实规模性能数据。
+- 没有真实 golden set 或真实规模性能数据；real retrieval 目前只有两集匿名 aggregate（`episode_n=2`，不能估计集间方差）。
 - 没有跨集重复区间的索引期预计算；当前只按运行期竞争候选和 margin 降级。
 - DINOv2、FAISS、4/8 FPS source index、8 FPS external verification、镜像、crop、audio、Gemma、合理使用、网页抓取和 Excel 都未实现。

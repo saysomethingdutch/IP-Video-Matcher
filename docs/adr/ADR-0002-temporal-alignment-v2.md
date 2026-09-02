@@ -41,6 +41,12 @@ a ∈ [0.75, 1.50]
 - 多个合法映射的 contradiction/ambiguity 处理；
 - 与 8 FPS 精对齐的接口边界。
 
+Phase 2A-0 实测要求最终设计显式容忍 `±1` 个 source grid step（当前 2 FPS → 0.5 秒）的 retrieval 偏差；这不是可选优化，而是 89% 的 strict miss 属于"相邻格可用"这一实测结果所对应的必要条件。
+
+## 时间戳语义
+
+当前 index/query 使用 `nominal_grid_time = frame_index / fps`，与真实 decoded media PTS 存在约 0.23 秒的系统性提前量（两侧同源、匹配时抵消）。生产 matcher 在本阶段继续使用 `nominal_grid_time`，但在 Phase 2A 完成前，最终 `source_start/source_end` 必须能够映射或精修到真实 `media_pts`，才能进入法律交付物和未来 Excel。
+
 ## 影响
 
 该变更会替换 Temporal Alignment 的候选提案逻辑，并改变 speed ratio 的可检测范围。它不应与视觉 backend 切换同时实施，否则无法归因指标变化。

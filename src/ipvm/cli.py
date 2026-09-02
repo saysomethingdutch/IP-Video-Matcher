@@ -207,7 +207,8 @@ def benchmark(
 @click.option("--query-duration", default=6.0, show_default=True, type=click.FloatRange(min=1.0))
 @click.option(
     "--mode", "modes", multiple=True,
-    type=click.Choice(["direct", "reencode"]), default=("direct", "reencode"),
+    type=click.Choice(["direct", "reencode", "p1", "p2", "p3"]),
+    default=("direct", "p1", "p2", "p3"),
     show_default=True,
 )
 @click.option("--seed", default=20260902, show_default=True, type=int)
