@@ -1,0 +1,28 @@
+project:
+  local_only: true
+
+matching:
+  coarse_fps: 2.0
+  frame_width: 160
+  frame_height: 90
+  top_k: 8
+  minimum_segment_seconds: 3.0
+  minimum_visual_similarity: 0.82
+  offset_bin_seconds: 0.5
+  maximum_frame_gap_seconds: 1.1
+  algorithm_version: "phase1-dct-v1"
+  ambiguity_score_ratio: 0.99999
+  minimum_uniqueness_margin: 0.05
+  maximum_temporal_residual_seconds: 0.55
+  minimum_coverage: 0.90
+  minimum_temporal_consistency: 0.90
+  audit_top_candidates: 5
+
+paths:
+  originals: "input/originals"
+  originals_metadata: "input/originals/metadata.json"
+  golden: "input/golden"
+  cases: "input/cases"
+  workspace: "workspace"
+  output: "output"
+  database: "workspace/db/ipvm.db"

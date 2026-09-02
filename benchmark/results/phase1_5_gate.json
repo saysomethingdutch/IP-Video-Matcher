@@ -1,0 +1,1982 @@
+{
+  "schema_version": "0.2",
+  "scope": "phase1_5_gate",
+  "created_at": "2026-09-02T12:08:32.435990+00:00",
+  "environment": {
+    "platform": "macOS-26.5.2-arm64-arm-64bit-Mach-O",
+    "python": "3.13.7",
+    "synthetic_only": true
+  },
+  "metric_definitions": {
+    "episode_recall": "GT segments with an accused-overlapping prediction from the correct episode / GT segments",
+    "source_aware_recall_at_1s": "episode recall plus both source endpoints within 1 second",
+    "segment_precision_at_1s": "predicted segments satisfying the source-aware criterion / predicted segments"
+  },
+  "aggregate": {
+    "ground_truth_segments": 23,
+    "predicted_segments": 20,
+    "episode_recall": 0.8695652173913043,
+    "episode_correctness": 1.0,
+    "source_aware_recall_at_1s": 0.782608695652174,
+    "segment_precision_at_1s": 0.9,
+    "false_positive_segments": 2,
+    "false_positive_seconds": 6.0,
+    "accused_boundary_mae_seconds": 0.15024999999999994,
+    "source_boundary_mae_seconds": 0.2745999999999999,
+    "speed_ratio_mae": 0.0,
+    "boundary_evaluated_segments": 20,
+    "boundary_missed_segments": 3,
+    "unmatched_ground_truth_count": 5,
+    "ambiguous_predictions": 2,
+    "ambiguity_cases_correct": 1,
+    "ambiguity_cases_total": 1,
+    "incomplete_index_failures": 1
+  },
+  "subsets": {
+    "a_to_j": {
+      "ground_truth_segments": 3,
+      "predicted_segments": 3,
+      "episode_recall": 1.0,
+      "episode_correctness": 1.0,
+      "source_aware_recall_at_1s": 0.3333333333333333,
+      "segment_precision_at_1s": 0.3333333333333333,
+      "false_positive_segments": 2,
+      "false_positive_seconds": 6.0,
+      "accused_boundary_mae_seconds": 0.6234999999999999,
+      "source_boundary_mae_seconds": 1.1534999999999997,
+      "speed_ratio_mae": 0.0,
+      "boundary_evaluated_segments": 3,
+      "boundary_missed_segments": 0,
+      "unmatched_ground_truth_count": 2,
+      "ambiguous_predictions": 0,
+      "ambiguity_cases_correct": 0,
+      "ambiguity_cases_total": 0,
+      "incomplete_index_failures": 0
+    },
+    "off_grid_phase1": {
+      "ground_truth_segments": 23,
+      "predicted_segments": 20,
+      "episode_recall": 0.8695652173913043,
+      "episode_correctness": 1.0,
+      "source_aware_recall_at_1s": 0.782608695652174,
+      "segment_precision_at_1s": 0.9,
+      "false_positive_segments": 2,
+      "false_positive_seconds": 6.0,
+      "accused_boundary_mae_seconds": 0.15024999999999994,
+      "source_boundary_mae_seconds": 0.2745999999999999,
+      "speed_ratio_mae": 0.0,
+      "boundary_evaluated_segments": 20,
+      "boundary_missed_segments": 3,
+      "unmatched_ground_truth_count": 5,
+      "ambiguous_predictions": 1,
+      "ambiguity_cases_correct": 0,
+      "ambiguity_cases_total": 0,
+      "incomplete_index_failures": 0
+    },
+    "safety_status_cases": {
+      "CASE_K": {
+        "expected_status": "MATCH_NOT_FOUND",
+        "actual_status": "MATCH_NOT_FOUND",
+        "status_correct": true
+      },
+      "CASE_L": {
+        "expected_status": "AMBIGUOUS",
+        "actual_status": "AMBIGUOUS",
+        "status_correct": true
+      },
+      "CASE_M": {
+        "expected_status": "INCOMPLETE_INDEX",
+        "actual_status": "INCOMPLETE_INDEX",
+        "status_correct": true
+      }
+    }
+  },
+  "gate": {
+    "passed": false,
+    "checks": {
+      "source_aware_recall_at_1s_gte_0_95": false,
+      "segment_precision_at_1s_gte_0_98": false,
+      "source_boundary_mae_lte_1s": false,
+      "pure_negative_false_positive_seconds_zero": true,
+      "duplicate_cross_episode_is_ambiguous": true,
+      "incomplete_index_refused": true
+    }
+  },
+  "performance": {
+    "index_scope": {
+      "asset_count": 5,
+      "media_duration_seconds": 82.5,
+      "elapsed_seconds": 0.426635832991451,
+      "cold_assets": 5,
+      "warm_cache_assets": 0,
+      "per_asset": [
+        {
+          "file_path": "EP01.mp4",
+          "episode": "EP01",
+          "status": "COMPLETE",
+          "frame_count": 23,
+          "expected_frame_count": 23,
+          "timestamp_coverage": 11.5,
+          "duration": 11.5,
+          "elapsed_seconds": 0.0760640410007909,
+          "cached": false,
+          "reason": null
+        },
+        {
+          "file_path": "EP02.mp4",
+          "episode": "EP02",
+          "status": "COMPLETE",
+          "frame_count": 23,
+          "expected_frame_count": 23,
+          "timestamp_coverage": 11.5,
+          "duration": 11.5,
+          "elapsed_seconds": 0.06039450000389479,
+          "cached": false,
+          "reason": null
+        },
+        {
+          "file_path": "EP03.mp4",
+          "episode": "EP03",
+          "status": "COMPLETE",
+          "frame_count": 23,
+          "expected_frame_count": 23,
+          "timestamp_coverage": 11.5,
+          "duration": 11.5,
+          "elapsed_seconds": 0.07404208299703896,
+          "cached": false,
+          "reason": null
+        },
+        {
+          "file_path": "EP04.mp4",
+          "episode": "EP04",
+          "status": "COMPLETE",
+          "frame_count": 48,
+          "expected_frame_count": 48,
+          "timestamp_coverage": 24.0,
+          "duration": 24.0,
+          "elapsed_seconds": 0.10929879199829884,
+          "cached": false,
+          "reason": null
+        },
+        {
+          "file_path": "EP05.mp4",
+          "episode": "EP05",
+          "status": "COMPLETE",
+          "frame_count": 48,
+          "expected_frame_count": 48,
+          "timestamp_coverage": 24.0,
+          "duration": 24.0,
+          "elapsed_seconds": 0.10683641699142754,
+          "cached": false,
+          "reason": null
+        }
+      ]
+    },
+    "analysis_scope": {
+      "case_count": 25,
+      "media_duration_seconds": 112.707358,
+      "elapsed_seconds": 1.6075985450443113,
+      "rtf": 0.014263474661914365
+    },
+    "memory_measurement": {
+      "method": "resource.getrusage peak RSS; main and all completed ffmpeg children reported separately",
+      "index_before": {
+        "main_process_peak_bytes": 44580864,
+        "child_process_peak_bytes": 133349376
+      },
+      "index_after": {
+        "main_process_peak_bytes": 46301184,
+        "child_process_peak_bytes": 133349376
+      },
+      "analysis_before": {
+        "main_process_peak_bytes": 46301184,
+        "child_process_peak_bytes": 133349376
+      },
+      "analysis_after": {
+        "main_process_peak_bytes": 49430528,
+        "child_process_peak_bytes": 133349376
+      },
+      "observed_peak_lower_bound_bytes": 133349376,
+      "conservative_combined_upper_bound_bytes": 182779904
+    },
+    "normalization_warning": "Synthetic low-resolution timings are raw regression measurements and must not be extrapolated to real 30-hour drama indexes."
+  },
+  "cases": [
+    {
+      "case_id": "CASE_A",
+      "transformation": "off_grid_direct_cut",
+      "phase": 1,
+      "expected_status": "MATCH_FOUND",
+      "actual_status": "MATCH_FOUND",
+      "status_correct": true,
+      "metrics": {
+        "ground_truth_segments": 1,
+        "predicted_segments": 1,
+        "episode_recalled_segments": 1,
+        "source_aware_recalled_segments": 0,
+        "episode_recall": 1.0,
+        "source_aware_recall_at_1s": 0.0,
+        "segment_precision_at_1s": 0.0,
+        "false_positive_segments": 1,
+        "false_positive_seconds": 3.0,
+        "episode_correctness": 1.0,
+        "accused_boundary_mae_seconds": 1.1204999999999998,
+        "source_boundary_mae_seconds": 1.8584999999999996,
+        "speed_ratio_mae": 0.0,
+        "unmatched_ground_truth": [
+          {
+            "accused_start": 0.0,
+            "accused_end": 5.241,
+            "source_episode": "EP01",
+            "source_start": 1.238,
+            "source_end": 6.478999999999999,
+            "speed_ratio": 1.0,
+            "equivalence_group": null
+          }
+        ],
+        "unmatched_predictions": [
+          {
+            "accused_start": 0.0,
+            "accused_end": 3.0,
+            "source_episode": "EP01",
+            "source_start": 0.5,
+            "source_end": 3.5,
+            "speed_ratio": 1.0,
+            "visual_score": 0.9869,
+            "audio_score": null,
+            "temporal_score": 1.0,
+            "match_score": 0.9376,
+            "mirrored": null,
+            "cropped": null,
+            "temporal_residual_seconds": 0.0,
+            "coverage": 0.8333,
+            "uniqueness_margin": 1.0,
+            "review_tier": "YELLOW",
+            "algorithm_version": "phase1-dct-v1"
+          }
+        ],
+        "ambiguous_predictions": 0,
+        "ambiguity_expected": false,
+        "ambiguity_correct": null,
+        "boundary_evaluated_segments": 1,
+        "boundary_missed_segments": 0,
+        "overlapping_predictions": 1,
+        "correct_episode_predictions": 1,
+        "raw_accused_boundary_errors": [
+          0.0,
+          2.2409999999999997
+        ],
+        "raw_source_boundary_errors": [
+          0.738,
+          2.978999999999999
+        ],
+        "raw_speed_ratio_errors": [
+          0.0
+        ]
+      },
+      "analysis_seconds": 0.07505850000598002,
+      "video_duration_seconds": 5.25,
+      "predictions": [
+        {
+          "accused_start": 0.0,
+          "accused_end": 3.0,
+          "source_episode": "EP01",
+          "source_start": 0.5,
+          "source_end": 3.5,
+          "speed_ratio": 1.0,
+          "visual_score": 0.9869,
+          "audio_score": null,
+          "temporal_score": 1.0,
+          "match_score": 0.9376,
+          "mirrored": null,
+          "cropped": null,
+          "temporal_residual_seconds": 0.0,
+          "coverage": 0.8333,
+          "uniqueness_margin": 1.0,
+          "review_tier": "YELLOW",
+          "algorithm_version": "phase1-dct-v1"
+        }
+      ],
+      "alternative_candidates": [],
+      "reason": null
+    },
+    {
+      "case_id": "CASE_I",
+      "transformation": "off_grid_multi_episode_concat",
+      "phase": 1,
+      "expected_status": "MATCH_FOUND",
+      "actual_status": "MATCH_FOUND",
+      "status_correct": true,
+      "metrics": {
+        "ground_truth_segments": 2,
+        "predicted_segments": 2,
+        "episode_recalled_segments": 2,
+        "source_aware_recalled_segments": 1,
+        "episode_recall": 1.0,
+        "source_aware_recall_at_1s": 0.5,
+        "segment_precision_at_1s": 0.5,
+        "false_positive_segments": 1,
+        "false_positive_seconds": 3.0,
+        "episode_correctness": 1.0,
+        "accused_boundary_mae_seconds": 0.375,
+        "source_boundary_mae_seconds": 0.8009999999999998,
+        "speed_ratio_mae": 0.0,
+        "unmatched_ground_truth": [
+          {
+            "accused_start": 0.0,
+            "accused_end": 4.173,
+            "source_episode": "EP01",
+            "source_start": 1.238,
+            "source_end": 5.411,
+            "speed_ratio": 1.0,
+            "equivalence_group": null
+          }
+        ],
+        "unmatched_predictions": [
+          {
+            "accused_start": 0.0,
+            "accused_end": 3.0,
+            "source_episode": "EP01",
+            "source_start": 0.5,
+            "source_end": 3.5,
+            "speed_ratio": 1.0,
+            "visual_score": 0.987,
+            "audio_score": null,
+            "temporal_score": 1.0,
+            "match_score": 0.9376,
+            "mirrored": null,
+            "cropped": null,
+            "temporal_residual_seconds": 0.0,
+            "coverage": 0.8333,
+            "uniqueness_margin": 1.0,
+            "review_tier": "YELLOW",
+            "algorithm_version": "phase1-dct-v1"
+          }
+        ],
+        "ambiguous_predictions": 0,
+        "ambiguity_expected": false,
+        "ambiguity_correct": null,
+        "boundary_evaluated_segments": 2,
+        "boundary_missed_segments": 0,
+        "overlapping_predictions": 2,
+        "correct_episode_predictions": 2,
+        "raw_accused_boundary_errors": [
+          0.0,
+          1.173,
+          0.17300000000000004,
+          0.15399999999999991
+        ],
+        "raw_source_boundary_errors": [
+          0.738,
+          1.9109999999999996,
+          0.44099999999999984,
+          0.11399999999999988
+        ],
+        "raw_speed_ratio_errors": [
+          0.0,
+          0.0
+        ]
+      },
+      "analysis_seconds": 0.06903916700684931,
+      "video_duration_seconds": 8.416667,
+      "predictions": [
+        {
+          "accused_start": 0.0,
+          "accused_end": 3.0,
+          "source_episode": "EP01",
+          "source_start": 0.5,
+          "source_end": 3.5,
+          "speed_ratio": 1.0,
+          "visual_score": 0.987,
+          "audio_score": null,
+          "temporal_score": 1.0,
+          "match_score": 0.9376,
+          "mirrored": null,
+          "cropped": null,
+          "temporal_residual_seconds": 0.0,
+          "coverage": 0.8333,
+          "uniqueness_margin": 1.0,
+          "review_tier": "YELLOW",
+          "algorithm_version": "phase1-dct-v1"
+        },
+        {
+          "accused_start": 4.0,
+          "accused_end": 8.5,
+          "source_episode": "EP02",
+          "source_start": 2.0,
+          "source_end": 6.5,
+          "speed_ratio": 1.0,
+          "visual_score": 0.9975,
+          "audio_score": null,
+          "temporal_score": 1.0,
+          "match_score": 0.9975,
+          "mirrored": null,
+          "cropped": null,
+          "temporal_residual_seconds": 0.0,
+          "coverage": 1.0,
+          "uniqueness_margin": 1.0,
+          "review_tier": "GREEN",
+          "algorithm_version": "phase1-dct-v1"
+        }
+      ],
+      "alternative_candidates": [],
+      "reason": null
+    },
+    {
+      "case_id": "P1_001",
+      "transformation": "off_grid_direct_reencode",
+      "phase": 1,
+      "expected_status": "MATCH_FOUND",
+      "actual_status": "MATCH_FOUND",
+      "status_correct": true,
+      "metrics": {
+        "ground_truth_segments": 1,
+        "predicted_segments": 1,
+        "episode_recalled_segments": 1,
+        "source_aware_recalled_segments": 1,
+        "episode_recall": 1.0,
+        "source_aware_recall_at_1s": 1.0,
+        "segment_precision_at_1s": 1.0,
+        "false_positive_segments": 0,
+        "false_positive_seconds": 0.0,
+        "episode_correctness": 1.0,
+        "accused_boundary_mae_seconds": 0.0665,
+        "source_boundary_mae_seconds": 0.17850000000000055,
+        "speed_ratio_mae": 0.0,
+        "unmatched_ground_truth": [],
+        "unmatched_predictions": [],
+        "ambiguous_predictions": 0,
+        "ambiguity_expected": false,
+        "ambiguity_correct": null,
+        "boundary_evaluated_segments": 1,
+        "boundary_missed_segments": 0,
+        "overlapping_predictions": 1,
+        "correct_episode_predictions": 1,
+        "raw_accused_boundary_errors": [
+          0.0,
+          0.133
+        ],
+        "raw_source_boundary_errors": [
+          0.1120000000000001,
+          0.245000000000001
+        ],
+        "raw_speed_ratio_errors": [
+          0.0
+        ]
+      },
+      "analysis_seconds": 0.06211008399259299,
+      "video_duration_seconds": 3.875,
+      "predictions": [
+        {
+          "accused_start": 0.0,
+          "accused_end": 4.0,
+          "source_episode": "EP01",
+          "source_start": 5.5,
+          "source_end": 9.5,
+          "speed_ratio": 1.0,
+          "visual_score": 0.9934,
+          "audio_score": null,
+          "temporal_score": 1.0,
+          "match_score": 0.9934,
+          "mirrored": null,
+          "cropped": null,
+          "temporal_residual_seconds": 0.0,
+          "coverage": 1.0,
+          "uniqueness_margin": 0.0055,
+          "review_tier": "YELLOW",
+          "algorithm_version": "phase1-dct-v1"
+        }
+      ],
+      "alternative_candidates": [],
+      "reason": null
+    },
+    {
+      "case_id": "P1_002",
+      "transformation": "off_grid_direct_reencode",
+      "phase": 1,
+      "expected_status": "MATCH_FOUND",
+      "actual_status": "MATCH_FOUND",
+      "status_correct": true,
+      "metrics": {
+        "ground_truth_segments": 1,
+        "predicted_segments": 1,
+        "episode_recalled_segments": 1,
+        "source_aware_recalled_segments": 1,
+        "episode_recall": 1.0,
+        "source_aware_recall_at_1s": 1.0,
+        "segment_precision_at_1s": 1.0,
+        "false_positive_segments": 0,
+        "false_positive_seconds": 0.0,
+        "episode_correctness": 1.0,
+        "accused_boundary_mae_seconds": 0.027499999999999858,
+        "source_boundary_mae_seconds": 0.09250000000000069,
+        "speed_ratio_mae": 0.0,
+        "unmatched_ground_truth": [],
+        "unmatched_predictions": [],
+        "ambiguous_predictions": 0,
+        "ambiguity_expected": false,
+        "ambiguity_correct": null,
+        "boundary_evaluated_segments": 1,
+        "boundary_missed_segments": 0,
+        "overlapping_predictions": 1,
+        "correct_episode_predictions": 1,
+        "raw_accused_boundary_errors": [
+          0.0,
+          0.054999999999999716
+        ],
+        "raw_source_boundary_errors": [
+          0.06500000000000039,
+          0.120000000000001
+        ],
+        "raw_speed_ratio_errors": [
+          0.0
+        ]
+      },
+      "analysis_seconds": 0.058033583001815714,
+      "video_duration_seconds": 4.958333,
+      "predictions": [
+        {
+          "accused_start": 0.0,
+          "accused_end": 5.0,
+          "source_episode": "EP02",
+          "source_start": 5.5,
+          "source_end": 10.5,
+          "speed_ratio": 1.0,
+          "visual_score": 0.9999,
+          "audio_score": null,
+          "temporal_score": 1.0,
+          "match_score": 0.9999,
+          "mirrored": null,
+          "cropped": null,
+          "temporal_residual_seconds": 0.0,
+          "coverage": 1.0,
+          "uniqueness_margin": 0.0016,
+          "review_tier": "YELLOW",
+          "algorithm_version": "phase1-dct-v1"
+        }
+      ],
+      "alternative_candidates": [],
+      "reason": null
+    },
+    {
+      "case_id": "P1_003",
+      "transformation": "off_grid_direct_reencode",
+      "phase": 1,
+      "expected_status": "MATCH_FOUND",
+      "actual_status": "MATCH_FOUND",
+      "status_correct": true,
+      "metrics": {
+        "ground_truth_segments": 1,
+        "predicted_segments": 1,
+        "episode_recalled_segments": 1,
+        "source_aware_recalled_segments": 1,
+        "episode_recall": 1.0,
+        "source_aware_recall_at_1s": 1.0,
+        "segment_precision_at_1s": 1.0,
+        "false_positive_segments": 0,
+        "false_positive_seconds": 0.0,
+        "episode_correctness": 1.0,
+        "accused_boundary_mae_seconds": 0.02200000000000002,
+        "source_boundary_mae_seconds": 0.02200000000000002,
+        "speed_ratio_mae": 0.0,
+        "unmatched_ground_truth": [],
+        "unmatched_predictions": [],
+        "ambiguous_predictions": 0,
+        "ambiguity_expected": false,
+        "ambiguity_correct": null,
+        "boundary_evaluated_segments": 1,
+        "boundary_missed_segments": 0,
+        "overlapping_predictions": 1,
+        "correct_episode_predictions": 1,
+        "raw_accused_boundary_errors": [
+          0.0,
+          0.04400000000000004
+        ],
+        "raw_source_boundary_errors": [
+          0.015000000000000124,
+          0.028999999999999915
+        ],
+        "raw_speed_ratio_errors": [
+          0.0
+        ]
+      },
+      "analysis_seconds": 0.06054229200526606,
+      "video_duration_seconds": 3.583008,
+      "predictions": [
+        {
+          "accused_start": 0.0,
+          "accused_end": 3.5,
+          "source_episode": "EP03",
+          "source_start": 3.5,
+          "source_end": 7.0,
+          "speed_ratio": 1.0,
+          "visual_score": 1.0,
+          "audio_score": null,
+          "temporal_score": 1.0,
+          "match_score": 1.0,
+          "mirrored": null,
+          "cropped": null,
+          "temporal_residual_seconds": 0.0,
+          "coverage": 1.0,
+          "uniqueness_margin": 0.0084,
+          "review_tier": "YELLOW",
+          "algorithm_version": "phase1-dct-v1"
+        }
+      ],
+      "alternative_candidates": [],
+      "reason": null
+    },
+    {
+      "case_id": "P1_004",
+      "transformation": "off_grid_direct_reencode",
+      "phase": 1,
+      "expected_status": "MATCH_FOUND",
+      "actual_status": "MATCH_NOT_FOUND",
+      "status_correct": false,
+      "metrics": {
+        "ground_truth_segments": 1,
+        "predicted_segments": 0,
+        "episode_recalled_segments": 0,
+        "source_aware_recalled_segments": 0,
+        "episode_recall": 0.0,
+        "source_aware_recall_at_1s": 0.0,
+        "segment_precision_at_1s": 0.0,
+        "false_positive_segments": 0,
+        "false_positive_seconds": 0.0,
+        "episode_correctness": null,
+        "accused_boundary_mae_seconds": null,
+        "source_boundary_mae_seconds": null,
+        "speed_ratio_mae": null,
+        "unmatched_ground_truth": [
+          {
+            "accused_start": 0.0,
+            "accused_end": 3.408,
+            "source_episode": "EP01",
+            "source_start": 2.131,
+            "source_end": 5.539,
+            "speed_ratio": 1.0,
+            "equivalence_group": null
+          }
+        ],
+        "unmatched_predictions": [],
+        "ambiguous_predictions": 0,
+        "ambiguity_expected": false,
+        "ambiguity_correct": null,
+        "boundary_evaluated_segments": 0,
+        "boundary_missed_segments": 1,
+        "overlapping_predictions": 0,
+        "correct_episode_predictions": 0,
+        "raw_accused_boundary_errors": [],
+        "raw_source_boundary_errors": [],
+        "raw_speed_ratio_errors": []
+      },
+      "analysis_seconds": 0.05939141700218897,
+      "video_duration_seconds": 3.416667,
+      "predictions": [],
+      "alternative_candidates": [],
+      "reason": null
+    },
+    {
+      "case_id": "P1_005",
+      "transformation": "off_grid_direct_reencode",
+      "phase": 1,
+      "expected_status": "MATCH_FOUND",
+      "actual_status": "MATCH_FOUND",
+      "status_correct": true,
+      "metrics": {
+        "ground_truth_segments": 1,
+        "predicted_segments": 1,
+        "episode_recalled_segments": 1,
+        "source_aware_recalled_segments": 1,
+        "episode_recall": 1.0,
+        "source_aware_recall_at_1s": 1.0,
+        "segment_precision_at_1s": 1.0,
+        "false_positive_segments": 0,
+        "false_positive_seconds": 0.0,
+        "episode_correctness": 1.0,
+        "accused_boundary_mae_seconds": 0.019000000000000128,
+        "source_boundary_mae_seconds": 0.2139999999999997,
+        "speed_ratio_mae": 0.0,
+        "unmatched_ground_truth": [],
+        "unmatched_predictions": [],
+        "ambiguous_predictions": 0,
+        "ambiguity_expected": false,
+        "ambiguity_correct": null,
+        "boundary_evaluated_segments": 1,
+        "boundary_missed_segments": 0,
+        "overlapping_predictions": 1,
+        "correct_episode_predictions": 1,
+        "raw_accused_boundary_errors": [
+          0.0,
+          0.038000000000000256
+        ],
+        "raw_source_boundary_errors": [
+          0.23299999999999998,
+          0.1949999999999994
+        ],
+        "raw_speed_ratio_errors": [
+          0.0
+        ]
+      },
+      "analysis_seconds": 0.057480834002490155,
+      "video_duration_seconds": 4.541667,
+      "predictions": [
+        {
+          "accused_start": 0.0,
+          "accused_end": 4.5,
+          "source_episode": "EP02",
+          "source_start": 1.0,
+          "source_end": 5.5,
+          "speed_ratio": 1.0,
+          "visual_score": 0.9983,
+          "audio_score": null,
+          "temporal_score": 1.0,
+          "match_score": 0.9983,
+          "mirrored": null,
+          "cropped": null,
+          "temporal_residual_seconds": 0.0,
+          "coverage": 1.0,
+          "uniqueness_margin": 0.0035,
+          "review_tier": "YELLOW",
+          "algorithm_version": "phase1-dct-v1"
+        }
+      ],
+      "alternative_candidates": [],
+      "reason": null
+    },
+    {
+      "case_id": "P1_006",
+      "transformation": "off_grid_direct_reencode",
+      "phase": 1,
+      "expected_status": "MATCH_FOUND",
+      "actual_status": "MATCH_FOUND",
+      "status_correct": true,
+      "metrics": {
+        "ground_truth_segments": 1,
+        "predicted_segments": 1,
+        "episode_recalled_segments": 1,
+        "source_aware_recalled_segments": 1,
+        "episode_recall": 1.0,
+        "source_aware_recall_at_1s": 1.0,
+        "segment_precision_at_1s": 1.0,
+        "false_positive_segments": 0,
+        "false_positive_seconds": 0.0,
+        "episode_correctness": 1.0,
+        "accused_boundary_mae_seconds": 0.09549999999999992,
+        "source_boundary_mae_seconds": 0.23150000000000004,
+        "speed_ratio_mae": 0.0,
+        "unmatched_ground_truth": [],
+        "unmatched_predictions": [],
+        "ambiguous_predictions": 0,
+        "ambiguity_expected": false,
+        "ambiguity_correct": null,
+        "boundary_evaluated_segments": 1,
+        "boundary_missed_segments": 0,
+        "overlapping_predictions": 1,
+        "correct_episode_predictions": 1,
+        "raw_accused_boundary_errors": [
+          0.0,
+          0.19099999999999984
+        ],
+        "raw_source_boundary_errors": [
+          0.13600000000000012,
+          0.32699999999999996
+        ],
+        "raw_speed_ratio_errors": [
+          0.0
+        ]
+      },
+      "analysis_seconds": 0.060886584004038014,
+      "video_duration_seconds": 3.833333,
+      "predictions": [
+        {
+          "accused_start": 0.0,
+          "accused_end": 4.0,
+          "source_episode": "EP03",
+          "source_start": 5.0,
+          "source_end": 9.0,
+          "speed_ratio": 1.0,
+          "visual_score": 0.9859,
+          "audio_score": null,
+          "temporal_score": 1.0,
+          "match_score": 0.9859,
+          "mirrored": null,
+          "cropped": null,
+          "temporal_residual_seconds": 0.0,
+          "coverage": 1.0,
+          "uniqueness_margin": 0.0019,
+          "review_tier": "YELLOW",
+          "algorithm_version": "phase1-dct-v1"
+        }
+      ],
+      "alternative_candidates": [],
+      "reason": null
+    },
+    {
+      "case_id": "P1_007",
+      "transformation": "off_grid_direct_reencode",
+      "phase": 1,
+      "expected_status": "MATCH_FOUND",
+      "actual_status": "MATCH_FOUND",
+      "status_correct": true,
+      "metrics": {
+        "ground_truth_segments": 1,
+        "predicted_segments": 1,
+        "episode_recalled_segments": 1,
+        "source_aware_recalled_segments": 1,
+        "episode_recall": 1.0,
+        "source_aware_recall_at_1s": 1.0,
+        "segment_precision_at_1s": 1.0,
+        "false_positive_segments": 0,
+        "false_positive_seconds": 0.0,
+        "episode_correctness": 1.0,
+        "accused_boundary_mae_seconds": 0.06599999999999984,
+        "source_boundary_mae_seconds": 0.06599999999999995,
+        "speed_ratio_mae": 0.0,
+        "unmatched_ground_truth": [],
+        "unmatched_predictions": [],
+        "ambiguous_predictions": 0,
+        "ambiguity_expected": false,
+        "ambiguity_correct": null,
+        "boundary_evaluated_segments": 1,
+        "boundary_missed_segments": 0,
+        "overlapping_predictions": 1,
+        "correct_episode_predictions": 1,
+        "raw_accused_boundary_errors": [
+          0.0,
+          0.13199999999999967
+        ],
+        "raw_source_boundary_errors": [
+          0.127,
+          0.004999999999999893
+        ],
+        "raw_speed_ratio_errors": [
+          0.0
+        ]
+      },
+      "analysis_seconds": 0.063196709001204,
+      "video_duration_seconds": 4.666667,
+      "predictions": [
+        {
+          "accused_start": 0.0,
+          "accused_end": 4.5,
+          "source_episode": "EP01",
+          "source_start": 2.0,
+          "source_end": 6.5,
+          "speed_ratio": 1.0,
+          "visual_score": 0.9874,
+          "audio_score": null,
+          "temporal_score": 1.0,
+          "match_score": 0.9874,
+          "mirrored": null,
+          "cropped": null,
+          "temporal_residual_seconds": 0.0,
+          "coverage": 1.0,
+          "uniqueness_margin": 0.0363,
+          "review_tier": "YELLOW",
+          "algorithm_version": "phase1-dct-v1"
+        }
+      ],
+      "alternative_candidates": [],
+      "reason": null
+    },
+    {
+      "case_id": "P1_008",
+      "transformation": "off_grid_direct_reencode",
+      "phase": 1,
+      "expected_status": "MATCH_FOUND",
+      "actual_status": "MATCH_FOUND",
+      "status_correct": true,
+      "metrics": {
+        "ground_truth_segments": 1,
+        "predicted_segments": 1,
+        "episode_recalled_segments": 1,
+        "source_aware_recalled_segments": 1,
+        "episode_recall": 1.0,
+        "source_aware_recall_at_1s": 1.0,
+        "segment_precision_at_1s": 1.0,
+        "false_positive_segments": 0,
+        "false_positive_seconds": 0.0,
+        "episode_correctness": 1.0,
+        "accused_boundary_mae_seconds": 0.13149999999999995,
+        "source_boundary_mae_seconds": 0.1314999999999995,
+        "speed_ratio_mae": 0.0,
+        "unmatched_ground_truth": [],
+        "unmatched_predictions": [],
+        "ambiguous_predictions": 0,
+        "ambiguity_expected": false,
+        "ambiguity_correct": null,
+        "boundary_evaluated_segments": 1,
+        "boundary_missed_segments": 0,
+        "overlapping_predictions": 1,
+        "correct_episode_predictions": 1,
+        "raw_accused_boundary_errors": [
+          0.0,
+          0.2629999999999999
+        ],
+        "raw_source_boundary_errors": [
+          0.1559999999999997,
+          0.10699999999999932
+        ],
+        "raw_speed_ratio_errors": [
+          0.0
+        ]
+      },
+      "analysis_seconds": 0.057789250000496395,
+      "video_duration_seconds": 4.75,
+      "predictions": [
+        {
+          "accused_start": 0.0,
+          "accused_end": 5.0,
+          "source_episode": "EP02",
+          "source_start": 5.0,
+          "source_end": 10.0,
+          "speed_ratio": 1.0,
+          "visual_score": 0.9989,
+          "audio_score": null,
+          "temporal_score": 1.0,
+          "match_score": 0.9989,
+          "mirrored": null,
+          "cropped": null,
+          "temporal_residual_seconds": 0.0,
+          "coverage": 1.0,
+          "uniqueness_margin": 0.0006,
+          "review_tier": "YELLOW",
+          "algorithm_version": "phase1-dct-v1"
+        }
+      ],
+      "alternative_candidates": [],
+      "reason": null
+    },
+    {
+      "case_id": "P1_009",
+      "transformation": "off_grid_direct_reencode",
+      "phase": 1,
+      "expected_status": "MATCH_FOUND",
+      "actual_status": "MATCH_NOT_FOUND",
+      "status_correct": false,
+      "metrics": {
+        "ground_truth_segments": 1,
+        "predicted_segments": 0,
+        "episode_recalled_segments": 0,
+        "source_aware_recalled_segments": 0,
+        "episode_recall": 0.0,
+        "source_aware_recall_at_1s": 0.0,
+        "segment_precision_at_1s": 0.0,
+        "false_positive_segments": 0,
+        "false_positive_seconds": 0.0,
+        "episode_correctness": null,
+        "accused_boundary_mae_seconds": null,
+        "source_boundary_mae_seconds": null,
+        "speed_ratio_mae": null,
+        "unmatched_ground_truth": [
+          {
+            "accused_start": 0.0,
+            "accused_end": 3.352,
+            "source_episode": "EP03",
+            "source_start": 6.252,
+            "source_end": 9.604,
+            "speed_ratio": 1.0,
+            "equivalence_group": null
+          }
+        ],
+        "unmatched_predictions": [],
+        "ambiguous_predictions": 0,
+        "ambiguity_expected": false,
+        "ambiguity_correct": null,
+        "boundary_evaluated_segments": 0,
+        "boundary_missed_segments": 1,
+        "overlapping_predictions": 0,
+        "correct_episode_predictions": 0,
+        "raw_accused_boundary_errors": [],
+        "raw_source_boundary_errors": [],
+        "raw_speed_ratio_errors": []
+      },
+      "analysis_seconds": 0.05916191700089257,
+      "video_duration_seconds": 3.375,
+      "predictions": [],
+      "alternative_candidates": [],
+      "reason": null
+    },
+    {
+      "case_id": "P1_010",
+      "transformation": "off_grid_direct_reencode",
+      "phase": 1,
+      "expected_status": "MATCH_FOUND",
+      "actual_status": "MATCH_FOUND",
+      "status_correct": true,
+      "metrics": {
+        "ground_truth_segments": 1,
+        "predicted_segments": 1,
+        "episode_recalled_segments": 1,
+        "source_aware_recalled_segments": 1,
+        "episode_recall": 1.0,
+        "source_aware_recall_at_1s": 1.0,
+        "segment_precision_at_1s": 1.0,
+        "false_positive_segments": 0,
+        "false_positive_seconds": 0.0,
+        "episode_correctness": 1.0,
+        "accused_boundary_mae_seconds": 0.0019999999999997797,
+        "source_boundary_mae_seconds": 0.0669999999999995,
+        "speed_ratio_mae": 0.0,
+        "unmatched_ground_truth": [],
+        "unmatched_predictions": [],
+        "ambiguous_predictions": 0,
+        "ambiguity_expected": false,
+        "ambiguity_correct": null,
+        "boundary_evaluated_segments": 1,
+        "boundary_missed_segments": 0,
+        "overlapping_predictions": 1,
+        "correct_episode_predictions": 1,
+        "raw_accused_boundary_errors": [
+          0.0,
+          0.0039999999999995595
+        ],
+        "raw_source_boundary_errors": [
+          0.06499999999999995,
+          0.06899999999999906
+        ],
+        "raw_speed_ratio_errors": [
+          0.0
+        ]
+      },
+      "analysis_seconds": 0.06510733399773017,
+      "video_duration_seconds": 5.0,
+      "predictions": [
+        {
+          "accused_start": 0.0,
+          "accused_end": 5.0,
+          "source_episode": "EP01",
+          "source_start": 2.5,
+          "source_end": 7.5,
+          "speed_ratio": 1.0,
+          "visual_score": 0.9982,
+          "audio_score": null,
+          "temporal_score": 1.0,
+          "match_score": 0.9982,
+          "mirrored": null,
+          "cropped": null,
+          "temporal_residual_seconds": 0.0,
+          "coverage": 1.0,
+          "uniqueness_margin": 0.0081,
+          "review_tier": "YELLOW",
+          "algorithm_version": "phase1-dct-v1"
+        }
+      ],
+      "alternative_candidates": [],
+      "reason": null
+    },
+    {
+      "case_id": "P1_011",
+      "transformation": "off_grid_direct_reencode",
+      "phase": 1,
+      "expected_status": "MATCH_FOUND",
+      "actual_status": "MATCH_FOUND",
+      "status_correct": true,
+      "metrics": {
+        "ground_truth_segments": 1,
+        "predicted_segments": 1,
+        "episode_recalled_segments": 1,
+        "source_aware_recalled_segments": 1,
+        "episode_recall": 1.0,
+        "source_aware_recall_at_1s": 1.0,
+        "segment_precision_at_1s": 1.0,
+        "false_positive_segments": 0,
+        "false_positive_seconds": 0.0,
+        "episode_correctness": 1.0,
+        "accused_boundary_mae_seconds": 0.10299999999999998,
+        "source_boundary_mae_seconds": 0.1030000000000002,
+        "speed_ratio_mae": 0.0,
+        "unmatched_ground_truth": [],
+        "unmatched_predictions": [],
+        "ambiguous_predictions": 0,
+        "ambiguity_expected": false,
+        "ambiguity_correct": null,
+        "boundary_evaluated_segments": 1,
+        "boundary_missed_segments": 0,
+        "overlapping_predictions": 1,
+        "correct_episode_predictions": 1,
+        "raw_accused_boundary_errors": [
+          0.0,
+          0.20599999999999996
+        ],
+        "raw_source_boundary_errors": [
+          0.027000000000000135,
+          0.17900000000000027
+        ],
+        "raw_speed_ratio_errors": [
+          0.0
+        ]
+      },
+      "analysis_seconds": 0.05481787500320934,
+      "video_duration_seconds": 3.708333,
+      "predictions": [
+        {
+          "accused_start": 0.0,
+          "accused_end": 3.5,
+          "source_episode": "EP02",
+          "source_start": 7.0,
+          "source_end": 10.5,
+          "speed_ratio": 1.0,
+          "visual_score": 1.0,
+          "audio_score": null,
+          "temporal_score": 1.0,
+          "match_score": 1.0,
+          "mirrored": null,
+          "cropped": null,
+          "temporal_residual_seconds": 0.0,
+          "coverage": 1.0,
+          "uniqueness_margin": 0.0019,
+          "review_tier": "YELLOW",
+          "algorithm_version": "phase1-dct-v1"
+        }
+      ],
+      "alternative_candidates": [],
+      "reason": null
+    },
+    {
+      "case_id": "P1_012",
+      "transformation": "off_grid_direct_reencode",
+      "phase": 1,
+      "expected_status": "MATCH_FOUND",
+      "actual_status": "AMBIGUOUS",
+      "status_correct": false,
+      "metrics": {
+        "ground_truth_segments": 1,
+        "predicted_segments": 0,
+        "episode_recalled_segments": 0,
+        "source_aware_recalled_segments": 0,
+        "episode_recall": 0.0,
+        "source_aware_recall_at_1s": 0.0,
+        "segment_precision_at_1s": 0.0,
+        "false_positive_segments": 0,
+        "false_positive_seconds": 0.0,
+        "episode_correctness": null,
+        "accused_boundary_mae_seconds": null,
+        "source_boundary_mae_seconds": null,
+        "speed_ratio_mae": null,
+        "unmatched_ground_truth": [
+          {
+            "accused_start": 0.0,
+            "accused_end": 4.137,
+            "source_episode": "EP03",
+            "source_start": 1.189,
+            "source_end": 5.326,
+            "speed_ratio": 1.0,
+            "equivalence_group": null
+          }
+        ],
+        "unmatched_predictions": [],
+        "ambiguous_predictions": 1,
+        "ambiguity_expected": false,
+        "ambiguity_correct": null,
+        "boundary_evaluated_segments": 0,
+        "boundary_missed_segments": 1,
+        "overlapping_predictions": 0,
+        "correct_episode_predictions": 0,
+        "raw_accused_boundary_errors": [],
+        "raw_source_boundary_errors": [],
+        "raw_speed_ratio_errors": []
+      },
+      "analysis_seconds": 0.06081758400250692,
+      "video_duration_seconds": 4.166667,
+      "predictions": [],
+      "alternative_candidates": [
+        {
+          "accused_start": 0.0,
+          "accused_end": 3.0,
+          "source_episode": "EP03",
+          "source_start": 8.5,
+          "source_end": 11.5,
+          "speed_ratio": 1.0,
+          "visual_score": 0.9853,
+          "audio_score": null,
+          "temporal_score": 1.0,
+          "match_score": 0.8868,
+          "mirrored": null,
+          "cropped": null,
+          "temporal_residual_seconds": 0.0,
+          "coverage": 0.6667,
+          "uniqueness_margin": 1.0,
+          "review_tier": "YELLOW",
+          "algorithm_version": "phase1-dct-v1"
+        },
+        {
+          "accused_start": 0.5,
+          "accused_end": 3.5,
+          "source_episode": "EP03",
+          "source_start": 0.0,
+          "source_end": 3.0,
+          "speed_ratio": 1.0,
+          "visual_score": 0.9845,
+          "audio_score": null,
+          "temporal_score": 1.0,
+          "match_score": 0.9353,
+          "mirrored": null,
+          "cropped": null,
+          "temporal_residual_seconds": 0.0,
+          "coverage": 0.8333,
+          "uniqueness_margin": 1.0,
+          "review_tier": "YELLOW",
+          "algorithm_version": "phase1-dct-v1"
+        }
+      ],
+      "reason": "Segment contradiction detected"
+    },
+    {
+      "case_id": "P1_013",
+      "transformation": "off_grid_direct_reencode",
+      "phase": 1,
+      "expected_status": "MATCH_FOUND",
+      "actual_status": "MATCH_FOUND",
+      "status_correct": true,
+      "metrics": {
+        "ground_truth_segments": 1,
+        "predicted_segments": 1,
+        "episode_recalled_segments": 1,
+        "source_aware_recalled_segments": 1,
+        "episode_recall": 1.0,
+        "source_aware_recall_at_1s": 1.0,
+        "segment_precision_at_1s": 1.0,
+        "false_positive_segments": 0,
+        "false_positive_seconds": 0.0,
+        "episode_correctness": 1.0,
+        "accused_boundary_mae_seconds": 0.033500000000000085,
+        "source_boundary_mae_seconds": 0.10449999999999982,
+        "speed_ratio_mae": 0.0,
+        "unmatched_ground_truth": [],
+        "unmatched_predictions": [],
+        "ambiguous_predictions": 0,
+        "ambiguity_expected": false,
+        "ambiguity_correct": null,
+        "boundary_evaluated_segments": 1,
+        "boundary_missed_segments": 0,
+        "overlapping_predictions": 1,
+        "correct_episode_predictions": 1,
+        "raw_accused_boundary_errors": [
+          0.0,
+          0.06700000000000017
+        ],
+        "raw_source_boundary_errors": [
+          0.1379999999999999,
+          0.07099999999999973
+        ],
+        "raw_speed_ratio_errors": [
+          0.0
+        ]
+      },
+      "analysis_seconds": 0.05984445799549576,
+      "video_duration_seconds": 3.583333,
+      "predictions": [
+        {
+          "accused_start": 0.0,
+          "accused_end": 3.5,
+          "source_episode": "EP01",
+          "source_start": 6.5,
+          "source_end": 10.0,
+          "speed_ratio": 1.0,
+          "visual_score": 0.9867,
+          "audio_score": null,
+          "temporal_score": 1.0,
+          "match_score": 0.9867,
+          "mirrored": null,
+          "cropped": null,
+          "temporal_residual_seconds": 0.0,
+          "coverage": 1.0,
+          "uniqueness_margin": 0.0033,
+          "review_tier": "YELLOW",
+          "algorithm_version": "phase1-dct-v1"
+        }
+      ],
+      "alternative_candidates": [],
+      "reason": null
+    },
+    {
+      "case_id": "P1_014",
+      "transformation": "off_grid_direct_reencode",
+      "phase": 1,
+      "expected_status": "MATCH_FOUND",
+      "actual_status": "MATCH_FOUND",
+      "status_correct": true,
+      "metrics": {
+        "ground_truth_segments": 1,
+        "predicted_segments": 1,
+        "episode_recalled_segments": 1,
+        "source_aware_recalled_segments": 1,
+        "episode_recall": 1.0,
+        "source_aware_recall_at_1s": 1.0,
+        "segment_precision_at_1s": 1.0,
+        "false_positive_segments": 0,
+        "false_positive_seconds": 0.0,
+        "episode_correctness": 1.0,
+        "accused_boundary_mae_seconds": 0.11450000000000005,
+        "source_boundary_mae_seconds": 0.1144999999999996,
+        "speed_ratio_mae": 0.0,
+        "unmatched_ground_truth": [],
+        "unmatched_predictions": [],
+        "ambiguous_predictions": 0,
+        "ambiguity_expected": false,
+        "ambiguity_correct": null,
+        "boundary_evaluated_segments": 1,
+        "boundary_missed_segments": 0,
+        "overlapping_predictions": 1,
+        "correct_episode_predictions": 1,
+        "raw_accused_boundary_errors": [
+          0.0,
+          0.2290000000000001
+        ],
+        "raw_source_boundary_errors": [
+          0.11599999999999966,
+          0.11299999999999955
+        ],
+        "raw_speed_ratio_errors": [
+          0.0
+        ]
+      },
+      "analysis_seconds": 0.05762241699267179,
+      "video_duration_seconds": 4.791667,
+      "predictions": [
+        {
+          "accused_start": 0.0,
+          "accused_end": 5.0,
+          "source_episode": "EP02",
+          "source_start": 5.0,
+          "source_end": 10.0,
+          "speed_ratio": 1.0,
+          "visual_score": 0.9994,
+          "audio_score": null,
+          "temporal_score": 1.0,
+          "match_score": 0.9994,
+          "mirrored": null,
+          "cropped": null,
+          "temporal_residual_seconds": 0.0,
+          "coverage": 1.0,
+          "uniqueness_margin": 0.0006,
+          "review_tier": "YELLOW",
+          "algorithm_version": "phase1-dct-v1"
+        }
+      ],
+      "alternative_candidates": [],
+      "reason": null
+    },
+    {
+      "case_id": "P1_015",
+      "transformation": "off_grid_direct_reencode",
+      "phase": 1,
+      "expected_status": "MATCH_FOUND",
+      "actual_status": "MATCH_FOUND",
+      "status_correct": true,
+      "metrics": {
+        "ground_truth_segments": 1,
+        "predicted_segments": 1,
+        "episode_recalled_segments": 1,
+        "source_aware_recalled_segments": 1,
+        "episode_recall": 1.0,
+        "source_aware_recall_at_1s": 1.0,
+        "segment_precision_at_1s": 1.0,
+        "false_positive_segments": 0,
+        "false_positive_seconds": 0.0,
+        "episode_correctness": 1.0,
+        "accused_boundary_mae_seconds": 0.035499999999999865,
+        "source_boundary_mae_seconds": 0.03550000000000031,
+        "speed_ratio_mae": 0.0,
+        "unmatched_ground_truth": [],
+        "unmatched_predictions": [],
+        "ambiguous_predictions": 0,
+        "ambiguity_expected": false,
+        "ambiguity_correct": null,
+        "boundary_evaluated_segments": 1,
+        "boundary_missed_segments": 0,
+        "overlapping_predictions": 1,
+        "correct_episode_predictions": 1,
+        "raw_accused_boundary_errors": [
+          0.0,
+          0.07099999999999973
+        ],
+        "raw_source_boundary_errors": [
+          0.05600000000000005,
+          0.015000000000000568
+        ],
+        "raw_speed_ratio_errors": [
+          0.0
+        ]
+      },
+      "analysis_seconds": 0.06462375000410248,
+      "video_duration_seconds": 5.083008,
+      "predictions": [
+        {
+          "accused_start": 0.0,
+          "accused_end": 5.0,
+          "source_episode": "EP03",
+          "source_start": 3.5,
+          "source_end": 8.5,
+          "speed_ratio": 1.0,
+          "visual_score": 0.9981,
+          "audio_score": null,
+          "temporal_score": 1.0,
+          "match_score": 0.9981,
+          "mirrored": null,
+          "cropped": null,
+          "temporal_residual_seconds": 0.0,
+          "coverage": 1.0,
+          "uniqueness_margin": 0.0073,
+          "review_tier": "YELLOW",
+          "algorithm_version": "phase1-dct-v1"
+        }
+      ],
+      "alternative_candidates": [],
+      "reason": null
+    },
+    {
+      "case_id": "P1_016",
+      "transformation": "off_grid_direct_reencode",
+      "phase": 1,
+      "expected_status": "MATCH_FOUND",
+      "actual_status": "MATCH_FOUND",
+      "status_correct": true,
+      "metrics": {
+        "ground_truth_segments": 1,
+        "predicted_segments": 1,
+        "episode_recalled_segments": 1,
+        "source_aware_recalled_segments": 1,
+        "episode_recall": 1.0,
+        "source_aware_recall_at_1s": 1.0,
+        "segment_precision_at_1s": 1.0,
+        "false_positive_segments": 0,
+        "false_positive_seconds": 0.0,
+        "episode_correctness": 1.0,
+        "accused_boundary_mae_seconds": 0.07450000000000001,
+        "source_boundary_mae_seconds": 0.07450000000000023,
+        "speed_ratio_mae": 0.0,
+        "unmatched_ground_truth": [],
+        "unmatched_predictions": [],
+        "ambiguous_predictions": 0,
+        "ambiguity_expected": false,
+        "ambiguity_correct": null,
+        "boundary_evaluated_segments": 1,
+        "boundary_missed_segments": 0,
+        "overlapping_predictions": 1,
+        "correct_episode_predictions": 1,
+        "raw_accused_boundary_errors": [
+          0.0,
+          0.14900000000000002
+        ],
+        "raw_source_boundary_errors": [
+          0.1080000000000001,
+          0.04100000000000037
+        ],
+        "raw_speed_ratio_errors": [
+          0.0
+        ]
+      },
+      "analysis_seconds": 0.0672877910110401,
+      "video_duration_seconds": 5.666667,
+      "predictions": [
+        {
+          "accused_start": 0.0,
+          "accused_end": 5.5,
+          "source_episode": "EP01",
+          "source_start": 2.5,
+          "source_end": 8.0,
+          "speed_ratio": 1.0,
+          "visual_score": 0.9934,
+          "audio_score": null,
+          "temporal_score": 1.0,
+          "match_score": 0.9934,
+          "mirrored": null,
+          "cropped": null,
+          "temporal_residual_seconds": 0.0,
+          "coverage": 1.0,
+          "uniqueness_margin": 0.0059,
+          "review_tier": "YELLOW",
+          "algorithm_version": "phase1-dct-v1"
+        }
+      ],
+      "alternative_candidates": [],
+      "reason": null
+    },
+    {
+      "case_id": "P1_017",
+      "transformation": "off_grid_direct_reencode",
+      "phase": 1,
+      "expected_status": "MATCH_FOUND",
+      "actual_status": "MATCH_FOUND",
+      "status_correct": true,
+      "metrics": {
+        "ground_truth_segments": 1,
+        "predicted_segments": 1,
+        "episode_recalled_segments": 1,
+        "source_aware_recalled_segments": 1,
+        "episode_recall": 1.0,
+        "source_aware_recall_at_1s": 1.0,
+        "segment_precision_at_1s": 1.0,
+        "false_positive_segments": 0,
+        "false_positive_seconds": 0.0,
+        "episode_correctness": 1.0,
+        "accused_boundary_mae_seconds": 0.07450000000000001,
+        "source_boundary_mae_seconds": 0.0844999999999998,
+        "speed_ratio_mae": 0.0,
+        "unmatched_ground_truth": [],
+        "unmatched_predictions": [],
+        "ambiguous_predictions": 0,
+        "ambiguity_expected": false,
+        "ambiguity_correct": null,
+        "boundary_evaluated_segments": 1,
+        "boundary_missed_segments": 0,
+        "overlapping_predictions": 1,
+        "correct_episode_predictions": 1,
+        "raw_accused_boundary_errors": [
+          0.0,
+          0.14900000000000002
+        ],
+        "raw_source_boundary_errors": [
+          0.1589999999999998,
+          0.009999999999999787
+        ],
+        "raw_speed_ratio_errors": [
+          0.0
+        ]
+      },
+      "analysis_seconds": 0.05758570799662266,
+      "video_duration_seconds": 4.666667,
+      "predictions": [
+        {
+          "accused_start": 0.0,
+          "accused_end": 4.5,
+          "source_episode": "EP02",
+          "source_start": 5.5,
+          "source_end": 10.0,
+          "speed_ratio": 1.0,
+          "visual_score": 0.9994,
+          "audio_score": null,
+          "temporal_score": 1.0,
+          "match_score": 0.9994,
+          "mirrored": null,
+          "cropped": null,
+          "temporal_residual_seconds": 0.0,
+          "coverage": 1.0,
+          "uniqueness_margin": 0.0006,
+          "review_tier": "YELLOW",
+          "algorithm_version": "phase1-dct-v1"
+        }
+      ],
+      "alternative_candidates": [],
+      "reason": null
+    },
+    {
+      "case_id": "P1_018",
+      "transformation": "off_grid_direct_reencode",
+      "phase": 1,
+      "expected_status": "MATCH_FOUND",
+      "actual_status": "MATCH_FOUND",
+      "status_correct": true,
+      "metrics": {
+        "ground_truth_segments": 1,
+        "predicted_segments": 1,
+        "episode_recalled_segments": 1,
+        "source_aware_recalled_segments": 1,
+        "episode_recall": 1.0,
+        "source_aware_recall_at_1s": 1.0,
+        "segment_precision_at_1s": 1.0,
+        "false_positive_segments": 0,
+        "false_positive_seconds": 0.0,
+        "episode_correctness": 1.0,
+        "accused_boundary_mae_seconds": 0.09649999999999981,
+        "source_boundary_mae_seconds": 0.20749999999999913,
+        "speed_ratio_mae": 0.0,
+        "unmatched_ground_truth": [],
+        "unmatched_predictions": [],
+        "ambiguous_predictions": 0,
+        "ambiguity_expected": false,
+        "ambiguity_correct": null,
+        "boundary_evaluated_segments": 1,
+        "boundary_missed_segments": 0,
+        "overlapping_predictions": 1,
+        "correct_episode_predictions": 1,
+        "raw_accused_boundary_errors": [
+          0.0,
+          0.19299999999999962
+        ],
+        "raw_source_boundary_errors": [
+          0.11099999999999977,
+          0.3039999999999985
+        ],
+        "raw_speed_ratio_errors": [
+          0.0
+        ]
+      },
+      "analysis_seconds": 0.0636345840030117,
+      "video_duration_seconds": 4.833008,
+      "predictions": [
+        {
+          "accused_start": 0.0,
+          "accused_end": 5.0,
+          "source_episode": "EP03",
+          "source_start": 5.5,
+          "source_end": 10.5,
+          "speed_ratio": 1.0,
+          "visual_score": 0.9938,
+          "audio_score": null,
+          "temporal_score": 1.0,
+          "match_score": 0.9938,
+          "mirrored": null,
+          "cropped": null,
+          "temporal_residual_seconds": 0.0,
+          "coverage": 1.0,
+          "uniqueness_margin": 0.0057,
+          "review_tier": "YELLOW",
+          "algorithm_version": "phase1-dct-v1"
+        }
+      ],
+      "alternative_candidates": [],
+      "reason": null
+    },
+    {
+      "case_id": "P1_019",
+      "transformation": "off_grid_direct_reencode",
+      "phase": 1,
+      "expected_status": "MATCH_FOUND",
+      "actual_status": "MATCH_FOUND",
+      "status_correct": true,
+      "metrics": {
+        "ground_truth_segments": 1,
+        "predicted_segments": 1,
+        "episode_recalled_segments": 1,
+        "source_aware_recalled_segments": 1,
+        "episode_recall": 1.0,
+        "source_aware_recall_at_1s": 1.0,
+        "segment_precision_at_1s": 1.0,
+        "false_positive_segments": 0,
+        "false_positive_seconds": 0.0,
+        "episode_correctness": 1.0,
+        "accused_boundary_mae_seconds": 0.14550000000000018,
+        "source_boundary_mae_seconds": 0.14550000000000018,
+        "speed_ratio_mae": 0.0,
+        "unmatched_ground_truth": [],
+        "unmatched_predictions": [],
+        "ambiguous_predictions": 0,
+        "ambiguity_expected": false,
+        "ambiguity_correct": null,
+        "boundary_evaluated_segments": 1,
+        "boundary_missed_segments": 0,
+        "overlapping_predictions": 1,
+        "correct_episode_predictions": 1,
+        "raw_accused_boundary_errors": [
+          0.0,
+          0.29100000000000037
+        ],
+        "raw_source_boundary_errors": [
+          0.08699999999999974,
+          0.20400000000000063
+        ],
+        "raw_speed_ratio_errors": [
+          0.0
+        ]
+      },
+      "analysis_seconds": 0.06341112499649171,
+      "video_duration_seconds": 4.75,
+      "predictions": [
+        {
+          "accused_start": 0.0,
+          "accused_end": 5.0,
+          "source_episode": "EP01",
+          "source_start": 4.5,
+          "source_end": 9.5,
+          "speed_ratio": 1.0,
+          "visual_score": 0.9877,
+          "audio_score": null,
+          "temporal_score": 1.0,
+          "match_score": 0.9877,
+          "mirrored": null,
+          "cropped": null,
+          "temporal_residual_seconds": 0.0,
+          "coverage": 1.0,
+          "uniqueness_margin": 0.0028,
+          "review_tier": "YELLOW",
+          "algorithm_version": "phase1-dct-v1"
+        }
+      ],
+      "alternative_candidates": [],
+      "reason": null
+    },
+    {
+      "case_id": "P1_020",
+      "transformation": "off_grid_direct_reencode",
+      "phase": 1,
+      "expected_status": "MATCH_FOUND",
+      "actual_status": "MATCH_FOUND",
+      "status_correct": true,
+      "metrics": {
+        "ground_truth_segments": 1,
+        "predicted_segments": 1,
+        "episode_recalled_segments": 1,
+        "source_aware_recalled_segments": 1,
+        "episode_recall": 1.0,
+        "source_aware_recall_at_1s": 1.0,
+        "segment_precision_at_1s": 1.0,
+        "false_positive_segments": 0,
+        "false_positive_seconds": 0.0,
+        "episode_correctness": 1.0,
+        "accused_boundary_mae_seconds": 0.026999999999999913,
+        "source_boundary_mae_seconds": 0.1589999999999998,
+        "speed_ratio_mae": 0.0,
+        "unmatched_ground_truth": [],
+        "unmatched_predictions": [],
+        "ambiguous_predictions": 0,
+        "ambiguity_expected": false,
+        "ambiguity_correct": null,
+        "boundary_evaluated_segments": 1,
+        "boundary_missed_segments": 0,
+        "overlapping_predictions": 1,
+        "correct_episode_predictions": 1,
+        "raw_accused_boundary_errors": [
+          0.0,
+          0.053999999999999826
+        ],
+        "raw_source_boundary_errors": [
+          0.18599999999999994,
+          0.13199999999999967
+        ],
+        "raw_speed_ratio_errors": [
+          0.0
+        ]
+      },
+      "analysis_seconds": 0.05537075000756886,
+      "video_duration_seconds": 3.458333,
+      "predictions": [
+        {
+          "accused_start": 0.0,
+          "accused_end": 3.5,
+          "source_episode": "EP02",
+          "source_start": 2.0,
+          "source_end": 5.5,
+          "speed_ratio": 1.0,
+          "visual_score": 0.9983,
+          "audio_score": null,
+          "temporal_score": 1.0,
+          "match_score": 0.9983,
+          "mirrored": null,
+          "cropped": null,
+          "temporal_residual_seconds": 0.0,
+          "coverage": 1.0,
+          "uniqueness_margin": 0.0044,
+          "review_tier": "YELLOW",
+          "algorithm_version": "phase1-dct-v1"
+        }
+      ],
+      "alternative_candidates": [],
+      "reason": null
+    },
+    {
+      "case_id": "CASE_K",
+      "transformation": "pure_negative",
+      "phase": 1,
+      "expected_status": "MATCH_NOT_FOUND",
+      "actual_status": "MATCH_NOT_FOUND",
+      "status_correct": true,
+      "metrics": {
+        "ground_truth_segments": 0,
+        "predicted_segments": 0,
+        "episode_recalled_segments": 0,
+        "source_aware_recalled_segments": 0,
+        "episode_recall": null,
+        "source_aware_recall_at_1s": null,
+        "segment_precision_at_1s": 1.0,
+        "false_positive_segments": 0,
+        "false_positive_seconds": 0.0,
+        "episode_correctness": null,
+        "accused_boundary_mae_seconds": null,
+        "source_boundary_mae_seconds": null,
+        "speed_ratio_mae": null,
+        "unmatched_ground_truth": [],
+        "unmatched_predictions": [],
+        "ambiguous_predictions": 0,
+        "ambiguity_expected": false,
+        "ambiguity_correct": null,
+        "boundary_evaluated_segments": 0,
+        "boundary_missed_segments": 0,
+        "overlapping_predictions": 0,
+        "correct_episode_predictions": 0,
+        "raw_accused_boundary_errors": [],
+        "raw_source_boundary_errors": [],
+        "raw_speed_ratio_errors": []
+      },
+      "analysis_seconds": 0.1683743330067955,
+      "video_duration_seconds": 6.208333,
+      "predictions": [],
+      "alternative_candidates": [],
+      "reason": null
+    },
+    {
+      "case_id": "CASE_L",
+      "transformation": "exact_duplicate_cross_episode",
+      "phase": 1,
+      "expected_status": "AMBIGUOUS",
+      "actual_status": "AMBIGUOUS",
+      "status_correct": true,
+      "metrics": {
+        "ground_truth_segments": 0,
+        "predicted_segments": 0,
+        "episode_recalled_segments": 0,
+        "source_aware_recalled_segments": 0,
+        "episode_recall": null,
+        "source_aware_recall_at_1s": null,
+        "segment_precision_at_1s": null,
+        "false_positive_segments": 0,
+        "false_positive_seconds": 0.0,
+        "episode_correctness": null,
+        "accused_boundary_mae_seconds": null,
+        "source_boundary_mae_seconds": null,
+        "speed_ratio_mae": null,
+        "unmatched_ground_truth": [],
+        "unmatched_predictions": [],
+        "ambiguous_predictions": 1,
+        "ambiguity_expected": true,
+        "ambiguity_correct": true,
+        "boundary_evaluated_segments": 0,
+        "boundary_missed_segments": 0
+      },
+      "analysis_seconds": 0.08602520800195634,
+      "video_duration_seconds": 6.125,
+      "predictions": [],
+      "alternative_candidates": [
+        {
+          "accused_start": 0.0,
+          "accused_end": 6.0,
+          "source_episode": "EP04",
+          "source_start": 1.5,
+          "source_end": 7.5,
+          "speed_ratio": 1.0,
+          "visual_score": 0.9986,
+          "audio_score": null,
+          "temporal_score": 1.0,
+          "match_score": 0.9986,
+          "mirrored": null,
+          "cropped": null,
+          "temporal_residual_seconds": 0.0,
+          "coverage": 1.0,
+          "uniqueness_margin": 0.0,
+          "review_tier": "RED",
+          "algorithm_version": "phase1-dct-v1"
+        },
+        {
+          "accused_start": 0.0,
+          "accused_end": 6.0,
+          "source_episode": "EP05",
+          "source_start": 1.5,
+          "source_end": 7.5,
+          "speed_ratio": 1.0,
+          "visual_score": 0.9986,
+          "audio_score": null,
+          "temporal_score": 1.0,
+          "match_score": 0.9986,
+          "mirrored": null,
+          "cropped": null,
+          "temporal_residual_seconds": 0.0,
+          "coverage": 1.0,
+          "uniqueness_margin": null,
+          "review_tier": "YELLOW",
+          "algorithm_version": "phase1-dct-v1"
+        },
+        {
+          "accused_start": 0.0,
+          "accused_end": 6.0,
+          "source_episode": "EP05",
+          "source_start": 1.0,
+          "source_end": 7.0,
+          "speed_ratio": 1.0,
+          "visual_score": 0.9875,
+          "audio_score": null,
+          "temporal_score": 1.0,
+          "match_score": 0.9875,
+          "mirrored": null,
+          "cropped": null,
+          "temporal_residual_seconds": 0.0,
+          "coverage": 1.0,
+          "uniqueness_margin": null,
+          "review_tier": "YELLOW",
+          "algorithm_version": "phase1-dct-v1"
+        },
+        {
+          "accused_start": 0.0,
+          "accused_end": 6.0,
+          "source_episode": "EP05",
+          "source_start": 2.0,
+          "source_end": 8.0,
+          "speed_ratio": 1.0,
+          "visual_score": 0.9676,
+          "audio_score": null,
+          "temporal_score": 1.0,
+          "match_score": 0.9676,
+          "mirrored": null,
+          "cropped": null,
+          "temporal_residual_seconds": 0.0,
+          "coverage": 1.0,
+          "uniqueness_margin": null,
+          "review_tier": "YELLOW",
+          "algorithm_version": "phase1-dct-v1"
+        },
+        {
+          "accused_start": 0.0,
+          "accused_end": 6.0,
+          "source_episode": "EP05",
+          "source_start": 0.5,
+          "source_end": 6.5,
+          "speed_ratio": 1.0,
+          "visual_score": 0.9415,
+          "audio_score": null,
+          "temporal_score": 1.0,
+          "match_score": 0.9415,
+          "mirrored": null,
+          "cropped": null,
+          "temporal_residual_seconds": 0.0,
+          "coverage": 1.0,
+          "uniqueness_margin": null,
+          "review_tier": "YELLOW",
+          "algorithm_version": "phase1-dct-v1"
+        }
+      ],
+      "reason": "Equivalent competing source candidates exceed the ambiguity score ratio"
+    },
+    {
+      "case_id": "CASE_M",
+      "transformation": "faststart_incomplete_original",
+      "phase": 1,
+      "expected_status": "INCOMPLETE_INDEX",
+      "actual_status": "INCOMPLETE_INDEX",
+      "status_correct": true,
+      "metrics": {
+        "ground_truth_segments": 0,
+        "predicted_segments": 0,
+        "episode_recalled_segments": 0,
+        "source_aware_recalled_segments": 0,
+        "episode_recall": null,
+        "source_aware_recall_at_1s": null,
+        "segment_precision_at_1s": 1.0,
+        "false_positive_segments": 0,
+        "false_positive_seconds": 0.0,
+        "episode_correctness": null,
+        "accused_boundary_mae_seconds": null,
+        "source_boundary_mae_seconds": null,
+        "speed_ratio_mae": null,
+        "unmatched_ground_truth": [],
+        "unmatched_predictions": [],
+        "ambiguous_predictions": 0,
+        "ambiguity_expected": false,
+        "ambiguity_correct": null,
+        "boundary_evaluated_segments": 0,
+        "boundary_missed_segments": 0,
+        "overlapping_predictions": 0,
+        "correct_episode_predictions": 0,
+        "raw_accused_boundary_errors": [],
+        "raw_source_boundary_errors": [],
+        "raw_speed_ratio_errors": []
+      },
+      "analysis_seconds": 0.0003852910012938082,
+      "video_duration_seconds": 4.333333,
+      "predictions": [],
+      "alternative_candidates": [],
+      "reason": "EP91.mp4: INCOMPLETE_INDEX (frame count 18 outside expected 40±2; timestamp coverage 9.000s below media duration 20.000s)"
+    }
+  ]
+}
