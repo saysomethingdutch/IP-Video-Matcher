@@ -66,3 +66,15 @@ V1 中一个 project 对应一部权利作品。`original_assets` 必须引用 `
 ## 7. 暂停项
 
 Phase 1.5 完成后停止，等待第二次独立 Review 和架构负责人 Gate 决策。DINOv2、SigLIP、FAISS、Temporal Alignment v2、镜像、变速、crop、audio、ASR、Gemma、合理使用和 Excel 均不得在本阶段实现。
+
+## 8. Phase 1.5 第二次 Review 后执行顺序
+
+第二次独立 Review 裁定：
+
+- Phase 1 Gate：`FAIL`，等待后续能力改善；
+- Phase 1.5：`CONDITIONAL PASS`；
+- 先执行 Phase 1.5.1 Safety Closure；
+- Safety Closure 验收后只进入 Phase 2A-0 Retrieval Characterization；
+- Phase 2A-0 是测量工具，不是 matcher 能力变更。
+
+Phase 2A-0 只测真实素材在 source/query 2 FPS 下的 retrieval recall@1/8/32/128、rank 与 margin。当前仍禁止 Temporal Alignment v2、DINOv2、FAISS、非对称采样、8 FPS 外部验证及其它 Phase 2 能力。测量完成后必须停止，由 Architecture Owner 按决策树裁定后续路线。

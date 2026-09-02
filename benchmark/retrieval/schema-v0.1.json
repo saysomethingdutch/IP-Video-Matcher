@@ -1,0 +1,59 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:ipvm:retrieval-characterization:v0.1",
+  "title": "Phase 2A-0 Retrieval Characterization",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "scope",
+    "measurement_only",
+    "configuration",
+    "aggregate",
+    "observations"
+  ],
+  "properties": {
+    "schema_version": {"const": "retrieval-characterization-v0.1"},
+    "scope": {"const": "phase2a_0_retrieval_characterization"},
+    "measurement_only": {"const": true},
+    "contains_media_identity": {"const": false},
+    "configuration": {
+      "type": "object",
+      "required": ["source_fps", "query_fps", "top_k_values", "tolerance_seconds"],
+      "properties": {
+        "source_fps": {"const": 2.0},
+        "query_fps": {"const": 2.0},
+        "top_k_values": {"const": [1, 8, 32, 128]},
+        "tolerance_seconds": {"type": "number", "minimum": 0}
+      }
+    },
+    "aggregate": {
+      "type": "object",
+      "required": [
+        "query_frame_count",
+        "retrieval_recall_at_k",
+        "correct_source_rank_distribution",
+        "median_rank",
+        "p90_rank",
+        "score_margin"
+      ]
+    },
+    "observations": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "episode",
+          "query_mode",
+          "query_timestamp",
+          "expected_source_timestamp",
+          "source_query_temporal_phase",
+          "correct_source_rank",
+          "score_margin",
+          "hits"
+        ]
+      }
+    },
+    "decision": {"type": "null"}
+  },
+  "additionalProperties": true
+}

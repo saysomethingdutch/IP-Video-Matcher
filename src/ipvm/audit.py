@@ -11,7 +11,7 @@ from .matching import AnalysisResult
 def write_audit_result(result: AnalysisResult, output_dir: Path) -> Path:
     output_dir.mkdir(parents=True, exist_ok=True)
     payload = {
-        "schema_version": "0.1",
+        "schema_version": "0.3",
         "program_version": __version__,
         "created_at": datetime.now(UTC).isoformat(),
         "case_id": result.case_id,
@@ -34,6 +34,7 @@ def write_audit_result(result: AnalysisResult, output_dir: Path) -> Path:
                 segment.to_dict() for segment in result.alternatives
             ],
             "top_competing_candidates": result.top_competing_candidates,
+            "conflict_graph": result.conflict_graph,
             "matching_config": result.matching_config,
             "encoder": result.encoder,
             "algorithm_version": result.matching_config.get("algorithm_version"),

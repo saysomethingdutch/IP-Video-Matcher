@@ -21,6 +21,7 @@ from .logging_utils import configure_logging
 from .matching import VideoMatcher
 from .media import find_video_files
 from .project import initialize_project
+from .retrieval_benchmark import RetrievalBenchmark, write_report
 
 
 class Context:
@@ -98,6 +99,7 @@ def _analyze(context: Context, case_id: str) -> dict[str, object]:
         "reason": result.reason,
         "segments": [segment.to_dict() for segment in result.segments],
         "alternative_candidates": [segment.to_dict() for segment in result.alternatives],
+        "conflict_graph": result.conflict_graph,
         "audit_path": str(audit_path),
         "elapsed_seconds": result.elapsed_seconds,
     }
@@ -194,6 +196,52 @@ def benchmark(
     )
     result["report_path"] = str(report_path.resolve())
     _emit(result)
+
+
+@main.command("retrieval-benchmark")
+@click.option("--samples-per-episode", default=3, show_default=True, type=click.IntRange(min=1))
+@click.option("--query-duration", default=6.0, show_default=True, type=click.FloatRange(min=1.0))
+@click.option(
+    "--mode", "modes", multiple=True,
+    type=click.Choice(["direct", "reencode"]), default=("direct", "reencode"),
+    show_default=True,
+)
+@click.option("--seed", default=20260902, show_default=True, type=int)
+@click.option("--tolerance", default=0.26, show_default=True, type=click.FloatRange(min=0.0))
+@click.option("--json-report", type=click.Path(path_type=Path))
+@click.option("--markdown-report", type=click.Path(path_type=Path))
+@click.pass_obj
+def retrieval_benchmark(
+    context: Context,
+    samples_per_episode: int,
+    query_duration: float,
+    modes: tuple[str, ...],
+    seed: int,
+    tolerance: float,
+    json_report: Path | None,
+    markdown_report: Path | None,
+) -> None:
+    """Measure real-media frame retrieval recall@k without changing the matcher."""
+    initialize_project(context.config)
+    try:
+        report = RetrievalBenchmark(context.config, context.database).run(
+            samples_per_episode=samples_per_episode,
+            query_duration_seconds=query_duration,
+            modes=modes,
+            seed=seed,
+            tolerance_seconds=tolerance,
+        )
+    except (FileNotFoundError, ValueError, RuntimeError) as exc:
+        raise click.ClickException(str(exc)) from exc
+    output_dir = context.config.paths.output / "retrieval"
+    json_path = json_report or output_dir / "retrieval_characterization.json"
+    markdown_path = markdown_report or output_dir / "retrieval_characterization.md"
+    write_report(report, json_path, markdown_path)
+    _emit({
+        **report,
+        "json_report": str(json_path.resolve()),
+        "markdown_report": str(markdown_path.resolve()),
+    })
 
 
 @main.command("doctor")

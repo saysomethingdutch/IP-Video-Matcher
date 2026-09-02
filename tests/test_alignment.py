@@ -23,11 +23,12 @@ def test_temporal_alignment_maps_episode_and_timeline() -> None:
     assert segments[0].accused_end == 6.0
     assert segments[0].source_start == 42.0
     assert segments[0].source_end == 46.0
-    assert segments[0].review_tier == "YELLOW"
+    assert segments[0].review_tier == "REVIEW_REQUIRED"
     assert segments[0].mirrored is None
     assert segments[0].cropped is None
     safe_outcome = aligner.align_with_diagnostics(matches, index_complete=True)
-    assert safe_outcome.segments[0].review_tier == "GREEN"
+    assert safe_outcome.segments[0].candidate_tier == "GREEN"
+    assert safe_outcome.segments[0].review_tier == "REVIEW_REQUIRED"
 
 
 def test_temporal_alignment_is_piecewise() -> None:
@@ -51,5 +52,6 @@ def test_exact_cross_episode_duplicate_is_ambiguous() -> None:
     matches += candidates("EP02", 0.0, 20.0, 12)
     outcome = aligner.align_with_diagnostics(matches)
     assert outcome.ambiguous is True
-    assert outcome.segments == []
-    assert {item.source_episode for item in outcome.alternatives} == {"EP01", "EP02"}
+    assert len(outcome.segments) == 1
+    assert outcome.segments[0].review_tier == "REVIEW_REQUIRED"
+    assert {item.source_episode for item in outcome.alternatives} == {"EP02"}

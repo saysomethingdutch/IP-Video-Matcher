@@ -1,0 +1,36 @@
+{
+  "schema_version": "retrieval-characterization-v0.1",
+  "scope": "phase2a_0_retrieval_characterization",
+  "measurement_only": true,
+  "contains_media_identity": false,
+  "configuration": {
+    "source_fps": 2.0,
+    "query_fps": 2.0,
+    "top_k_values": [1, 8, 32, 128],
+    "tolerance_seconds": null,
+    "samples_per_episode": null,
+    "query_duration_seconds": null,
+    "query_modes": ["direct", "reencode"],
+    "encoder": null
+  },
+  "episode_count": null,
+  "sampled_interval_count": null,
+  "aggregate": {
+    "query_frame_count": null,
+    "retrieval_recall_at_k": {"1": null, "8": null, "32": null, "128": null},
+    "correct_source_rank_distribution": {
+      "1": null,
+      "2-8": null,
+      "9-32": null,
+      "33-128": null,
+      ">128": null,
+      "not_found": null
+    },
+    "median_rank": null,
+    "p90_rank": null,
+    "score_margin": {"median": null, "p10": null}
+  },
+  "observations": [],
+  "decision": null,
+  "decision_note": "Architecture Owner applies the decision tree; no route is selected by this template."
+}

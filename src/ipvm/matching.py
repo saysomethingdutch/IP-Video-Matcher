@@ -34,6 +34,7 @@ class AnalysisResult:
     matching_config: dict[str, Any]
     encoder: str
     top_competing_candidates: list[dict[str, Any]]
+    conflict_graph: list[dict[str, Any]]
     review_tier: str
     reason: str | None = None
 
@@ -43,6 +44,7 @@ class AlignmentOutcome:
     segments: list[SegmentMatch]
     alternatives: list[SegmentMatch]
     competing_candidates: list[dict[str, Any]]
+    conflict_graph: list[dict[str, Any]]
     ambiguous: bool
     contradiction: bool
     reason: str | None
@@ -89,6 +91,12 @@ class _Proposal:
     episode: str
     matches: list[CandidateMatch]
     score: float
+
+
+@dataclass
+class _FittedSegment:
+    segment: SegmentMatch
+    inliers: list[CandidateMatch]
 
 
 def _interval_iou(left: SegmentMatch, right: SegmentMatch) -> float:
@@ -174,7 +182,7 @@ class TemporalAligner:
         slope, intercept = np.linalg.lstsq(design, source[best_inliers], rcond=None)[0]
         return float(slope), float(intercept), best_inliers
 
-    def _proposal_to_segment(self, proposal: _Proposal) -> SegmentMatch | None:
+    def _proposal_to_segment(self, proposal: _Proposal) -> _FittedSegment | None:
         slope, intercept, inliers = self._robust_fit(proposal.matches)
         inlier_matches = [
             match for match, keep in zip(proposal.matches, inliers, strict=True) if keep
@@ -192,13 +200,16 @@ class TemporalAligner:
         source = np.asarray([item.source_time for item in inlier_matches])
         residual = float(np.max(np.abs(source - (slope * accused + intercept))))
         match_score = max(0.0, min(1.0, visual * (0.7 + 0.3 * coverage) * temporal))
-        return SegmentMatch(
+        accused_span = float(np.ptp(accused)) if len(accused) > 1 else 0.0
+        source_span = float(np.ptp(source)) if len(source) > 1 else 0.0
+        speed_ratio = round(slope, 4) if min(accused_span, source_span) >= 3.0 else None
+        segment = SegmentMatch(
             accused_start=round(start, 3),
             accused_end=round(end, 3),
             source_episode=proposal.episode,
             source_start=round(max(0.0, slope * start + intercept), 3),
             source_end=round(max(0.0, slope * end + intercept), 3),
-            speed_ratio=round(slope, 4),
+            speed_ratio=speed_ratio,
             visual_score=round(visual, 4),
             audio_score=None,
             temporal_score=round(temporal, 4),
@@ -207,6 +218,7 @@ class TemporalAligner:
             coverage=round(coverage, 4),
             algorithm_version=self.config.algorithm_version,
         )
+        return _FittedSegment(segment, inlier_matches)
 
     def align(self, candidates: list[CandidateMatch]) -> list[SegmentMatch]:
         return self.align_with_diagnostics(candidates).segments
@@ -216,45 +228,60 @@ class TemporalAligner:
     ) -> AlignmentOutcome:
         proposals = sorted(self._proposals(candidates), key=lambda item: item.score, reverse=True)
         scored_segments = [
-            (proposal, segment)
+            (proposal, fitted)
             for proposal in proposals
-            if (segment := self._proposal_to_segment(proposal)) is not None
+            if (fitted := self._proposal_to_segment(proposal)) is not None
         ]
         claimed_frames: set[int] = set()
-        accepted: list[SegmentMatch] = []
-        for proposal, segment in scored_segments:
+        accepted: list[_FittedSegment] = []
+        for proposal, fitted in scored_segments:
             frame_ids = {round(item.accused_time / self.frame_interval) for item in proposal.matches}
             if frame_ids and len(frame_ids & claimed_frames) / len(frame_ids) > 0.5:
                 continue
-            accepted.append(segment)
+            accepted.append(fitted)
             claimed_frames.update(frame_ids)
-        accepted.sort(key=lambda item: item.accused_start)
+        accepted.sort(key=lambda item: item.segment.accused_start)
         accepted = self._merge_adjacent(accepted)
 
         ambiguous = False
         alternatives: list[SegmentMatch] = []
         competing: list[dict[str, Any]] = []
         assessed: list[SegmentMatch] = []
-        for winner in accepted:
+        for winner_index, winner_fitted in enumerate(accepted, start=1):
+            winner = replace(winner_fitted.segment, segment_id=f"S{winner_index:03d}")
             rivals = [
-                candidate for _, candidate in scored_segments
-                if _interval_iou(winner, candidate) >= 0.8
+                fitted.segment for _, fitted in scored_segments
+                if _interval_iou(winner, fitted.segment) >= 0.8
                 and not (
-                    candidate.source_episode == winner.source_episode
-                    and abs(candidate.source_start - winner.source_start) <= 1.0
+                    fitted.segment.source_episode == winner.source_episode
+                    and abs(fitted.segment.source_start - winner.source_start) <= 1.0
                 )
             ]
             rivals.sort(key=lambda item: item.match_score, reverse=True)
             runner_up = rivals[0] if rivals else None
             margin = winner.match_score - runner_up.match_score if runner_up else 1.0
-            is_ambiguous = bool(
-                runner_up and runner_up.match_score / max(winner.match_score, 1e-9)
-                >= self.config.ambiguity_score_ratio
+            major_rivals = [
+                rival for rival in rivals
+                if rival.source_episode != winner.source_episode
+                and winner.match_score - rival.match_score
+                < self.config.minimum_uniqueness_margin
+            ]
+            is_ambiguous = bool(major_rivals)
+            candidate_tier = self._candidate_tier(
+                winner, margin, is_ambiguous, index_complete
             )
-            tier = self._review_tier(winner, margin, is_ambiguous, index_complete)
-            winner = replace(winner, uniqueness_margin=round(margin, 4), review_tier=tier)
+            winner = replace(
+                winner,
+                uniqueness_margin=round(margin, 4),
+                candidate_tier=candidate_tier,
+                review_tier="REVIEW_REQUIRED",
+            )
             assessed.append(winner)
-            for rival in rivals[: self.config.audit_top_candidates]:
+            audited_rivals = list(major_rivals)
+            for rival in rivals:
+                if rival not in audited_rivals and len(audited_rivals) < self.config.audit_top_candidates:
+                    audited_rivals.append(rival)
+            for rival in audited_rivals:
                 competing.append({
                     "winner": winner.to_dict(),
                     "candidate": rival.to_dict(),
@@ -263,17 +290,47 @@ class TemporalAligner:
                 })
             if is_ambiguous:
                 ambiguous = True
-                alternatives.extend([winner, *rivals[: self.config.audit_top_candidates]])
+                alternatives.extend([
+                    replace(rival, candidate_tier="YELLOW", review_tier="REVIEW_REQUIRED")
+                    for rival in major_rivals
+                ])
 
-        contradiction = self._has_contradiction(assessed)
+        conflict_graph = self._conflict_graph(assessed)
+        contradiction = bool(conflict_graph)
         if contradiction:
-            assessed = [replace(segment, review_tier="YELLOW") for segment in assessed]
-            alternatives.extend(assessed)
+            adjacency: dict[str, list[str]] = defaultdict(list)
+            reasons: dict[str, list[str]] = defaultdict(list)
+            for edge in conflict_graph:
+                adjacency[edge["left_segment_id"]].append(edge["right_segment_id"])
+                adjacency[edge["right_segment_id"]].append(edge["left_segment_id"])
+                reasons[edge["left_segment_id"]].append(edge["reason"])
+                reasons[edge["right_segment_id"]].append(edge["reason"])
+            assessed = [
+                replace(
+                    segment,
+                    conflict=bool(adjacency.get(segment.segment_id or "")),
+                    conflict_with=tuple(sorted(adjacency.get(segment.segment_id or "", []))),
+                    conflict_reason=(
+                        "; ".join(sorted(set(reasons.get(segment.segment_id or "", []))))
+                        or None
+                    ),
+                    candidate_tier=(
+                        "YELLOW" if adjacency.get(segment.segment_id or "")
+                        else segment.candidate_tier
+                    ),
+                    review_tier="REVIEW_REQUIRED",
+                )
+                for segment in assessed
+            ]
         reason = None
         if ambiguous:
-            reason = "Equivalent competing source candidates exceed the ambiguity score ratio"
+            reason = "Cross-episode competitors have uniqueness margin below 0.05"
         elif contradiction:
-            reason = "Segment contradiction detected"
+            conflict_ids = sorted({
+                item for edge in conflict_graph
+                for item in (edge["left_segment_id"], edge["right_segment_id"])
+            })
+            reason = f"Segment contradiction detected: {', '.join(conflict_ids)}"
         unique_alternatives: dict[tuple[Any, ...], SegmentMatch] = {}
         for segment in alternatives:
             key = (
@@ -282,19 +339,20 @@ class TemporalAligner:
             )
             unique_alternatives[key] = segment
         return AlignmentOutcome(
-            segments=[] if ambiguous or contradiction else assessed,
+            segments=assessed,
             alternatives=list(unique_alternatives.values()),
-            competing_candidates=competing[: self.config.audit_top_candidates],
+            competing_candidates=competing,
+            conflict_graph=conflict_graph,
             ambiguous=ambiguous,
             contradiction=contradiction,
             reason=reason,
         )
 
-    def _review_tier(
+    def _candidate_tier(
         self, segment: SegmentMatch, margin: float, ambiguous: bool, index_complete: bool
     ) -> str:
         if ambiguous:
-            return "RED"
+            return "YELLOW"
         green = (
             index_complete
             and margin >= self.config.minimum_uniqueness_margin
@@ -305,7 +363,8 @@ class TemporalAligner:
         return "GREEN" if green else "YELLOW"
 
     @staticmethod
-    def _has_contradiction(segments: list[SegmentMatch]) -> bool:
+    def _conflict_graph(segments: list[SegmentMatch]) -> list[dict[str, Any]]:
+        graph: list[dict[str, Any]] = []
         for index, left in enumerate(segments):
             for right in segments[index + 1:]:
                 accused_overlap = max(
@@ -316,7 +375,12 @@ class TemporalAligner:
                     left.source_episode != right.source_episode
                     or abs(left.source_start - right.source_start) > 1.0
                 ):
-                    return True
+                    graph.append({
+                        "left_segment_id": left.segment_id,
+                        "right_segment_id": right.segment_id,
+                        "reason": "overlapping accused intervals map to incompatible sources",
+                    })
+                    continue
                 source_overlap = max(
                     0.0, min(left.source_end, right.source_end)
                     - max(left.source_start, right.source_start)
@@ -325,46 +389,41 @@ class TemporalAligner:
                     left.source_episode == right.source_episode
                     and accused_overlap <= 0.25 and source_overlap > 0.5
                 ):
-                    return True
-        return False
+                    graph.append({
+                        "left_segment_id": left.segment_id,
+                        "right_segment_id": right.segment_id,
+                        "reason": "disjoint accused intervals reuse overlapping source interval",
+                    })
+        return graph
 
-    def _merge_adjacent(self, segments: list[SegmentMatch]) -> list[SegmentMatch]:
+    def _merge_adjacent(self, segments: list[_FittedSegment]) -> list[_FittedSegment]:
         if not segments:
             return []
         merged = [segments[0]]
         for segment in segments[1:]:
             previous = merged[-1]
+            previous_segment = previous.segment
+            current_segment = segment.segment
             compatible = (
-                segment.source_episode == previous.source_episode
-                and segment.accused_start - previous.accused_end <= self.config.maximum_frame_gap_seconds
-                and abs(segment.source_start - previous.source_end) <= 1.5
+                current_segment.source_episode == previous_segment.source_episode
+                and current_segment.accused_start - previous_segment.accused_end
+                <= self.config.maximum_frame_gap_seconds
+                and abs(current_segment.source_start - previous_segment.source_end) <= 1.5
             )
             if not compatible:
                 merged.append(segment)
                 continue
-            first_duration = previous.accused_end - previous.accused_start
-            second_duration = segment.accused_end - segment.accused_start
-            total_duration = first_duration + second_duration
-            weighted_visual = (
-                previous.visual_score * first_duration + segment.visual_score * second_duration
-            ) / total_duration
-            merged[-1] = SegmentMatch(
-                accused_start=previous.accused_start,
-                accused_end=segment.accused_end,
-                source_episode=previous.source_episode,
-                source_start=previous.source_start,
-                source_end=segment.source_end,
-                speed_ratio=round((previous.speed_ratio + segment.speed_ratio) / 2, 4),
-                visual_score=round(weighted_visual, 4),
-                audio_score=None,
-                temporal_score=min(previous.temporal_score, segment.temporal_score),
-                match_score=min(previous.match_score, segment.match_score),
-                temporal_residual_seconds=max(
-                    previous.temporal_residual_seconds, segment.temporal_residual_seconds
-                ),
-                coverage=min(previous.coverage, segment.coverage),
-                algorithm_version=self.config.algorithm_version,
+            combined = previous.inliers + segment.inliers
+            proposal = _Proposal(
+                previous_segment.source_episode,
+                combined,
+                previous_segment.match_score + current_segment.match_score,
             )
+            refitted = self._proposal_to_segment(proposal)
+            if refitted is None:
+                merged.append(segment)
+            else:
+                merged[-1] = refitted
         return merged
 
 
@@ -406,12 +465,10 @@ class VideoMatcher:
             alignment = self.aligner.align_with_diagnostics(candidates, index_complete=True)
             if alignment.ambiguous or alignment.contradiction:
                 status = MatchStatus.AMBIGUOUS
-                tier = "RED"
+                tier = "REVIEW_REQUIRED"
             elif alignment.segments:
                 status = MatchStatus.MATCH_FOUND
-                tier = "GREEN" if all(
-                    segment.review_tier == "GREEN" for segment in alignment.segments
-                ) else "YELLOW"
+                tier = "REVIEW_REQUIRED"
             else:
                 status = MatchStatus.MATCH_NOT_FOUND
                 tier = "RED"
@@ -419,14 +476,14 @@ class VideoMatcher:
                 case_id, accused_path, status.value, alignment.segments,
                 alignment.alternatives, time.perf_counter() - started, len(extracted),
                 digest, metadata, index_health, asdict(self.config.matching), self.encoder.name,
-                alignment.competing_candidates, tier, alignment.reason,
+                alignment.competing_candidates, alignment.conflict_graph, tier, alignment.reason,
             )
         except (MediaToolError, FileNotFoundError, OSError, ValueError) as exc:
             logger.exception("Analysis failed for %s", case_id)
             result = AnalysisResult(
                 case_id, accused_path, MatchStatus.ERROR.value, [], [],
                 time.perf_counter() - started, 0, None, None, index_health,
-                asdict(self.config.matching), self.encoder.name, [], "RED", str(exc),
+                asdict(self.config.matching), self.encoder.name, [], [], "RED", str(exc),
             )
         if persist:
             self.database.replace_case_result(
@@ -478,7 +535,7 @@ class VideoMatcher:
         result = AnalysisResult(
             case_id, accused_path, status.value, [], [], time.perf_counter() - started,
             0, None, None, index_health, asdict(self.config.matching), self.encoder.name,
-            [], "RED", reason,
+            [], [], "RED", reason,
         )
         if persist:
             self.database.replace_case_result(

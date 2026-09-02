@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from functools import lru_cache
-from typing import Iterable, Protocol
+from typing import Any, Iterable, Protocol
 
 import numpy as np
 from PIL import Image
@@ -9,8 +9,11 @@ from PIL import Image
 
 class ImageEncoder(Protocol):
     name: str
+    version: str
 
     def encode_images(self, images: Iterable[np.ndarray]) -> np.ndarray: ...
+
+    def cache_identity(self) -> dict[str, Any]: ...
 
 
 @lru_cache(maxsize=4)
@@ -26,7 +29,8 @@ def _dct_matrix(size: int) -> np.ndarray:
 class DCTVisualEncoder:
     """Small deterministic Phase-1 descriptor behind the visual encoder interface."""
 
-    name = "dct-low-frequency-v1"
+    name = "dct-low-frequency"
+    version = "1"
 
     def __init__(self, image_size: int = 32, coefficient_size: int = 12):
         self.image_size = image_size
@@ -55,3 +59,13 @@ class DCTVisualEncoder:
         if not vectors:
             return np.empty((0, dimension), dtype=np.float32)
         return np.asarray(vectors, dtype=np.float32)
+
+    def cache_identity(self) -> dict[str, Any]:
+        return {
+            "name": self.name,
+            "version": self.version,
+            "image_size": self.image_size,
+            "coefficient_size": self.coefficient_size,
+            "normalization": "mean-center-standardize-l2",
+            "resize": "pillow-lanczos",
+        }

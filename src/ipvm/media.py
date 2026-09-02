@@ -82,10 +82,16 @@ def extract_grayscale_frames(
     fps: float,
     width: int,
     height: int,
+    start_seconds: float | None = None,
+    duration_seconds: float | None = None,
 ) -> list[tuple[float, np.ndarray]]:
     frame_size = width * height
-    command = [
-        "ffmpeg", "-v", "error", "-i", str(path),
+    command = ["ffmpeg", "-v", "error", "-i", str(path)]
+    if start_seconds is not None:
+        command += ["-ss", f"{start_seconds:.6f}"]
+    if duration_seconds is not None:
+        command += ["-t", f"{duration_seconds:.6f}"]
+    command += [
         "-vf", f"fps={fps},scale={width}:{height}:flags=area,format=gray",
         "-f", "rawvideo", "-pix_fmt", "gray", "pipe:1",
     ]

@@ -10,7 +10,7 @@ from typing import Any, Iterator
 from .models import MediaMetadata, SegmentMatch
 
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS projects (
@@ -86,7 +86,7 @@ CREATE TABLE IF NOT EXISTS segment_matches (
     source_episode TEXT NOT NULL,
     source_start REAL NOT NULL,
     source_end REAL NOT NULL,
-    speed_ratio REAL NOT NULL,
+    speed_ratio REAL,
     visual_score REAL NOT NULL,
     audio_score REAL,
     temporal_score REAL NOT NULL,
@@ -94,7 +94,12 @@ CREATE TABLE IF NOT EXISTS segment_matches (
     temporal_residual_seconds REAL,
     coverage REAL,
     uniqueness_margin REAL,
+    candidate_tier TEXT NOT NULL DEFAULT 'YELLOW',
     review_tier TEXT NOT NULL,
+    segment_id TEXT,
+    conflict INTEGER NOT NULL DEFAULT 0,
+    conflict_with_json TEXT NOT NULL DEFAULT '[]',
+    conflict_reason TEXT,
     mirrored INTEGER,
     cropped INTEGER,
     created_at TEXT NOT NULL,
@@ -156,27 +161,65 @@ class Database:
             connection.close()
 
     def initialize(self, project_root: Path) -> int:
-        with self.connect() as connection:
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        should_backup = self.path.exists() and self.path.stat().st_size > 0
+        connection = sqlite3.connect(self.path, isolation_level=None)
+        connection.row_factory = sqlite3.Row
+        connection.execute("PRAGMA journal_mode = WAL")
+        connection.execute("PRAGMA foreign_keys = OFF")
+        try:
             existing = connection.execute(
                 "SELECT 1 FROM sqlite_master WHERE type='table' AND name='original_assets'"
             ).fetchone()
-            if existing and "project_id" not in _columns(connection, "original_assets"):
-                self._migrate_legacy_to_v2(connection, project_root)
-            connection.executescript(SCHEMA)
+            version = int(connection.execute("PRAGMA user_version").fetchone()[0])
+            legacy = bool(
+                existing and "project_id" not in _columns(connection, "original_assets")
+            )
+            migration_needed = legacy or bool(existing and version < SCHEMA_VERSION)
+            if should_backup and migration_needed:
+                backup = self.path.with_suffix(self.path.suffix + ".pre-v3.bak")
+                if not backup.exists():
+                    with sqlite3.connect(backup) as backup_connection:
+                        connection.backup(backup_connection)
+            connection.execute("BEGIN IMMEDIATE")
+            if legacy:
+                self._migrate_legacy(connection, project_root)
+            else:
+                self._execute_schema(connection)
+                if existing and version < SCHEMA_VERSION:
+                    self._migrate_v2_to_v3(connection)
+            self._execute_schema(connection)
             connection.execute(
                 "INSERT OR IGNORE INTO projects(root_path, created_at) VALUES (?, ?)",
                 (str(project_root.resolve()), utc_now()),
             )
             connection.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
+            self._migration_checkpoint("before_commit")
+            connection.execute("COMMIT")
             row = connection.execute(
                 "SELECT id FROM projects WHERE root_path = ?", (str(project_root.resolve()),)
             ).fetchone()
             assert row is not None
             return int(row["id"])
+        except Exception:
+            if connection.in_transaction:
+                connection.execute("ROLLBACK")
+            raise
+        finally:
+            connection.execute("PRAGMA foreign_keys = ON")
+            connection.close()
 
-    def _migrate_legacy_to_v2(self, connection: sqlite3.Connection, project_root: Path) -> None:
-        """Preserve Phase-1 runtime data while replacing global episode uniqueness."""
-        connection.execute("PRAGMA foreign_keys = OFF")
+    @staticmethod
+    def _execute_schema(connection: sqlite3.Connection) -> None:
+        for statement in SCHEMA.split(";"):
+            if statement.strip():
+                connection.execute(statement)
+
+    def _migration_checkpoint(self, name: str) -> None:
+        """No-op seam used to simulate mid-migration failure in tests."""
+
+    def _migrate_legacy(self, connection: sqlite3.Connection, project_root: Path) -> None:
+        """Preserve Phase-1 data inside the caller's explicit transaction."""
         connection.execute(
             "INSERT OR IGNORE INTO projects(root_path, created_at) VALUES (?, ?)",
             (str(project_root.resolve()), utc_now()),
@@ -191,6 +234,7 @@ class Database:
         connection.execute("ALTER TABLE frame_features RENAME TO frame_features_v1")
         connection.execute("ALTER TABLE accused_videos RENAME TO accused_videos_v1")
         connection.execute("ALTER TABLE segment_matches RENAME TO segment_matches_v1")
+        self._migration_checkpoint("legacy_tables_renamed")
         for column, definition in (
             ("index_status", "TEXT NOT NULL DEFAULT 'NOT_INDEXED'"),
             ("source_file_count", "INTEGER NOT NULL DEFAULT 0"),
@@ -200,7 +244,7 @@ class Database:
         ):
             if column not in _columns(connection, "projects"):
                 connection.execute(f"ALTER TABLE projects ADD COLUMN {column} {definition}")
-        connection.executescript(SCHEMA)
+        self._execute_schema(connection)
         connection.execute(
             """
             INSERT INTO original_assets(
@@ -239,22 +283,23 @@ class Database:
             INSERT INTO segment_matches(
                 id, project_id, case_id, accused_start, accused_end, source_episode,
                 source_start, source_end, speed_ratio, visual_score, audio_score,
-                temporal_score, match_score, review_tier, mirrored, cropped,
+                temporal_score, match_score, candidate_tier, review_tier, mirrored, cropped,
                 created_at, algorithm_version
             )
             SELECT id, ?, case_id, accused_start, accused_end, source_episode,
                    source_start, source_end, speed_ratio, visual_score, audio_score,
-                   temporal_score, overall_confidence, 'YELLOW', NULL, NULL,
+                   temporal_score, overall_confidence, 'YELLOW', 'REVIEW_REQUIRED', NULL, NULL,
                    created_at, algorithm_version
             FROM segment_matches_v1
             """,
             (project_id,),
         )
+        self._migration_checkpoint("legacy_data_copied")
         for table in (
             "frame_features_v1", "segment_matches_v1", "accused_videos_v1", "original_assets_v1"
         ):
             connection.execute(f"DROP TABLE {table}")
-        connection.executescript(SCHEMA)
+        self._execute_schema(connection)
         connection.execute(
             """
             UPDATE projects SET index_status='INCOMPLETE_INDEX',
@@ -265,7 +310,40 @@ class Database:
             """,
             (project_id, project_id),
         )
-        connection.execute("PRAGMA foreign_keys = ON")
+
+    def _migrate_v2_to_v3(self, connection: sqlite3.Connection) -> None:
+        if "candidate_tier" in _columns(connection, "segment_matches"):
+            return
+        connection.execute("DROP INDEX IF EXISTS idx_segment_matches_case")
+        connection.execute("ALTER TABLE segment_matches RENAME TO segment_matches_v2")
+        self._migration_checkpoint("v2_table_renamed")
+        self._execute_schema(connection)
+        connection.execute(
+            """
+            INSERT INTO segment_matches(
+                id, project_id, case_id, candidate_rank, is_primary,
+                accused_start, accused_end, source_episode, source_start, source_end,
+                speed_ratio, visual_score, audio_score, temporal_score, match_score,
+                temporal_residual_seconds, coverage, uniqueness_margin,
+                candidate_tier, review_tier, mirrored, cropped, created_at, algorithm_version
+            )
+            SELECT id, project_id, case_id, candidate_rank, is_primary,
+                   accused_start, accused_end, source_episode, source_start, source_end,
+                   speed_ratio, visual_score, audio_score, temporal_score, match_score,
+                   temporal_residual_seconds, coverage, uniqueness_margin,
+                   CASE WHEN review_tier='GREEN' THEN 'GREEN' ELSE 'YELLOW' END,
+                   CASE WHEN review_tier IN ('GREEN', 'YELLOW')
+                        THEN 'REVIEW_REQUIRED' ELSE review_tier END,
+                   mirrored, cropped, created_at, algorithm_version
+            FROM segment_matches_v2
+            """
+        )
+        self._migration_checkpoint("v2_data_copied")
+        connection.execute("DROP TABLE segment_matches_v2")
+        connection.execute(
+            "CREATE INDEX IF NOT EXISTS idx_segment_matches_case "
+            "ON segment_matches(project_id, case_id)"
+        )
 
     def project_id(self, project_root: Path) -> int:
         return self.initialize(project_root)
@@ -448,9 +526,11 @@ class Database:
                     project_id, case_id, candidate_rank, is_primary,
                     accused_start, accused_end, source_episode, source_start, source_end,
                     speed_ratio, visual_score, audio_score, temporal_score, match_score,
-                    temporal_residual_seconds, coverage, uniqueness_margin, review_tier,
+                    temporal_residual_seconds, coverage, uniqueness_margin,
+                    candidate_tier, review_tier, segment_id, conflict,
+                    conflict_with_json, conflict_reason,
                     mirrored, cropped, created_at, algorithm_version
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 rows,
             )
@@ -465,7 +545,9 @@ class Database:
             segment.source_end, segment.speed_ratio, segment.visual_score,
             segment.audio_score, segment.temporal_score, segment.match_score,
             segment.temporal_residual_seconds, segment.coverage,
-            segment.uniqueness_margin, segment.review_tier,
+            segment.uniqueness_margin, segment.candidate_tier, segment.review_tier,
+            segment.segment_id, int(segment.conflict),
+            json.dumps(segment.conflict_with, ensure_ascii=False), segment.conflict_reason,
             None if segment.mirrored is None else int(segment.mirrored),
             None if segment.cropped is None else int(segment.cropped),
             utc_now(), segment.algorithm_version,

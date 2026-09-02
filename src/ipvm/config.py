@@ -18,7 +18,6 @@ class MatchingConfig:
     offset_bin_seconds: float = 0.5
     maximum_frame_gap_seconds: float = 1.1
     algorithm_version: str = "phase1-dct-v1"
-    ambiguity_score_ratio: float = 0.99999
     minimum_uniqueness_margin: float = 0.05
     maximum_temporal_residual_seconds: float = 0.55
     minimum_coverage: float = 0.90

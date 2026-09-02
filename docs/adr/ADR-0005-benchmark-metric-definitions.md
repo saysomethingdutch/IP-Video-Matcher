@@ -1,6 +1,6 @@
 # ADR-0005：Benchmark Metric Definitions
 
-状态：已接受，Phase 1.5 已实现
+状态：已接受，Phase 1.5.1 evaluator 修订
 
 ## 匹配判据
 
@@ -12,6 +12,8 @@
 - `episode_correctness`：与某个 GT accused 区间重叠的预测中，episode 正确的比例。
 
 这些指标分别计算，禁止复用同一个表达式。
+
+prediction 与 GT 必须做确定性一对一 assignment。一条 GT 最多被一条 prediction 认领；重复或近似重复的多余 prediction 计入 false positive。
 
 ## False Positive
 
@@ -29,7 +31,17 @@ accused-side 与 source-side boundary MAE 分开报告。只要存在未评估�
 
 ## Speed Ratio
 
-evaluator 记录 `speed_ratio_mae`。Phase 1 不要求通过变速 Gate；该字段为 Phase 2 留出可比较基线。
+evaluator 同时验证物理自洽性：prediction accused span、source span、prediction slope 与 GT `speed_ratio` 必须相容。即使 source endpoints 看似命中，`accused 60s → source 5s 且 speed_ratio=1.0` 也必须失败。
+
+`speed_ratio_mae` 只在真正的非 1.0× GT 上统计，避免大量 1.0 样本稀释变速误差。Phase 1 不要求通过变速 Gate；该字段为 Phase 2 留出可比较基线。
+
+## Tier Metrics
+
+- `green_precision`：candidate GREEN 中 source-aware 正确的比例；
+- `green_recall`：source-aware 正确且 candidate GREEN 的预测数 / GT 数；
+- `review_required_precision`：有效 review tier 为 `REVIEW_REQUIRED` 的预测中 source-aware 正确的比例。
+
+Phase 1.5.1 的 candidate GREEN 仅用于诊断，报告必须注明它不是自动放行状态。未来恢复 GREEN 自动放行时，Gate 必须要求 `green_precision == 1.0`。
 
 ## Ground Truth
 

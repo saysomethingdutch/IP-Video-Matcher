@@ -90,3 +90,66 @@ def test_legacy_schema_migrates_match_score_and_project_scope(tmp_path) -> None:
         assert row["match_score"] == 0.95
         assert row["mirrored"] is None and row["cropped"] is None
         assert migrated.execute("PRAGMA foreign_key_check").fetchall() == []
+
+
+def test_migration_failure_rolls_back_without_half_migrated_schema(tmp_path, monkeypatch) -> None:
+    path = tmp_path / "legacy-failure.db"
+    connection = sqlite3.connect(path)
+    connection.executescript("""
+        CREATE TABLE projects(id INTEGER PRIMARY KEY, root_path TEXT UNIQUE, created_at TEXT);
+        CREATE TABLE original_assets(
+            id INTEGER PRIMARY KEY, episode TEXT UNIQUE, file_path TEXT, file_size INTEGER,
+            sha256 TEXT, duration REAL, media_metadata_json TEXT, index_path TEXT,
+            algorithm_version TEXT, indexed_at TEXT
+        );
+        CREATE TABLE frame_features(
+            id INTEGER PRIMARY KEY, original_asset_id INTEGER, timestamp REAL,
+            frame_index INTEGER, feature_path TEXT, encoder TEXT
+        );
+        CREATE TABLE accused_videos(
+            id INTEGER PRIMARY KEY, case_id TEXT UNIQUE, file_path TEXT, file_size INTEGER,
+            sha256 TEXT, duration REAL, media_metadata_json TEXT, status TEXT, analyzed_at TEXT
+        );
+        CREATE TABLE segment_matches(
+            id INTEGER PRIMARY KEY, case_id TEXT, accused_start REAL, accused_end REAL,
+            source_episode TEXT, source_start REAL, source_end REAL, speed_ratio REAL,
+            visual_score REAL, audio_score REAL, temporal_score REAL,
+            overall_confidence REAL, mirrored INTEGER, cropped INTEGER,
+            created_at TEXT, algorithm_version TEXT
+        );
+        INSERT INTO projects VALUES(1, '/legacy', 'now');
+        INSERT INTO original_assets VALUES(
+            1, 'EP01', '/legacy/EP01.mp4', 10, 'abc', 5.0, '{}', NULL, 'v1', 'now'
+        );
+    """)
+    connection.commit()
+    connection.close()
+
+    database = Database(path)
+
+    def fail_at_checkpoint(name: str) -> None:
+        if name == "legacy_data_copied":
+            raise RuntimeError("simulated migration failure")
+
+    monkeypatch.setattr(database, "_migration_checkpoint", fail_at_checkpoint)
+    try:
+        database.initialize(Path("/legacy"))
+    except RuntimeError as exc:
+        assert "simulated" in str(exc)
+    else:
+        raise AssertionError("migration should fail")
+
+    with sqlite3.connect(path) as rolled_back:
+        columns = {
+            row[1] for row in rolled_back.execute("PRAGMA table_info(original_assets)")
+        }
+        tables = {
+            row[0] for row in rolled_back.execute(
+                "SELECT name FROM sqlite_master WHERE type='table'"
+            )
+        }
+        assert "project_id" not in columns
+        assert not any(name.endswith("_v1") for name in tables)
+        assert rolled_back.execute("SELECT COUNT(*) FROM original_assets").fetchone()[0] == 1
+        assert rolled_back.execute("PRAGMA user_version").fetchone()[0] == 0
+    assert path.with_suffix(path.suffix + ".pre-v3.bak").exists()

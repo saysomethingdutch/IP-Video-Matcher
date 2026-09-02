@@ -2,6 +2,8 @@
 
 状态：草案，未实现
 
+修订：Phase 1.5.1 仅澄清输出语义；本 ADR 的 Temporal Alignment v2 仍未实现。
+
 ## 问题
 
 现有 Phase 1 对齐器先按常数 offset 分桶，再在桶内拟合斜率。这使 RANSAC 无法覆盖 Architecture Phase 2 要求的 0.75–1.50 速度范围，并会在 offset 漂移时截断片段。
@@ -42,6 +44,19 @@ a ∈ [0.75, 1.50]
 ## 影响
 
 该变更会替换 Temporal Alignment 的候选提案逻辑，并改变 speed ratio 的可检测范围。它不应与视觉 backend 切换同时实施，否则无法归因指标变化。
+
+## speed_ratio 固定语义
+
+```text
+speed_ratio = d(source_time) / d(accused_time)
+```
+
+- `speed_ratio > 1.0`：被诉视频加速。例如，被诉时间 4 秒覆盖原片 5 秒时为 `1.25`；
+- `speed_ratio < 1.0`：被诉视频减速；
+- 拟合使用的 accused/source 有效跨度任一小于 3.0 秒时输出 `null`，不得输出不可信斜率；
+- 合并相邻 segment 时禁止对既有 `speed_ratio` 做算术平均，必须合并完整 inliers 后重新拟合 slope。
+
+Phase 1.5.1 已修复上述输出与合并语义，但没有实现二维投票、候选峰值或任何 Temporal Alignment v2 能力。
 
 ## 实施约束
 

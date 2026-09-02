@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import hashlib
 import logging
 import math
 import re
@@ -159,17 +160,31 @@ class OriginalIndexer:
         digest = sha256_file(path)
         cache_dir = self.config.paths.workspace / "indexes"
         cache_dir.mkdir(parents=True, exist_ok=True)
+        encoder_identity = self.encoder.cache_identity()
+        cache_identity = {
+            "source_sha256": digest,
+            "encoder": encoder_identity,
+            "algorithm_version": self.config.matching.algorithm_version,
+            "coarse_fps": self.config.matching.coarse_fps,
+            "frame_width": self.config.matching.frame_width,
+            "frame_height": self.config.matching.frame_height,
+            "frame_extraction": {
+                "colorspace": "gray8",
+                "scaler": "ffmpeg-scale",
+                "timestamp_origin": "sample_index_over_target_fps",
+            },
+        }
+        identity_json = json.dumps(cache_identity, sort_keys=True, separators=(",", ":"))
+        identity_digest = hashlib.sha256(identity_json.encode("utf-8")).hexdigest()[:24]
         encoder_key = re.sub(r"[^A-Za-z0-9_.-]+", "_", self.encoder.name)
-        index_path = cache_dir / (
-            f"{digest}-{encoder_key}-{self.config.matching.algorithm_version}.npz"
-        )
+        index_path = cache_dir / f"{digest}-{encoder_key}-{identity_digest}.npz"
+        encoder_label = f"{self.encoder.name}@{self.encoder.version}"
         cached = index_path.exists() and not force
         if cached:
             with np.load(index_path) as cached_index:
                 timestamps = cached_index["timestamps"].astype(float).tolist()
-                cached_encoder = str(cached_index["encoder"][0])
-                cached_algorithm = str(cached_index["algorithm_version"][0])
-            if cached_encoder != self.encoder.name or cached_algorithm != self.config.matching.algorithm_version:
+                cached_identity = str(cached_index["cache_identity_json"][0])
+            if cached_identity != identity_json:
                 cached = False
         if not cached:
             extracted = extract_grayscale_frames(
@@ -184,8 +199,11 @@ class OriginalIndexer:
                 index_path,
                 timestamps=np.asarray(timestamps, dtype=np.float32),
                 features=features,
-                encoder=np.asarray([self.encoder.name]),
+                encoder=np.asarray([encoder_label]),
+                encoder_name=np.asarray([self.encoder.name]),
+                encoder_version=np.asarray([self.encoder.version]),
                 algorithm_version=np.asarray([self.config.matching.algorithm_version]),
+                cache_identity_json=np.asarray([identity_json]),
                 media_duration=np.asarray([metadata.duration], dtype=np.float64),
                 target_fps=np.asarray([self.config.matching.coarse_fps], dtype=np.float64),
             )
@@ -194,10 +212,10 @@ class OriginalIndexer:
         )
         asset_id = self.database.upsert_original(
             self.project_id, episode, path, digest, metadata,
-            index_path, self.config.matching.algorithm_version, self.encoder.name, completeness,
+            index_path, self.config.matching.algorithm_version, encoder_label, completeness,
         )
         if completeness["status"] == "COMPLETE":
-            self.database.add_frame_rows(asset_id, timestamps, index_path, self.encoder.name)
+            self.database.add_frame_rows(asset_id, timestamps, index_path, encoder_label)
         elapsed = time.perf_counter() - started
         logger.info(
             "Indexed original %s: %s (%d/%d frames)",

@@ -48,7 +48,7 @@ class SegmentMatch:
     source_episode: str
     source_start: float
     source_end: float
-    speed_ratio: float
+    speed_ratio: float | None
     visual_score: float
     audio_score: float | None
     temporal_score: float
@@ -58,7 +58,12 @@ class SegmentMatch:
     temporal_residual_seconds: float = 0.0
     coverage: float = 0.0
     uniqueness_margin: float | None = None
-    review_tier: str = "YELLOW"
+    candidate_tier: str = "YELLOW"
+    review_tier: str = "REVIEW_REQUIRED"
+    segment_id: str | None = None
+    conflict: bool = False
+    conflict_with: tuple[str, ...] = ()
+    conflict_reason: str | None = None
     algorithm_version: str = "phase1-dct-v1"
 
     def to_dict(self) -> dict[str, Any]:

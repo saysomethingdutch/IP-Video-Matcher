@@ -63,14 +63,14 @@ def _make_clip(source: Path, target: Path, start: float, duration: float, vf: st
     _ffmpeg(args)
 
 
-def _concat(clips: list[Path], target: Path) -> None:
+def _concat(clips: list[Path], target: Path, crf: int = 18) -> None:
     args: list[str] = []
     for clip in clips:
         args += ["-i", str(clip)]
     inputs = "".join(f"[{index}:v]" for index in range(len(clips)))
     args += [
         "-filter_complex", f"{inputs}concat=n={len(clips)}:v=1:a=0[outv]",
-        "-map", "[outv]", "-c:v", "libx264", "-preset", "veryfast", "-crf", "18",
+        "-map", "[outv]", "-c:v", "libx264", "-preset", "veryfast", "-crf", str(crf),
         str(target),
     ]
     _ffmpeg(args)
@@ -94,13 +94,16 @@ def create_demo_originals(directory: Path, duration: float = 11.5) -> list[Path]
 
     parts = directory / "_parts"
     parts.mkdir(parents=True, exist_ok=True)
-    shared = parts / "shared.mp4"
     unique4 = parts / "unique4.mp4"
     unique5 = parts / "unique5.mp4"
-    _ffmpeg([
-        "-f", "lavfi", "-i", "mandelbrot=size=640x360:rate=24",
-        "-t", "10", "-an", "-c:v", "libx264", "-pix_fmt", "yuv420p", str(shared),
-    ])
+    shared20 = parts / "shared-crf20.mp4"
+    shared26 = parts / "shared-crf26.mp4"
+    for target, crf in ((shared20, 20), (shared26, 26)):
+        _ffmpeg([
+            "-f", "lavfi", "-i", "mandelbrot=size=640x360:rate=24",
+            "-t", "10", "-an", "-c:v", "libx264", "-crf", str(crf),
+            "-pix_fmt", "yuv420p", str(target),
+        ])
     _ffmpeg([
         "-f", "lavfi", "-i", "testsrc=size=640x360:rate=24,negate",
         "-t", "14", "-an", "-c:v", "libx264", "-pix_fmt", "yuv420p", str(unique4),
@@ -109,9 +112,11 @@ def create_demo_originals(directory: Path, duration: float = 11.5) -> list[Path]
         "-f", "lavfi", "-i", "smptebars=size=640x360:rate=24",
         "-t", "14", "-an", "-c:v", "libx264", "-pix_fmt", "yuv420p", str(unique5),
     ])
-    for episode, unique in ((4, unique4), (5, unique5)):
+    for episode, shared, unique, crf in (
+        (4, shared20, unique4, 20), (5, shared26, unique5, 26)
+    ):
         target = directory / f"EP{episode:02d}.mp4"
-        _concat([shared, unique], target)
+        _concat([shared, unique], target, crf=crf)
         results.append(target)
     return results
 
@@ -130,76 +135,99 @@ class SyntheticBenchmarkGenerator:
         clips_dir.mkdir(parents=True, exist_ok=True)
         randomizer = random.Random(self.seed)
         by_episode = {episode_from_path(path): path for path in self.originals}
-        first, second = by_episode["EP01"], by_episode["EP02"]
-        first_ep, second_ep = "EP01", "EP02"
-        duration = round(randomizer.uniform(4.137, 5.863), 3)
-        first_start = round(randomizer.uniform(1.123, probe_media(first).duration - duration - 0.537), 3)
-        second_start = round(randomizer.uniform(1.217, probe_media(second).duration - duration - 0.593), 3)
         cases: list[BenchmarkCase] = []
+        episodes = [f"EP{index:02d}" for index in range(1, 6)]
 
-        def single(case_id: str, transformation: str, vf: str | None, speed: float = 1.0) -> None:
-            target = self.output_dir / f"{case_id}.mp4"
-            filters = []
-            if vf:
-                filters.append(vf)
-            if speed != 1.0:
-                filters.append(f"setpts=PTS/{speed}")
-            _make_clip(first, target, first_start, duration, ",".join(filters) or None)
-            accused_duration = duration / speed
+        def independent_interval(episode: str, duration: float) -> tuple[Path, float]:
+            source = by_episode[episode]
+            source_duration = probe_media(source).duration
+            lower = 10.613 if episode in {"EP04", "EP05"} else 0.613
+            upper = source_duration - duration - 0.537
+            start = round(randomizer.uniform(lower, upper), 3)
+            phase = start % (1.0 / 2.0)
+            if min(phase, 0.5 - phase) < 0.025:
+                start = round(start + 0.073, 3)
+            return source, start
+
+        transformations = [
+            ("A", "off_grid_direct_cut", None, 1.0, 1),
+            ("B", "horizontal_mirror", "hflip", 1.0, 2),
+            ("C", "speed_1.25x", None, 1.25, 2),
+            ("D", "speed_0.8x", None, 0.8, 2),
+            ("E", "center_crop", "crop=iw*0.75:ih*0.75,scale=640:360", 1.0, 2),
+            ("F", "vertical_crop", "crop=ih*9/16:ih,scale=360:640", 1.0, 2),
+            ("G", "subtitle_overlay", "drawbox=x=40:y=ih-70:w=iw-80:h=45:color=black@0.7:t=fill", 1.0, 2),
+            ("H", "mirror_speed_subtitle", "hflip,drawbox=x=40:y=ih-70:w=iw-80:h=45:color=black@0.7:t=fill", 1.25, 2),
+        ]
+        for letter, transformation, vf, speed, phase_number in transformations:
+            for sample_index, episode in enumerate(episodes, start=1):
+                duration = round(randomizer.uniform(3.337, 4.613), 3)
+                source, start = independent_interval(episode, duration)
+                case_id = f"CASE_{letter}_{sample_index:02d}"
+                target = self.output_dir / f"{case_id}.mp4"
+                filters = [vf] if vf else []
+                if speed != 1.0:
+                    filters.append(f"setpts=PTS/{speed}")
+                _make_clip(source, target, start, duration, ",".join(filters) or None)
+                accused_duration = duration / speed
+                cases.append(BenchmarkCase(
+                    case_id, transformation, phase_number, str(target.resolve()),
+                    MatchStatus.MATCH_FOUND.value,
+                    [GroundTruthSegment(
+                        0.0, accused_duration, episode, start, start + duration, speed,
+                    )],
+                ))
+
+        for sample_index in range(1, 6):
+            first_ep = episodes[(sample_index - 1) % 5]
+            second_ep = episodes[sample_index % 5]
+            i_duration = round(randomizer.uniform(3.337, 4.173), 3)
+            first, first_start = independent_interval(first_ep, i_duration)
+            second, second_start = independent_interval(second_ep, i_duration)
+            i1 = clips_dir / f"i{sample_index}-1.mp4"
+            i2 = clips_dir / f"i{sample_index}-2.mp4"
+            _make_clip(first, i1, first_start, i_duration)
+            _make_clip(second, i2, second_start, i_duration)
+            case_id = f"CASE_I_{sample_index:02d}"
+            case_i_path = self.output_dir / f"{case_id}.mp4"
+            _concat([i1, i2], case_i_path)
             cases.append(BenchmarkCase(
-                case_id, transformation, 1 if case_id == "CASE_A" else 2,
-                str(target.resolve()), MatchStatus.MATCH_FOUND.value,
-                [GroundTruthSegment(
-                    0.0, accused_duration, first_ep, first_start,
-                    first_start + duration, speed,
-                )],
+                case_id, "off_grid_multi_episode_concat", 1, str(case_i_path.resolve()),
+                MatchStatus.MATCH_FOUND.value,
+                [
+                    GroundTruthSegment(0.0, i_duration, first_ep, first_start, first_start + i_duration, 1.0),
+                    GroundTruthSegment(i_duration, i_duration * 2, second_ep, second_start, second_start + i_duration, 1.0),
+                ],
             ))
 
-        single("CASE_A", "off_grid_direct_cut", None)
-        single("CASE_B", "horizontal_mirror", "hflip")
-        single("CASE_C", "speed_1.25x", None, 1.25)
-        single("CASE_D", "speed_0.8x", None, 0.8)
-        single("CASE_E", "center_crop", "crop=iw*0.75:ih*0.75,scale=640:360")
-        single("CASE_F", "vertical_crop", "crop=ih*9/16:ih,scale=360:640")
-        single("CASE_G", "subtitle_overlay", "drawbox=x=40:y=ih-70:w=iw-80:h=45:color=black@0.7:t=fill")
-        single(
-            "CASE_H", "mirror_speed_subtitle",
-            "hflip,drawbox=x=40:y=ih-70:w=iw-80:h=45:color=black@0.7:t=fill", 1.25,
-        )
-
-        i_duration = 4.173
-        i1, i2 = clips_dir / "i1.mp4", clips_dir / "i2.mp4"
-        _make_clip(first, i1, first_start, i_duration)
-        _make_clip(second, i2, second_start, i_duration)
-        case_i_path = self.output_dir / "CASE_I.mp4"
-        _concat([i1, i2], case_i_path)
-        cases.append(BenchmarkCase(
-            "CASE_I", "off_grid_multi_episode_concat", 1, str(case_i_path.resolve()),
-            MatchStatus.MATCH_FOUND.value,
-            [
-                GroundTruthSegment(0.0, i_duration, first_ep, first_start, first_start + i_duration, 1.0),
-                GroundTruthSegment(i_duration, i_duration * 2, second_ep, second_start, second_start + i_duration, 1.0),
-            ],
-        ))
-
-        j_duration = 3.673
-        j1, j2, unrelated = clips_dir / "j1.mp4", clips_dir / "j2.mp4", clips_dir / "unrelated.mp4"
-        _make_clip(first, j1, first_start, j_duration)
-        _make_clip(second, j2, second_start, j_duration)
-        _ffmpeg([
-            "-f", "lavfi", "-i", "color=c=magenta:size=640x360:rate=24",
-            "-t", "2.137", "-an", "-c:v", "libx264", "-pix_fmt", "yuv420p", str(unrelated),
-        ])
-        case_j_path = self.output_dir / "CASE_J.mp4"
-        _concat([j1, unrelated, j2], case_j_path)
-        cases.append(BenchmarkCase(
-            "CASE_J", "unrelated_insert", 2, str(case_j_path.resolve()),
-            MatchStatus.MATCH_FOUND.value,
-            [
-                GroundTruthSegment(0.0, j_duration, first_ep, first_start, first_start + j_duration, 1.0),
-                GroundTruthSegment(j_duration + 2.137, j_duration * 2 + 2.137, second_ep, second_start, second_start + j_duration, 1.0),
-            ],
-        ))
+        for sample_index in range(1, 6):
+            first_ep = episodes[(sample_index + 1) % 5]
+            second_ep = episodes[(sample_index + 2) % 5]
+            j_duration = round(randomizer.uniform(3.337, 3.973), 3)
+            first, first_start = independent_interval(first_ep, j_duration)
+            second, second_start = independent_interval(second_ep, j_duration)
+            j1 = clips_dir / f"j{sample_index}-1.mp4"
+            j2 = clips_dir / f"j{sample_index}-2.mp4"
+            unrelated = clips_dir / f"unrelated-{sample_index}.mp4"
+            _make_clip(first, j1, first_start, j_duration)
+            _make_clip(second, j2, second_start, j_duration)
+            insert_duration = round(randomizer.uniform(1.613, 2.237), 3)
+            _ffmpeg([
+                "-f", "lavfi", "-i", "color=c=magenta:size=640x360:rate=24",
+                "-t", str(insert_duration), "-an", "-c:v", "libx264",
+                "-pix_fmt", "yuv420p", str(unrelated),
+            ])
+            case_id = f"CASE_J_{sample_index:02d}"
+            case_j_path = self.output_dir / f"{case_id}.mp4"
+            _concat([j1, unrelated, j2], case_j_path)
+            cases.append(BenchmarkCase(
+                case_id, "unrelated_insert", 2, str(case_j_path.resolve()),
+                MatchStatus.MATCH_FOUND.value,
+                [
+                    GroundTruthSegment(0.0, j_duration, first_ep, first_start, first_start + j_duration, 1.0),
+                    GroundTruthSegment(j_duration + insert_duration, j_duration * 2 + insert_duration, second_ep, second_start, second_start + j_duration, 1.0),
+                ],
+            ))
 
         # Twenty additional off-grid direct/re-encode clips make the Phase-1 gate a real regression set.
         gate_sources = [by_episode["EP01"], by_episode["EP02"], by_episode["EP03"]]
@@ -231,7 +259,7 @@ class SyntheticBenchmarkGenerator:
         ambiguity_start, ambiguity_duration = 1.337, 6.113
         _make_clip(by_episode["EP04"], ambiguity, ambiguity_start, ambiguity_duration)
         cases.append(BenchmarkCase(
-            "CASE_L", "exact_duplicate_cross_episode", 1, str(ambiguity.resolve()),
+            "CASE_L", "independent_crf_duplicate_cross_episode", 1, str(ambiguity.resolve()),
             MatchStatus.AMBIGUOUS.value,
             [
                 GroundTruthSegment(0.0, ambiguity_duration, "EP04", ambiguity_start, ambiguity_start + ambiguity_duration, 1.0, "shared_intro"),
@@ -260,10 +288,10 @@ class SyntheticBenchmarkGenerator:
         ))
 
         manifest = {
-            "schema_version": "0.2",
+            "schema_version": "0.3",
             "seed": self.seed,
             "generated_at": datetime.now(UTC).isoformat(),
-            "ground_truth_schema": "synthetic-and-golden-v0.2",
+            "ground_truth_schema": "synthetic-and-golden-v0.3",
             "cases": [
                 {**asdict(case), "segments": [asdict(segment) for segment in case.segments]}
                 for case in cases
@@ -303,6 +331,24 @@ def _source_match(expected: dict[str, Any], predicted: SegmentMatch, tolerance: 
     )
 
 
+def _duration_slope_consistent(
+    expected: dict[str, Any], predicted: SegmentMatch, tolerance: float
+) -> bool:
+    accused_span = predicted.accused_end - predicted.accused_start
+    source_span = predicted.source_end - predicted.source_start
+    expected_speed = float(expected.get("speed_ratio", 1.0))
+    if accused_span <= 0 or source_span <= 0:
+        return False
+    if abs(source_span - accused_span * expected_speed) > tolerance:
+        return False
+    effective_span = min(accused_span, source_span)
+    if effective_span <= 3.0:
+        return predicted.speed_ratio is None
+    if predicted.speed_ratio is None:
+        return False
+    return abs(source_span - accused_span * predicted.speed_ratio) <= tolerance
+
+
 def evaluate_segments(
     truth: list[dict[str, Any]],
     predictions: list[SegmentMatch],
@@ -313,6 +359,8 @@ def evaluate_segments(
     regular_truth = [item for item in truth if not item.get("equivalence_group")]
     ambiguous_truth = [item for item in truth if item.get("equivalence_group")]
     if ambiguous_truth:
+        candidate_green = sum(item.candidate_tier == "GREEN" for item in predictions)
+        review_required = sum(item.review_tier == "REVIEW_REQUIRED" for item in predictions)
         return {
             "ground_truth_segments": 0,
             "predicted_segments": len(predictions),
@@ -329,11 +377,21 @@ def evaluate_segments(
             "accused_boundary_mae_seconds": None,
             "source_boundary_mae_seconds": None,
             "speed_ratio_mae": None,
+            "green_precision": None if not candidate_green else 0.0,
+            "green_recall": None,
+            "review_required_precision": None if not review_required else 0.0,
+            "candidate_green_predictions": candidate_green,
+            "correct_candidate_green_predictions": 0,
+            "review_required_predictions": review_required,
+            "correct_review_required_predictions": 0,
             "unmatched_ground_truth": [],
             "unmatched_predictions": [item.to_dict() for item in predictions],
             "ambiguous_predictions": 1 if status == MatchStatus.AMBIGUOUS.value else 0,
             "ambiguity_expected": True,
-            "ambiguity_correct": status == MatchStatus.AMBIGUOUS.value and len(alternatives or []) >= 2,
+            "ambiguity_correct": (
+                status == MatchStatus.AMBIGUOUS.value
+                and len(predictions) + len(alternatives or []) >= 2
+            ),
             "boundary_evaluated_segments": 0,
             "boundary_missed_segments": 0,
         }
@@ -347,8 +405,8 @@ def evaluate_segments(
     source_errors: list[float] = []
     speed_errors: list[float] = []
 
+    assignment_edges: list[tuple[tuple[Any, ...], int, int]] = []
     for prediction_index, prediction in enumerate(predictions):
-        accused_candidates: list[tuple[int, dict[str, Any], float]] = []
         for truth_index, expected in enumerate(regular_truth):
             expected_duration = expected["accused_end"] - expected["accused_start"]
             overlap_ratio = _overlap(
@@ -356,11 +414,38 @@ def evaluate_segments(
                 expected["accused_start"], expected["accused_end"],
             ) / max(expected_duration, 1e-9)
             if overlap_ratio >= 0.5:
-                accused_candidates.append((truth_index, expected, overlap_ratio))
-        if not accused_candidates:
+                source_match = _source_match(expected, prediction, tolerance_seconds)
+                physical = _duration_slope_consistent(expected, prediction, tolerance_seconds)
+                episode_correct = prediction.source_episode == expected["source_episode"]
+                boundary_error = (
+                    abs(prediction.accused_start - expected["accused_start"])
+                    + abs(prediction.accused_end - expected["accused_end"])
+                    + abs(prediction.source_start - expected["source_start"])
+                    + abs(prediction.source_end - expected["source_end"])
+                )
+                priority = (
+                    int(source_match and physical), int(episode_correct), overlap_ratio,
+                    -boundary_error, -prediction_index, -truth_index,
+                )
+                assignment_edges.append((priority, prediction_index, truth_index))
+
+    assigned_predictions: set[int] = set()
+    assigned_truth: set[int] = set()
+    assignments: list[tuple[int, int]] = []
+    for _, prediction_index, truth_index in sorted(
+        assignment_edges, key=lambda item: item[0], reverse=True
+    ):
+        if prediction_index in assigned_predictions or truth_index in assigned_truth:
             continue
+        assigned_predictions.add(prediction_index)
+        assigned_truth.add(truth_index)
+        assignments.append((prediction_index, truth_index))
+
+    physically_inconsistent: set[int] = set()
+    for prediction_index, truth_index in assignments:
+        prediction = predictions[prediction_index]
+        expected = regular_truth[truth_index]
         overlapping_predictions += 1
-        truth_index, expected, _ = max(accused_candidates, key=lambda item: item[2])
         accused_errors.extend([
             abs(prediction.accused_start - expected["accused_start"]),
             abs(prediction.accused_end - expected["accused_end"]),
@@ -372,8 +457,17 @@ def evaluate_segments(
                 abs(prediction.source_start - expected["source_start"]),
                 abs(prediction.source_end - expected["source_end"]),
             ])
-            speed_errors.append(abs(prediction.speed_ratio - expected.get("speed_ratio", 1.0)))
-            if _source_match(expected, prediction, tolerance_seconds):
+            physical = _duration_slope_consistent(expected, prediction, tolerance_seconds)
+            if not physical:
+                physically_inconsistent.add(prediction_index)
+            if (
+                prediction.speed_ratio is not None
+                and float(expected.get("speed_ratio", 1.0)) != 1.0
+            ):
+                speed_errors.append(
+                    abs(prediction.speed_ratio - float(expected.get("speed_ratio", 1.0)))
+                )
+            if _source_match(expected, prediction, tolerance_seconds) and physical:
                 source_recalled.add(truth_index)
                 true_predictions.add(prediction_index)
 
@@ -385,6 +479,15 @@ def evaluate_segments(
     unmatched_truth = [
         expected for index, expected in enumerate(regular_truth) if index not in source_recalled
     ]
+    candidate_green_indices = {
+        index for index, item in enumerate(predictions) if item.candidate_tier == "GREEN"
+    }
+    review_required_indices = {
+        index for index, item in enumerate(predictions)
+        if item.review_tier == "REVIEW_REQUIRED"
+    }
+    correct_green = len(candidate_green_indices & true_predictions)
+    correct_review_required = len(review_required_indices & true_predictions)
     return {
         "ground_truth_segments": total_truth,
         "predicted_segments": total_predictions,
@@ -409,6 +512,19 @@ def evaluate_segments(
             sum(source_errors) / len(source_errors) if source_errors else None
         ),
         "speed_ratio_mae": sum(speed_errors) / len(speed_errors) if speed_errors else None,
+        "green_precision": (
+            correct_green / len(candidate_green_indices) if candidate_green_indices else None
+        ),
+        "green_recall": correct_green / total_truth if total_truth else None,
+        "review_required_precision": (
+            correct_review_required / len(review_required_indices)
+            if review_required_indices else None
+        ),
+        "candidate_green_predictions": len(candidate_green_indices),
+        "correct_candidate_green_predictions": correct_green,
+        "review_required_predictions": len(review_required_indices),
+        "correct_review_required_predictions": correct_review_required,
+        "physical_inconsistent_predictions": len(physically_inconsistent),
         "unmatched_ground_truth": unmatched_truth,
         "unmatched_predictions": [item.to_dict() for item in false_predictions],
         "ambiguous_predictions": 1 if status == MatchStatus.AMBIGUOUS.value else 0,
@@ -527,7 +643,7 @@ class BenchmarkRunner:
         }
         gate = self._gate(aggregate, case_results) if phase1_only else None
         report = {
-            "schema_version": "0.2",
+            "schema_version": "0.3",
             "scope": "phase1_5_gate" if phase1_only else "a_to_m_diagnostic",
             "created_at": datetime.now(UTC).isoformat(),
             "environment": {
@@ -539,12 +655,21 @@ class BenchmarkRunner:
                 "episode_recall": "GT segments with an accused-overlapping prediction from the correct episode / GT segments",
                 "source_aware_recall_at_1s": "episode recall plus both source endpoints within 1 second",
                 "segment_precision_at_1s": "predicted segments satisfying the source-aware criterion / predicted segments",
+                "green_precision": "source-aware correct candidate-GREEN predictions / candidate-GREEN predictions",
+                "green_recall": "source-aware correct candidate-GREEN predictions / GT segments",
+                "tier_safety_note": (
+                    "candidate GREEN is diagnostic only; effective review_tier is REVIEW_REQUIRED "
+                    "until external pixel verification exists"
+                ),
             },
+            "green_auto_release_enabled": False,
+            "future_green_auto_release_gate": {"required_green_precision": 1.0},
             "aggregate": aggregate,
+            "transformation_groups": self._transformation_groups(case_results),
             "subsets": {
                 "a_to_j": self._aggregate([
                     item for item in case_results
-                    if item["case_id"] in {f"CASE_{letter}" for letter in "ABCDEFGHIJ"}
+                    if any(item["case_id"].startswith(f"CASE_{letter}_") for letter in "ABCDEFGHIJ")
                 ]),
                 "off_grid_phase1": self._aggregate([
                     item for item in case_results
@@ -609,6 +734,18 @@ class BenchmarkRunner:
             error for item in normal for error in item["metrics"].get("raw_speed_ratio_errors", [])
         ]
         ambiguous = [item for item in case_results if item["metrics"]["ambiguity_expected"]]
+        candidate_green = sum(
+            item["metrics"].get("candidate_green_predictions", 0) for item in normal
+        )
+        correct_green = sum(
+            item["metrics"].get("correct_candidate_green_predictions", 0) for item in normal
+        )
+        review_required = sum(
+            item["metrics"].get("review_required_predictions", 0) for item in normal
+        )
+        correct_review_required = sum(
+            item["metrics"].get("correct_review_required_predictions", 0) for item in normal
+        )
         return {
             "ground_truth_segments": truth_count,
             "predicted_segments": prediction_count,
@@ -633,6 +770,13 @@ class BenchmarkRunner:
                 sum(source_errors) / len(source_errors) if source_errors else None
             ),
             "speed_ratio_mae": sum(speed_errors) / len(speed_errors) if speed_errors else None,
+            "green_precision": correct_green / candidate_green if candidate_green else None,
+            "green_recall": correct_green / truth_count if truth_count else None,
+            "review_required_precision": (
+                correct_review_required / review_required if review_required else None
+            ),
+            "candidate_green_predictions": candidate_green,
+            "review_required_predictions": review_required,
             "boundary_evaluated_segments": len(source_errors) // 2,
             "boundary_missed_segments": truth_count - episode_recalled,
             "unmatched_ground_truth_count": truth_count - source_recalled,
@@ -650,10 +794,39 @@ class BenchmarkRunner:
             ),
         }
 
+    @classmethod
+    def _transformation_groups(
+        cls, case_results: list[dict[str, Any]]
+    ) -> dict[str, dict[str, Any]]:
+        grouped: dict[str, list[dict[str, Any]]] = {}
+        for item in case_results:
+            grouped.setdefault(item["transformation"], []).append(item)
+        result: dict[str, dict[str, Any]] = {}
+        for transformation, cases in sorted(grouped.items()):
+            statuses: dict[str, int] = {}
+            for item in cases:
+                statuses[item["actual_status"]] = statuses.get(item["actual_status"], 0) + 1
+            aggregate = cls._aggregate(cases)
+            result[transformation] = {
+                "sample_count": len(cases),
+                "recall": aggregate["source_aware_recall_at_1s"],
+                "precision": aggregate["segment_precision_at_1s"],
+                "source_boundary_error_seconds": aggregate["source_boundary_mae_seconds"],
+                "false_positive_segments": aggregate["false_positive_segments"],
+                "false_positive_seconds": aggregate["false_positive_seconds"],
+                "status_distribution": statuses,
+            }
+        return result
+
     @staticmethod
     def _gate(aggregate: dict[str, Any], cases: list[dict[str, Any]]) -> dict[str, Any]:
         negative_cases = [item for item in cases if item["transformation"] == "pure_negative"]
-        ambiguity_cases = [item for item in cases if item["transformation"] == "exact_duplicate_cross_episode"]
+        ambiguity_cases = [
+            item for item in cases
+            if item["transformation"] in {
+                "exact_duplicate_cross_episode", "independent_crf_duplicate_cross_episode"
+            }
+        ]
         incomplete_cases = [item for item in cases if item["transformation"] == "faststart_incomplete_original"]
         checks = {
             "source_aware_recall_at_1s_gte_0_95": (aggregate["source_aware_recall_at_1s"] or 0) >= 0.95,
