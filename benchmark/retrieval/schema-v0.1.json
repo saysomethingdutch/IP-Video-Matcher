@@ -9,6 +9,13 @@
     "measurement_only",
     "configuration",
     "aggregate",
+    "by_episode",
+    "by_query_mode",
+    "by_source_position_bucket",
+    "by_source_phase_bucket",
+    "by_interval",
+    "sampling_audit",
+    "observed_threshold_band",
     "observations"
   ],
   "properties": {
@@ -23,7 +30,16 @@
         "source_fps": {"const": 2.0},
         "query_fps": {"const": 2.0},
         "top_k_values": {"const": [1, 8, 32, 128]},
-        "tolerance_seconds": {"type": "number", "minimum": 0}
+        "tolerance_seconds": {"type": "number", "minimum": 0},
+        "query_modes": {
+          "type": "array",
+          "items": {"enum": ["direct", "reencode"]},
+          "uniqueItems": true,
+          "minItems": 1
+        },
+        "source_grid_period_seconds": {"const": 0.5},
+        "phase_bucket_count": {"const": 10},
+        "source_position_bucket_count": {"const": 5}
       }
     },
     "aggregate": {
@@ -37,16 +53,46 @@
         "score_margin"
       ]
     },
+    "by_episode": {"type": "object"},
+    "by_query_mode": {"type": "object"},
+    "by_source_position_bucket": {"type": "object"},
+    "by_source_phase_bucket": {"type": "object"},
+    "by_interval": {"type": "object"},
+    "sampling_audit": {
+      "type": "object",
+      "required": [
+        "all_query_frames_off_source_grid",
+        "minimum_distance_from_source_grid_seconds",
+        "query_subframe_phase_values_seconds",
+        "source_subframe_phase_range_seconds",
+        "interval_count_by_episode",
+        "interval_count_by_source_position_bucket",
+        "interval_count_by_source_phase_bucket"
+      ]
+    },
+    "observed_threshold_band": {
+      "enum": [
+        "RECALL_AT_8_GTE_95_PERCENT",
+        "RECALL_AT_8_LT_95_BUT_AT_32_OR_128_GTE_95_PERCENT",
+        "RECALL_AT_128_LT_95_PERCENT"
+      ]
+    },
     "observations": {
       "type": "array",
       "items": {
         "type": "object",
         "required": [
           "episode",
+          "interval_id",
           "query_mode",
           "query_timestamp",
           "expected_source_timestamp",
+          "normalized_source_start",
+          "source_position_bucket",
+          "query_subframe_phase_seconds",
+          "source_subframe_phase_seconds",
           "source_query_temporal_phase",
+          "source_phase_bucket",
           "correct_source_rank",
           "score_margin",
           "hits"

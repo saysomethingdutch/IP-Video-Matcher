@@ -21,7 +21,11 @@ from .logging_utils import configure_logging
 from .matching import VideoMatcher
 from .media import find_video_files
 from .project import initialize_project
-from .retrieval_benchmark import RetrievalBenchmark, write_report
+from .retrieval_benchmark import (
+    RetrievalBenchmark,
+    anonymized_aggregate_report,
+    write_report,
+)
 
 
 class Context:
@@ -209,6 +213,7 @@ def benchmark(
 @click.option("--seed", default=20260902, show_default=True, type=int)
 @click.option("--tolerance", default=0.26, show_default=True, type=click.FloatRange(min=0.0))
 @click.option("--json-report", type=click.Path(path_type=Path))
+@click.option("--aggregate-json-report", type=click.Path(path_type=Path))
 @click.option("--markdown-report", type=click.Path(path_type=Path))
 @click.pass_obj
 def retrieval_benchmark(
@@ -219,6 +224,7 @@ def retrieval_benchmark(
     seed: int,
     tolerance: float,
     json_report: Path | None,
+    aggregate_json_report: Path | None,
     markdown_report: Path | None,
 ) -> None:
     """Measure real-media frame retrieval recall@k without changing the matcher."""
@@ -235,11 +241,16 @@ def retrieval_benchmark(
         raise click.ClickException(str(exc)) from exc
     output_dir = context.config.paths.output / "retrieval"
     json_path = json_report or output_dir / "retrieval_characterization.json"
+    aggregate_json_path = (
+        aggregate_json_report
+        or output_dir / "retrieval_characterization_aggregate.json"
+    )
     markdown_path = markdown_report or output_dir / "retrieval_characterization.md"
-    write_report(report, json_path, markdown_path)
+    write_report(report, json_path, markdown_path, aggregate_json_path)
     _emit({
-        **report,
+        **anonymized_aggregate_report(report),
         "json_report": str(json_path.resolve()),
+        "aggregate_json_report": str(aggregate_json_path.resolve()),
         "markdown_report": str(markdown_path.resolve()),
     })
 

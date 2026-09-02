@@ -63,7 +63,7 @@ python -m ipvm retrieval-benchmark
 python -m ipvm doctor
 ```
 
-`retrieval-benchmark` 要求现有原片索引状态为 `COMPLETE`，默认从每集分层抽取 3 个 off-grid 区间，以 direct 和 ordinary re-encode 两种 query 测量 source/query 2 FPS 的 recall@1/8/32/128：
+`retrieval-benchmark` 要求现有原片索引状态为 `COMPLETE`，按全片时间位置分层，并在每集内随机打散、均衡覆盖 10 个 source-grid phase 桶，以避免 phase 固定绑定 source 时间位置。Direct query 在 seek 后重置 PTS，再按本地 2 FPS 网格取帧；ordinary re-encode 使用相同区间。两者均测量对 2 FPS source index 的 recall@1/8/32/128：
 
 ```bash
 python -m ipvm retrieval-benchmark \
@@ -77,10 +77,11 @@ python -m ipvm retrieval-benchmark \
 
 ```text
 output/retrieval/retrieval_characterization.json
+output/retrieval/retrieval_characterization_aggregate.json
 output/retrieval/retrieval_characterization.md
 ```
 
-报告使用 `E001` 形式的匿名 episode alias，不写原文件名、路径、SHA-256 或案件标识。Harness 只输出测量，不选择后续路线。
+报告使用 `E001` 形式的匿名 episode alias，不写原文件名、路径、SHA-256 或案件标识。完整 JSON 的逐帧观测只保存在 ignored output；另一个 aggregate JSON、CLI 和 Markdown 输出匿名聚合，包括 episode、query mode、source 时间五分位、query/source sub-frame phase 与抽样区间。Harness 只输出测量，不选择后续路线。
 
 ## 安全语义
 
