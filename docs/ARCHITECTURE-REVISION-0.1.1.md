@@ -78,3 +78,39 @@ Phase 1.5 完成后停止，等待第二次独立 Review 和架构负责人 Gate
 - Phase 2A-0 是测量工具，不是 matcher 能力变更。
 
 Phase 2A-0 只测真实素材在 source/query 2 FPS 下的 retrieval recall@1/8/32/128、rank 与 margin。当前仍禁止 Temporal Alignment v2、DINOv2、FAISS、非对称采样、8 FPS 外部验证及其它 Phase 2 能力。测量完成后必须停止，由 Architecture Owner 按决策树裁定后续路线。
+
+## 9. Phase 2A-0 关闭与 Temporal Alignment v2 授权
+
+Phase 2A-0 已由 Architecture Owner 判定 `PASS / CLOSED`。Phase 2A 的锁定输入为：
+
+```text
+visual backend = DCT
+source FPS = 2
+query FPS = 2
+retrieval top-k = 8
+```
+
+Phase 2A 只用 piecewise `source_time = a * accused_time + b` 替换
+constant-offset temporal proposal，其中 `a ∈ [0.75, 1.50]`。算法必须显式容忍
+±1 个 source grid step、支持多段/多集/不同速度/unrelated gaps/source reuse，
+并保留 Phase 1.5.1 的 ambiguity、contradiction 与 GREEN safety 语义。
+
+本阶段禁止同时更换 visual backend、source FPS 或 top-k，禁止新增 crop、mirror、
+subtitle、PiP、camera、audio、ASR、Gemma、fair-use 与 Excel 能力。
+
+## 10. Temporal Alignment v2 时间戳与法律交付约束
+
+Temporal Alignment v2 内部输出为 `nominal_grid_time`。Segment model、SQLite 与
+audit 必须携带该 basis。已观察到 nominal grid 与 media content PTS 的系统偏移，
+但不得硬编码任何常量 correction。
+
+在 authoritative media-PTS boundary refinement 完成前：
+
+- `source_start/source_end` 只能作为内部定位与人工复核候选；
+- audit 必须标记 media-PTS refinement 尚未完成；
+- 不能将 nominal endpoints 作为法律交付或未来 Excel 的最终时间；
+- candidate GREEN 仍不具有自动放行语义，生产 downstream 一律
+  `REVIEW_REQUIRED`。
+
+Phase 2A 实现完成后必须停止，等待 Claude Code 独立复核与 Architecture Owner
+Gate，不得自行进入其他 Phase 2 能力。

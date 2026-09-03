@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import math
 import time
 from collections import defaultdict
 from dataclasses import asdict, dataclass, replace
@@ -99,6 +100,24 @@ class _FittedSegment:
     inliers: list[CandidateMatch]
 
 
+@dataclass(frozen=True)
+class _HypothesisPeak:
+    episode: str
+    slope: float
+    offset: float
+    vote: float
+    support_frames: int
+
+
+@dataclass(frozen=True)
+class _FitResult:
+    slope: float
+    intercept: float
+    inliers: np.ndarray
+    residual_rms: float
+    residual_max: float
+
+
 def _interval_iou(left: SegmentMatch, right: SegmentMatch) -> float:
     overlap = max(0.0, min(left.accused_end, right.accused_end) - max(left.accused_start, right.accused_start))
     union = max(left.accused_end, right.accused_end) - min(left.accused_start, right.accused_start)
@@ -106,86 +125,241 @@ def _interval_iou(left: SegmentMatch, right: SegmentMatch) -> float:
 
 
 class TemporalAligner:
-    """Phase-1 offset clustering and RANSAC, plus Phase-1.5 safety diagnostics."""
+    """Sparse slope-offset voting and robust piecewise temporal alignment.
+
+    Voting is episode-local and sparse: only cells touched by a candidate are
+    materialized.  The slope axis has a small bounded number of configured bins,
+    so construction is O(candidate_count * slope_bin_count), not O(N**2) and not
+    a dense episode x slope x offset tensor.
+    """
 
     def __init__(self, config: MatchingConfig):
         self.config = config
+        if config.coarse_fps <= 0:
+            raise ValueError("coarse_fps must be positive")
         self.frame_interval = 1.0 / config.coarse_fps
+        if config.slope_bin_size <= 0:
+            raise ValueError("slope_bin_size must be positive")
+        if config.minimum_speed_ratio <= 0 or config.maximum_speed_ratio < config.minimum_speed_ratio:
+            raise ValueError("invalid temporal speed range")
+        if config.candidate_timestamp_uncertainty_grid_steps < 0:
+            raise ValueError("candidate timestamp uncertainty cannot be negative")
+        self.offset_bin_seconds = self.frame_interval
+        self.candidate_timestamp_tolerance_seconds = (
+            config.candidate_timestamp_uncertainty_grid_steps * self.frame_interval
+        )
+        slope_count = int(round(
+            (config.maximum_speed_ratio - config.minimum_speed_ratio)
+            / config.slope_bin_size
+        ))
+        self.slope_values = np.linspace(
+            config.minimum_speed_ratio,
+            config.maximum_speed_ratio,
+            slope_count + 1,
+            dtype=np.float64,
+        )
 
-    def _proposals(self, candidates: list[CandidateMatch]) -> list[_Proposal]:
-        buckets: dict[tuple[str, int], list[CandidateMatch]] = defaultdict(list)
-        for candidate in candidates:
-            if candidate.visual_score < self.config.minimum_visual_similarity:
+    def _sparse_peaks(
+        self, episode: str, matches: list[CandidateMatch]
+    ) -> list[_HypothesisPeak]:
+        """Build episode-local slope/offset cells with offset soft voting.
+
+        A query frame contributes at most once to a cell even when several of
+        its top-k candidates land there. Offset votes are linearly shared by the
+        two neighboring bin centers, preventing a 0.499/0.501 boundary split.
+        """
+        by_frame: dict[int, list[CandidateMatch]] = defaultdict(list)
+        for match in matches:
+            frame_id = round(match.accused_time / self.frame_interval)
+            by_frame[frame_id].append(match)
+        votes: dict[tuple[int, int], float] = defaultdict(float)
+        support: dict[tuple[int, int], int] = defaultdict(int)
+        for frame_matches in by_frame.values():
+            frame_votes: dict[tuple[int, int], float] = {}
+            for match in frame_matches:
+                for slope_index, slope in enumerate(self.slope_values):
+                    offset_coordinate = (
+                        match.source_time - float(slope) * match.accused_time
+                    ) / self.offset_bin_seconds
+                    lower = math.floor(offset_coordinate)
+                    fraction = offset_coordinate - lower
+                    for offset_bin, soft_weight in (
+                        (lower, 1.0 - fraction), (lower + 1, fraction)
+                    ):
+                        if soft_weight <= 1e-12:
+                            continue
+                        key = (slope_index, offset_bin)
+                        contribution = match.visual_score * soft_weight
+                        if contribution > frame_votes.get(key, 0.0):
+                            frame_votes[key] = contribution
+            for key, contribution in frame_votes.items():
+                votes[key] += contribution
+                support[key] += 1
+        minimum_frames = max(
+            2, int(math.ceil(self.config.minimum_segment_seconds * self.config.coarse_fps))
+        )
+        ranked = sorted(
+            (
+                (vote, support[key], key)
+                for key, vote in votes.items()
+                if support[key] >= minimum_frames
+            ),
+            key=lambda item: (item[0], item[1], -item[2][0], -item[2][1]),
+            reverse=True,
+        )
+        peaks: list[_HypothesisPeak] = []
+        accepted_cells: list[tuple[int, int]] = []
+        for vote, support_frames, (slope_index, offset_bin) in ranked:
+            if any(
+                abs(slope_index - other_slope) <= 1
+                and abs(offset_bin - other_offset) <= 1
+                for other_slope, other_offset in accepted_cells
+            ):
                 continue
-            offset = candidate.source_time - candidate.accused_time
-            bucket = round(offset / self.config.offset_bin_seconds)
-            buckets[(candidate.source_episode, bucket)].append(candidate)
+            accepted_cells.append((slope_index, offset_bin))
+            peaks.append(_HypothesisPeak(
+                episode=episode,
+                slope=float(self.slope_values[slope_index]),
+                offset=offset_bin * self.offset_bin_seconds,
+                vote=float(vote),
+                support_frames=support_frames,
+            ))
+            if len(peaks) >= self.config.maximum_hypothesis_peaks_per_episode:
+                break
+        return peaks
 
-        proposals: list[_Proposal] = []
-        for (episode, _), bucket_matches in buckets.items():
-            best_by_query: dict[float, CandidateMatch] = {}
-            for match in bucket_matches:
-                current = best_by_query.get(match.accused_time)
-                if current is None or match.visual_score > current.visual_score:
-                    best_by_query[match.accused_time] = match
-            ordered = sorted(best_by_query.values(), key=lambda item: item.accused_time)
-            runs: list[list[CandidateMatch]] = []
-            current_run: list[CandidateMatch] = []
-            for match in ordered:
-                if current_run and (
-                    match.accused_time - current_run[-1].accused_time
-                    > self.config.maximum_frame_gap_seconds
-                ):
-                    runs.append(current_run)
-                    current_run = []
-                current_run.append(match)
-            if current_run:
-                runs.append(current_run)
-            for run in runs:
-                duration = run[-1].accused_time - run[0].accused_time + self.frame_interval
-                if duration + 1e-6 < self.config.minimum_segment_seconds:
-                    continue
-                mean_visual = float(np.mean([item.visual_score for item in run]))
-                proposals.append(_Proposal(episode, run, duration * mean_visual))
-        return proposals
+    def _support_for_peak(
+        self, peak: _HypothesisPeak, matches: list[CandidateMatch]
+    ) -> list[CandidateMatch]:
+        best_by_frame: dict[int, tuple[float, CandidateMatch]] = {}
+        tolerance = self.candidate_timestamp_tolerance_seconds + 1e-6
+        for match in matches:
+            residual = abs(
+                match.source_time - (peak.slope * match.accused_time + peak.offset)
+            )
+            if residual > tolerance:
+                continue
+            frame_id = round(match.accused_time / self.frame_interval)
+            current = best_by_frame.get(frame_id)
+            quality = residual - match.visual_score * 1e-6
+            if current is None or quality < current[0]:
+                best_by_frame[frame_id] = (quality, match)
+        return sorted(
+            (value[1] for value in best_by_frame.values()),
+            key=lambda item: item.accused_time,
+        )
 
-    @staticmethod
-    def _robust_fit(matches: list[CandidateMatch]) -> tuple[float, float, np.ndarray]:
+    def _continuous_runs(self, matches: list[CandidateMatch]) -> list[list[CandidateMatch]]:
+        runs: list[list[CandidateMatch]] = []
+        current: list[CandidateMatch] = []
+        for match in sorted(matches, key=lambda item: item.accused_time):
+            if current and (
+                match.accused_time - current[-1].accused_time
+                > self.config.maximum_frame_gap_seconds
+            ):
+                runs.append(current)
+                current = []
+            current.append(match)
+        if current:
+            runs.append(current)
+        return runs
+
+    def _robust_fit(
+        self,
+        matches: list[CandidateMatch],
+        initial_slope: float | None = None,
+        initial_intercept: float | None = None,
+    ) -> _FitResult:
         accused = np.asarray([item.accused_time for item in matches], dtype=np.float64)
         source = np.asarray([item.source_time for item in matches], dtype=np.float64)
         if len(matches) < 2 or np.ptp(accused) < 1e-9:
-            return 1.0, float(np.median(source - accused)), np.ones(len(matches), dtype=bool)
+            slope = initial_slope if initial_slope is not None else 1.0
+            intercept = float(np.median(source - slope * accused))
+            return _FitResult(
+                slope, intercept, np.ones(len(matches), dtype=bool), 0.0, 0.0
+            )
+        hypotheses: list[tuple[float, float]] = []
+        if initial_slope is not None:
+            hypotheses.append((
+                initial_slope,
+                initial_intercept if initial_intercept is not None
+                else float(np.median(source - initial_slope * accused)),
+            ))
+        # Deterministic bounded pair sampling supplies robust local hypotheses.
+        sample_count = min(32, len(matches))
+        sample_indices = sorted(set(
+            np.linspace(0, len(matches) - 1, sample_count, dtype=int).tolist()
+        ))
+        minimum_pair_delta = max(1.0, self.frame_interval * 2.0)
+        for left_position, left in enumerate(sample_indices):
+            for right in sample_indices[left_position + 1:]:
+                delta = accused[right] - accused[left]
+                if delta + 1e-9 < minimum_pair_delta:
+                    continue
+                slope = (source[right] - source[left]) / delta
+                if not (
+                    self.config.minimum_speed_ratio - 1e-9
+                    <= slope
+                    <= self.config.maximum_speed_ratio + 1e-9
+                ):
+                    continue
+                hypotheses.append((slope, float(np.median(source - slope * accused))))
+        if not hypotheses:
+            slope = float(np.clip(
+                initial_slope if initial_slope is not None else 1.0,
+                self.config.minimum_speed_ratio,
+                self.config.maximum_speed_ratio,
+            ))
+            hypotheses.append((slope, float(np.median(source - slope * accused))))
         best_inliers = np.zeros(len(matches), dtype=bool)
-        best_error = float("inf")
-        rng = np.random.default_rng(17)
-        iterations = min(100, max(20, len(matches) * 4))
-        for _ in range(iterations):
-            left, right = rng.choice(len(matches), size=2, replace=False)
-            delta = accused[right] - accused[left]
-            if abs(delta) < 1e-9:
-                continue
-            slope = (source[right] - source[left]) / delta
-            if not 0.5 <= slope <= 2.0:
-                continue
-            intercept = source[left] - slope * accused[left]
+        best_key: tuple[int, float, float] = (-1, -1.0, float("-inf"))
+        tolerance = self.candidate_timestamp_tolerance_seconds + 1e-6
+        for slope, intercept in hypotheses:
             residuals = np.abs(source - (slope * accused + intercept))
-            inliers = residuals <= 0.55
-            error = float(residuals[inliers].mean()) if inliers.any() else float("inf")
-            if inliers.sum() > best_inliers.sum() or (
-                inliers.sum() == best_inliers.sum() and error < best_error
-            ):
+            inliers = residuals <= tolerance
+            if not inliers.any():
+                continue
+            span = float(np.ptp(accused[inliers])) if inliers.sum() > 1 else 0.0
+            rms = float(np.sqrt(np.mean(np.square(residuals[inliers]))))
+            key = (int(inliers.sum()), span, -rms)
+            if key > best_key:
                 best_inliers = inliers
-                best_error = error
+                best_key = key
         if best_inliers.sum() < 2:
             best_inliers[:] = True
-        design = np.column_stack([accused[best_inliers], np.ones(best_inliers.sum())])
-        slope, intercept = np.linalg.lstsq(design, source[best_inliers], rcond=None)[0]
-        return float(slope), float(intercept), best_inliers
+        for _ in range(3):
+            design = np.column_stack([accused[best_inliers], np.ones(best_inliers.sum())])
+            slope, intercept = np.linalg.lstsq(
+                design, source[best_inliers], rcond=None
+            )[0]
+            slope = float(np.clip(
+                slope,
+                self.config.minimum_speed_ratio,
+                self.config.maximum_speed_ratio,
+            ))
+            intercept = float(np.median(source[best_inliers] - slope * accused[best_inliers]))
+            residuals = np.abs(source - (slope * accused + intercept))
+            refined = residuals <= tolerance
+            if refined.sum() < 2 or np.array_equal(refined, best_inliers):
+                break
+            best_inliers = refined
+        residuals = np.abs(source - (slope * accused + intercept))
+        inlier_residuals = residuals[best_inliers]
+        return _FitResult(
+            float(slope), float(intercept), best_inliers,
+            float(np.sqrt(np.mean(np.square(inlier_residuals)))),
+            float(np.max(inlier_residuals)),
+        )
 
-    def _proposal_to_segment(self, proposal: _Proposal) -> _FittedSegment | None:
-        slope, intercept, inliers = self._robust_fit(proposal.matches)
+    def _proposal_to_segment(
+        self,
+        proposal: _Proposal,
+        initial_slope: float | None = None,
+        initial_intercept: float | None = None,
+    ) -> _FittedSegment | None:
+        fit = self._robust_fit(proposal.matches, initial_slope, initial_intercept)
         inlier_matches = [
-            match for match, keep in zip(proposal.matches, inliers, strict=True) if keep
+            match for match, keep in zip(proposal.matches, fit.inliers, strict=True) if keep
         ]
         if not inlier_matches:
             return None
@@ -198,27 +372,91 @@ class TemporalAligner:
         temporal = min(1.0, len(inlier_matches) / len(proposal.matches))
         accused = np.asarray([item.accused_time for item in inlier_matches])
         source = np.asarray([item.source_time for item in inlier_matches])
-        residual = float(np.max(np.abs(source - (slope * accused + intercept))))
         match_score = max(0.0, min(1.0, visual * (0.7 + 0.3 * coverage) * temporal))
         accused_span = float(np.ptp(accused)) if len(accused) > 1 else 0.0
         source_span = float(np.ptp(source)) if len(source) > 1 else 0.0
-        speed_ratio = round(slope, 4) if min(accused_span, source_span) >= 3.0 else None
+        speed_ratio = round(fit.slope, 4) if min(accused_span, source_span) >= 3.0 else None
         segment = SegmentMatch(
             accused_start=round(start, 3),
             accused_end=round(end, 3),
             source_episode=proposal.episode,
-            source_start=round(max(0.0, slope * start + intercept), 3),
-            source_end=round(max(0.0, slope * end + intercept), 3),
+            source_start=round(max(0.0, fit.slope * start + fit.intercept), 3),
+            source_end=round(max(0.0, fit.slope * end + fit.intercept), 3),
             speed_ratio=speed_ratio,
             visual_score=round(visual, 4),
             audio_score=None,
             temporal_score=round(temporal, 4),
             match_score=round(match_score, 4),
-            temporal_residual_seconds=round(residual, 4),
+            temporal_residual_seconds=round(fit.residual_max, 4),
+            fitted_offset_seconds=round(fit.intercept, 4),
+            residual_rms_seconds=round(fit.residual_rms, 4),
+            residual_max_seconds=round(fit.residual_max, 4),
+            inlier_count=len(inlier_matches),
+            candidate_count=len(proposal.matches),
+            inlier_ratio=round(len(inlier_matches) / len(proposal.matches), 4),
             coverage=round(coverage, 4),
-            algorithm_version=self.config.algorithm_version,
+            timestamp_basis="nominal_grid_time",
+            algorithm_version=self.config.temporal_algorithm_version,
         )
         return _FittedSegment(segment, inlier_matches)
+
+    @staticmethod
+    def _fit_quality(fitted: _FittedSegment) -> tuple[float, int, float, float]:
+        segment = fitted.segment
+        duration = segment.accused_end - segment.accused_start
+        return (
+            segment.match_score * duration,
+            segment.inlier_count,
+            -segment.residual_rms_seconds,
+            segment.visual_score,
+        )
+
+    def _extract_episode_segments(
+        self, episode: str, matches: list[CandidateMatch]
+    ) -> list[_FittedSegment]:
+        remaining = list(matches)
+        extracted: list[_FittedSegment] = []
+        for _ in range(self.config.maximum_alignment_segments_per_episode):
+            peaks = self._sparse_peaks(episode, remaining)
+            if not peaks:
+                break
+            fits: list[_FittedSegment] = []
+            for peak in peaks:
+                support = self._support_for_peak(peak, remaining)
+                for run in self._continuous_runs(support):
+                    duration = run[-1].accused_time - run[0].accused_time + self.frame_interval
+                    if duration + 1e-6 < self.config.minimum_segment_seconds:
+                        continue
+                    proposal = _Proposal(episode, run, peak.vote)
+                    fitted = self._proposal_to_segment(
+                        proposal, peak.slope, peak.offset
+                    )
+                    if fitted is not None:
+                        fits.append(fitted)
+            if not fits:
+                break
+            best = max(fits, key=self._fit_quality)
+            extracted.append(best)
+            claimed_frames = {
+                round(match.accused_time / self.frame_interval) for match in best.inliers
+            }
+            slope = best.segment.speed_ratio
+            if slope is None:
+                fit = self._robust_fit(best.inliers)
+                slope = fit.slope
+                intercept = fit.intercept
+            else:
+                intercept = float(best.segment.fitted_offset_seconds or 0.0)
+            tolerance = self.candidate_timestamp_tolerance_seconds + 1e-6
+            remaining = [
+                match for match in remaining
+                if not (
+                    round(match.accused_time / self.frame_interval) in claimed_frames
+                    and abs(match.source_time - (slope * match.accused_time + intercept))
+                    <= tolerance
+                )
+            ]
+        return extracted
 
     def align(self, candidates: list[CandidateMatch]) -> list[SegmentMatch]:
         return self.align_with_diagnostics(candidates).segments
@@ -226,16 +464,23 @@ class TemporalAligner:
     def align_with_diagnostics(
         self, candidates: list[CandidateMatch], index_complete: bool = False
     ) -> AlignmentOutcome:
-        proposals = sorted(self._proposals(candidates), key=lambda item: item.score, reverse=True)
-        scored_segments = [
-            (proposal, fitted)
-            for proposal in proposals
-            if (fitted := self._proposal_to_segment(proposal)) is not None
+        filtered = [
+            candidate for candidate in candidates
+            if candidate.visual_score >= self.config.minimum_visual_similarity
         ]
+        by_episode: dict[str, list[CandidateMatch]] = defaultdict(list)
+        for candidate in filtered:
+            by_episode[candidate.source_episode].append(candidate)
+        scored_segments = [
+            fitted
+            for episode, episode_matches in sorted(by_episode.items())
+            for fitted in self._extract_episode_segments(episode, episode_matches)
+        ]
+        scored_segments.sort(key=self._fit_quality, reverse=True)
         claimed_frames: set[int] = set()
         accepted: list[_FittedSegment] = []
-        for proposal, fitted in scored_segments:
-            frame_ids = {round(item.accused_time / self.frame_interval) for item in proposal.matches}
+        for fitted in scored_segments:
+            frame_ids = {round(item.accused_time / self.frame_interval) for item in fitted.inliers}
             if frame_ids and len(frame_ids & claimed_frames) / len(frame_ids) > 0.5:
                 continue
             accepted.append(fitted)
@@ -250,7 +495,7 @@ class TemporalAligner:
         for winner_index, winner_fitted in enumerate(accepted, start=1):
             winner = replace(winner_fitted.segment, segment_id=f"S{winner_index:03d}")
             rivals = [
-                fitted.segment for _, fitted in scored_segments
+                fitted.segment for fitted in scored_segments
                 if _interval_iou(winner, fitted.segment) >= 0.8
                 and not (
                     fitted.segment.source_episode == winner.source_episode
@@ -295,6 +540,7 @@ class TemporalAligner:
                     for rival in major_rivals
                 ])
 
+        assessed = self._mark_source_reuse(assessed)
         conflict_graph = self._conflict_graph(assessed)
         contradiction = bool(conflict_graph)
         if contradiction:
@@ -323,14 +569,16 @@ class TemporalAligner:
                 for segment in assessed
             ]
         reason = None
+        reasons_out: list[str] = []
         if ambiguous:
-            reason = "Cross-episode competitors have uniqueness margin below 0.05"
-        elif contradiction:
+            reasons_out.append("Cross-episode competitors have uniqueness margin below 0.05")
+        if contradiction:
             conflict_ids = sorted({
                 item for edge in conflict_graph
                 for item in (edge["left_segment_id"], edge["right_segment_id"])
             })
-            reason = f"Segment contradiction detected: {', '.join(conflict_ids)}"
+            reasons_out.append(f"Segment contradiction detected: {', '.join(conflict_ids)}")
+        reason = "; ".join(reasons_out) or None
         unique_alternatives: dict[tuple[Any, ...], SegmentMatch] = {}
         for segment in alternatives:
             key = (
@@ -381,20 +629,39 @@ class TemporalAligner:
                         "reason": "overlapping accused intervals map to incompatible sources",
                     })
                     continue
+        return graph
+
+    @staticmethod
+    def _mark_source_reuse(segments: list[SegmentMatch]) -> list[SegmentMatch]:
+        reused: set[str] = set()
+        for index, left in enumerate(segments):
+            for right in segments[index + 1:]:
+                accused_overlap = max(
+                    0.0, min(left.accused_end, right.accused_end)
+                    - max(left.accused_start, right.accused_start)
+                )
                 source_overlap = max(
                     0.0, min(left.source_end, right.source_end)
                     - max(left.source_start, right.source_start)
                 )
                 if (
                     left.source_episode == right.source_episode
-                    and accused_overlap <= 0.25 and source_overlap > 0.5
+                    and accused_overlap <= 0.25
+                    and source_overlap > 0.5
                 ):
-                    graph.append({
-                        "left_segment_id": left.segment_id,
-                        "right_segment_id": right.segment_id,
-                        "reason": "disjoint accused intervals reuse overlapping source interval",
-                    })
-        return graph
+                    if left.segment_id:
+                        reused.add(left.segment_id)
+                    if right.segment_id:
+                        reused.add(right.segment_id)
+        return [
+            replace(
+                segment,
+                source_reuse=True,
+                candidate_tier="YELLOW",
+                review_tier="REVIEW_REQUIRED",
+            ) if segment.segment_id in reused else segment
+            for segment in segments
+        ]
 
     def _merge_adjacent(self, segments: list[_FittedSegment]) -> list[_FittedSegment]:
         if not segments:

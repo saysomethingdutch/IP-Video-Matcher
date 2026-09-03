@@ -801,6 +801,26 @@ class BenchmarkRunner:
         correct_review_required = sum(
             item["metrics"].get("correct_review_required_predictions", 0) for item in normal
         )
+        predicted_segment_payloads = [
+            prediction for item in normal for prediction in item.get("predictions", [])
+        ]
+        residual_rms_values = [
+            float(item["residual_rms_seconds"])
+            for item in predicted_segment_payloads
+            if item.get("residual_rms_seconds") is not None
+        ]
+        inlier_ratios = [
+            float(item["inlier_ratio"])
+            for item in predicted_segment_payloads
+            if item.get("inlier_ratio") is not None
+        ]
+        segment_count_errors = [
+            abs(
+                int(item["metrics"]["predicted_segments"])
+                - int(item["metrics"]["ground_truth_segments"])
+            )
+            for item in normal
+        ]
         return {
             "ground_truth_segments": truth_count,
             "predicted_segments": prediction_count,
@@ -832,6 +852,21 @@ class BenchmarkRunner:
             ),
             "candidate_green_predictions": candidate_green,
             "review_required_predictions": review_required,
+            "ambiguity_rate": (
+                sum(item["actual_status"] == MatchStatus.AMBIGUOUS.value for item in case_results)
+                / len(case_results) if case_results else None
+            ),
+            "mean_absolute_segment_count_error": (
+                sum(segment_count_errors) / len(segment_count_errors)
+                if segment_count_errors else None
+            ),
+            "mean_residual_rms_seconds": (
+                sum(residual_rms_values) / len(residual_rms_values)
+                if residual_rms_values else None
+            ),
+            "mean_inlier_ratio": (
+                sum(inlier_ratios) / len(inlier_ratios) if inlier_ratios else None
+            ),
             "boundary_evaluated_segments": len(source_errors) // 2,
             "boundary_missed_segments": truth_count - episode_recalled,
             "unmatched_ground_truth_count": truth_count - source_recalled,
@@ -866,9 +901,21 @@ class BenchmarkRunner:
                 "sample_count": len(cases),
                 "recall": aggregate["source_aware_recall_at_1s"],
                 "precision": aggregate["segment_precision_at_1s"],
+                "episode_recall": aggregate["episode_recall"],
+                "episode_correctness": aggregate["episode_correctness"],
+                "accused_boundary_error_seconds": aggregate["accused_boundary_mae_seconds"],
                 "source_boundary_error_seconds": aggregate["source_boundary_mae_seconds"],
                 "false_positive_segments": aggregate["false_positive_segments"],
                 "false_positive_seconds": aggregate["false_positive_seconds"],
+                "ambiguity_rate": aggregate["ambiguity_rate"],
+                "mean_absolute_segment_count_error": aggregate[
+                    "mean_absolute_segment_count_error"
+                ],
+                "speed_ratio_mae": aggregate["speed_ratio_mae"],
+                "mean_residual_rms_seconds": aggregate["mean_residual_rms_seconds"],
+                "mean_inlier_ratio": aggregate["mean_inlier_ratio"],
+                "candidate_green_precision_diagnostic": aggregate["green_precision"],
+                "runtime_seconds": sum(item["analysis_seconds"] for item in cases),
                 "status_distribution": statuses,
             }
         return result

@@ -56,6 +56,12 @@ class SegmentMatch:
     mirrored: bool | None = None
     cropped: bool | None = None
     temporal_residual_seconds: float = 0.0
+    fitted_offset_seconds: float | None = None
+    residual_rms_seconds: float = 0.0
+    residual_max_seconds: float = 0.0
+    inlier_count: int = 0
+    candidate_count: int = 0
+    inlier_ratio: float = 0.0
     coverage: float = 0.0
     uniqueness_margin: float | None = None
     candidate_tier: str = "YELLOW"
@@ -64,7 +70,9 @@ class SegmentMatch:
     conflict: bool = False
     conflict_with: tuple[str, ...] = ()
     conflict_reason: str | None = None
-    algorithm_version: str = "phase1-dct-v1"
+    source_reuse: bool = False
+    timestamp_basis: str = "nominal_grid_time"
+    algorithm_version: str = "phase2a-temporal-v2"
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)

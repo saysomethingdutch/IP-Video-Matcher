@@ -15,9 +15,15 @@ class MatchingConfig:
     top_k: int = 8
     minimum_segment_seconds: float = 3.0
     minimum_visual_similarity: float = 0.82
-    offset_bin_seconds: float = 0.5
     maximum_frame_gap_seconds: float = 1.1
     algorithm_version: str = "phase1-dct-v1"
+    temporal_algorithm_version: str = "phase2a-temporal-v2"
+    minimum_speed_ratio: float = 0.75
+    maximum_speed_ratio: float = 1.50
+    slope_bin_size: float = 0.025
+    candidate_timestamp_uncertainty_grid_steps: int = 1
+    maximum_hypothesis_peaks_per_episode: int = 128
+    maximum_alignment_segments_per_episode: int = 128
     minimum_uniqueness_margin: float = 0.05
     maximum_temporal_residual_seconds: float = 0.55
     minimum_coverage: float = 0.90

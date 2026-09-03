@@ -27,8 +27,8 @@ def test_contradiction_marks_only_conflicting_segments_and_keeps_independent_fac
         minimum_segment_seconds=3.0,
     ))
     candidates = _line("EP01", 0.0, 10.0, 8)
-    candidates += _line("EP01", 5.0, 10.0, 8)
-    candidates += _line("EP02", 10.0, 30.0, 8)
+    candidates += _line("EP02", 2.0, 30.0, 8)
+    candidates += _line("EP03", 8.0, 50.0, 8)
     outcome = aligner.align_with_diagnostics(candidates, index_complete=True)
     assert outcome.contradiction is True
     assert len(outcome.segments) == 3
@@ -36,8 +36,20 @@ def test_contradiction_marks_only_conflicting_segments_and_keeps_independent_fac
     independent = [item for item in outcome.segments if not item.conflict]
     assert {item.segment_id for item in conflicting} == {"S001", "S002"}
     assert len(independent) == 1
-    assert independent[0].source_episode == "EP02"
+    assert independent[0].source_episode == "EP03"
     assert outcome.conflict_graph[0]["reason"]
+
+
+def test_disjoint_accused_segments_may_reuse_the_same_source_interval() -> None:
+    aligner = TemporalAligner(MatchingConfig(minimum_segment_seconds=3.0))
+    candidates = _line("EP01", 0.0, 10.0, 8)
+    candidates += _line("EP01", 8.0, 10.0, 8)
+    outcome = aligner.align_with_diagnostics(candidates, index_complete=True)
+    assert outcome.contradiction is False
+    assert len(outcome.segments) == 2
+    assert all(item.source_reuse for item in outcome.segments)
+    assert all(item.candidate_tier == "YELLOW" for item in outcome.segments)
+    assert all(item.review_tier == "REVIEW_REQUIRED" for item in outcome.segments)
 
 
 def test_speed_ratio_is_null_when_effective_fit_span_is_under_three_seconds() -> None:

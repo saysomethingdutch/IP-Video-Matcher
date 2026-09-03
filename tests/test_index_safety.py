@@ -43,7 +43,16 @@ def test_matcher_refuses_incomplete_index_and_audit_records_reason(app_config) -
     assert result.segments == []
     audit_path = write_audit_result(result, app_config.paths.output / "results")
     audit = json.loads(audit_path.read_text())
+    assert audit["schema_version"] == "0.4"
     assert audit["status"] == "INCOMPLETE_INDEX"
     assert audit["index_completeness"]["reason"] == "frame coverage incomplete"
     assert "matching_config" in audit["matching"]
     assert "original_assets" in audit
+    assert audit["matching"]["timestamp_basis"] == "nominal_grid_time"
+    assert audit["matching"]["visual_algorithm_version"] == "test-v1"
+    assert audit["matching"]["temporal_algorithm_version"] == "phase2a-temporal-v2"
+    assert audit["matching"]["authoritative_media_timeline"] == {
+        "basis": "media_pts",
+        "status": "NOT_YET_REFINED",
+        "legal_delivery_allowed": False,
+    }

@@ -8,9 +8,15 @@ matching:
   top_k: 8
   minimum_segment_seconds: 3.0
   minimum_visual_similarity: 0.82
-  offset_bin_seconds: 0.5
   maximum_frame_gap_seconds: 1.1
   algorithm_version: "phase1-dct-v1"
+  temporal_algorithm_version: "phase2a-temporal-v2"
+  minimum_speed_ratio: 0.75
+  maximum_speed_ratio: 1.50
+  slope_bin_size: 0.025
+  candidate_timestamp_uncertainty_grid_steps: 1
+  maximum_hypothesis_peaks_per_episode: 128
+  maximum_alignment_segments_per_episode: 128
   minimum_uniqueness_margin: 0.05
   maximum_temporal_residual_seconds: 0.55
   minimum_coverage: 0.90

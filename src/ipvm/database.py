@@ -10,7 +10,7 @@ from typing import Any, Iterator
 from .models import MediaMetadata, SegmentMatch
 
 
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS projects (
@@ -92,6 +92,12 @@ CREATE TABLE IF NOT EXISTS segment_matches (
     temporal_score REAL NOT NULL,
     match_score REAL NOT NULL,
     temporal_residual_seconds REAL,
+    fitted_offset_seconds REAL,
+    residual_rms_seconds REAL NOT NULL DEFAULT 0,
+    residual_max_seconds REAL NOT NULL DEFAULT 0,
+    inlier_count INTEGER NOT NULL DEFAULT 0,
+    candidate_count INTEGER NOT NULL DEFAULT 0,
+    inlier_ratio REAL NOT NULL DEFAULT 0,
     coverage REAL,
     uniqueness_margin REAL,
     candidate_tier TEXT NOT NULL DEFAULT 'YELLOW',
@@ -100,6 +106,8 @@ CREATE TABLE IF NOT EXISTS segment_matches (
     conflict INTEGER NOT NULL DEFAULT 0,
     conflict_with_json TEXT NOT NULL DEFAULT '[]',
     conflict_reason TEXT,
+    source_reuse INTEGER NOT NULL DEFAULT 0,
+    timestamp_basis TEXT NOT NULL DEFAULT 'nominal_grid_time',
     mirrored INTEGER,
     cropped INTEGER,
     created_at TEXT NOT NULL,
@@ -177,7 +185,7 @@ class Database:
             )
             migration_needed = legacy or bool(existing and version < SCHEMA_VERSION)
             if should_backup and migration_needed:
-                backup = self.path.with_suffix(self.path.suffix + ".pre-v3.bak")
+                backup = self.path.with_suffix(self.path.suffix + ".pre-v4.bak")
                 if not backup.exists():
                     with sqlite3.connect(backup) as backup_connection:
                         connection.backup(backup_connection)
@@ -186,8 +194,12 @@ class Database:
                 self._migrate_legacy(connection, project_root)
             else:
                 self._execute_schema(connection)
-                if existing and version < SCHEMA_VERSION:
+                if existing and version < 3:
                     self._migrate_v2_to_v3(connection)
+                if existing and "fitted_offset_seconds" not in _columns(
+                    connection, "segment_matches"
+                ):
+                    self._migrate_v3_to_v4(connection)
             self._execute_schema(connection)
             connection.execute(
                 "INSERT OR IGNORE INTO projects(root_path, created_at) VALUES (?, ?)",
@@ -344,6 +356,25 @@ class Database:
             "CREATE INDEX IF NOT EXISTS idx_segment_matches_case "
             "ON segment_matches(project_id, case_id)"
         )
+
+    def _migrate_v3_to_v4(self, connection: sqlite3.Connection) -> None:
+        """Add Temporal Alignment v2 diagnostics inside the caller transaction."""
+        additions = (
+            ("fitted_offset_seconds", "REAL"),
+            ("residual_rms_seconds", "REAL NOT NULL DEFAULT 0"),
+            ("residual_max_seconds", "REAL NOT NULL DEFAULT 0"),
+            ("inlier_count", "INTEGER NOT NULL DEFAULT 0"),
+            ("candidate_count", "INTEGER NOT NULL DEFAULT 0"),
+            ("inlier_ratio", "REAL NOT NULL DEFAULT 0"),
+            ("source_reuse", "INTEGER NOT NULL DEFAULT 0"),
+            ("timestamp_basis", "TEXT NOT NULL DEFAULT 'nominal_grid_time'"),
+        )
+        for column, definition in additions:
+            if column not in _columns(connection, "segment_matches"):
+                connection.execute(
+                    f"ALTER TABLE segment_matches ADD COLUMN {column} {definition}"
+                )
+        self._migration_checkpoint("v4_diagnostics_added")
 
     def project_id(self, project_root: Path) -> int:
         return self.initialize(project_root)
@@ -526,11 +557,14 @@ class Database:
                     project_id, case_id, candidate_rank, is_primary,
                     accused_start, accused_end, source_episode, source_start, source_end,
                     speed_ratio, visual_score, audio_score, temporal_score, match_score,
-                    temporal_residual_seconds, coverage, uniqueness_margin,
+                    temporal_residual_seconds, fitted_offset_seconds,
+                    residual_rms_seconds, residual_max_seconds,
+                    inlier_count, candidate_count, inlier_ratio,
+                    coverage, uniqueness_margin,
                     candidate_tier, review_tier, segment_id, conflict,
-                    conflict_with_json, conflict_reason,
+                    conflict_with_json, conflict_reason, source_reuse, timestamp_basis,
                     mirrored, cropped, created_at, algorithm_version
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 rows,
             )
@@ -544,10 +578,14 @@ class Database:
             segment.accused_end, segment.source_episode, segment.source_start,
             segment.source_end, segment.speed_ratio, segment.visual_score,
             segment.audio_score, segment.temporal_score, segment.match_score,
-            segment.temporal_residual_seconds, segment.coverage,
+            segment.temporal_residual_seconds, segment.fitted_offset_seconds,
+            segment.residual_rms_seconds, segment.residual_max_seconds,
+            segment.inlier_count, segment.candidate_count, segment.inlier_ratio,
+            segment.coverage,
             segment.uniqueness_margin, segment.candidate_tier, segment.review_tier,
             segment.segment_id, int(segment.conflict),
             json.dumps(segment.conflict_with, ensure_ascii=False), segment.conflict_reason,
+            int(segment.source_reuse), segment.timestamp_basis,
             None if segment.mirrored is None else int(segment.mirrored),
             None if segment.cropped is None else int(segment.cropped),
             utc_now(), segment.algorithm_version,

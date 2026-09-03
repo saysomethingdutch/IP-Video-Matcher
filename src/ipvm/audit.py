@@ -11,7 +11,7 @@ from .matching import AnalysisResult
 def write_audit_result(result: AnalysisResult, output_dir: Path) -> Path:
     output_dir.mkdir(parents=True, exist_ok=True)
     payload = {
-        "schema_version": "0.3",
+        "schema_version": "0.4",
         "program_version": __version__,
         "created_at": datetime.now(UTC).isoformat(),
         "case_id": result.case_id,
@@ -29,6 +29,12 @@ def write_audit_result(result: AnalysisResult, output_dir: Path) -> Path:
         "original_assets": result.index_health.get("assets", []),
         "index_completeness": result.index_health,
         "matching": {
+            "timestamp_basis": "nominal_grid_time",
+            "authoritative_media_timeline": {
+                "basis": "media_pts",
+                "status": "NOT_YET_REFINED",
+                "legal_delivery_allowed": False,
+            },
             "segments": [segment.to_dict() for segment in result.segments],
             "alternative_candidates": [
                 segment.to_dict() for segment in result.alternatives
@@ -37,7 +43,10 @@ def write_audit_result(result: AnalysisResult, output_dir: Path) -> Path:
             "conflict_graph": result.conflict_graph,
             "matching_config": result.matching_config,
             "encoder": result.encoder,
-            "algorithm_version": result.matching_config.get("algorithm_version"),
+            "visual_algorithm_version": result.matching_config.get("algorithm_version"),
+            "temporal_algorithm_version": result.matching_config.get(
+                "temporal_algorithm_version"
+            ),
             "elapsed_seconds": result.elapsed_seconds,
             "sampled_frame_count": result.frame_count,
         },

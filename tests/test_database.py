@@ -3,7 +3,10 @@ from __future__ import annotations
 import sqlite3
 from pathlib import Path
 
+import pytest
+
 from ipvm.database import Database, SCHEMA_VERSION
+from ipvm.models import SegmentMatch
 from ipvm.project import initialize_project
 
 
@@ -152,4 +155,84 @@ def test_migration_failure_rolls_back_without_half_migrated_schema(tmp_path, mon
         assert not any(name.endswith("_v1") for name in tables)
         assert rolled_back.execute("SELECT COUNT(*) FROM original_assets").fetchone()[0] == 1
         assert rolled_back.execute("PRAGMA user_version").fetchone()[0] == 0
-    assert path.with_suffix(path.suffix + ".pre-v3.bak").exists()
+    assert path.with_suffix(path.suffix + ".pre-v4.bak").exists()
+
+
+def test_temporal_v2_diagnostics_persist_with_timestamp_basis(app_config) -> None:
+    database = Database(app_config.paths.database)
+    project_id = database.initialize(app_config.paths.root)
+    accused = app_config.paths.workspace / "query.mp4"
+    accused.parent.mkdir(parents=True, exist_ok=True)
+    accused.write_bytes(b"synthetic-test-placeholder")
+    segment = SegmentMatch(
+        0.0, 6.0, "EP01", 10.0, 17.5, 1.25, 0.99, None, 1.0, 0.99,
+        temporal_residual_seconds=0.2,
+        fitted_offset_seconds=10.0,
+        residual_rms_seconds=0.1,
+        residual_max_seconds=0.2,
+        inlier_count=12,
+        candidate_count=13,
+        inlier_ratio=12 / 13,
+        source_reuse=True,
+        timestamp_basis="nominal_grid_time",
+    )
+    database.replace_case_result(
+        project_id, "CASE", accused, None, None, "MATCH_FOUND", None, [segment]
+    )
+    with database.connect() as connection:
+        row = connection.execute(
+            "SELECT fitted_offset_seconds, residual_rms_seconds, residual_max_seconds, "
+            "inlier_count, candidate_count, inlier_ratio, source_reuse, timestamp_basis "
+            "FROM segment_matches WHERE case_id='CASE'"
+        ).fetchone()
+    assert row["fitted_offset_seconds"] == 10.0
+    assert row["residual_rms_seconds"] == 0.1
+    assert row["residual_max_seconds"] == 0.2
+    assert row["inlier_count"] == 12 and row["candidate_count"] == 13
+    assert row["source_reuse"] == 1
+    assert row["timestamp_basis"] == "nominal_grid_time"
+
+
+def test_v3_to_v4_migration_failure_rolls_back_all_added_columns(
+    tmp_path, monkeypatch
+) -> None:
+    path = tmp_path / "v3-failure.db"
+    connection = sqlite3.connect(path)
+    connection.executescript("""
+        CREATE TABLE original_assets(
+            id INTEGER PRIMARY KEY, project_id INTEGER NOT NULL, episode TEXT NOT NULL,
+            sha256 TEXT NOT NULL
+        );
+        CREATE TABLE segment_matches(
+            id INTEGER PRIMARY KEY, project_id INTEGER NOT NULL, case_id TEXT NOT NULL,
+            candidate_tier TEXT NOT NULL DEFAULT 'YELLOW'
+        );
+        PRAGMA user_version = 3;
+    """)
+    connection.commit()
+    connection.close()
+
+    database = Database(path)
+
+    def fail_at_checkpoint(name: str) -> None:
+        if name == "v4_diagnostics_added":
+            raise RuntimeError("simulated v4 migration failure")
+
+    monkeypatch.setattr(database, "_migration_checkpoint", fail_at_checkpoint)
+    with pytest.raises(RuntimeError, match="simulated v4"):
+        database.initialize(tmp_path)
+
+    with sqlite3.connect(path) as rolled_back:
+        columns = {
+            row[1] for row in rolled_back.execute("PRAGMA table_info(segment_matches)")
+        }
+        assert "fitted_offset_seconds" not in columns
+        assert "timestamp_basis" not in columns
+        assert rolled_back.execute("PRAGMA user_version").fetchone()[0] == 3
+        tables = {
+            row[0] for row in rolled_back.execute(
+                "SELECT name FROM sqlite_master WHERE type='table'"
+            )
+        }
+        assert tables == {"original_assets", "segment_matches"}
+    assert path.with_suffix(path.suffix + ".pre-v4.bak").exists()

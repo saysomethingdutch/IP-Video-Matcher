@@ -9,7 +9,7 @@ Phase 1.5.1 Safety Closure           completed
 Phase 2A-0 Retrieval Characterization harness completed
 Phase 2A-0.1 Platform-like Transcode Characterization completed
 Phase 2A-0.2 Statistical / Reporting Hardening completed
-Temporal Alignment v2                not started
+Phase 2A Temporal Alignment v2        implementation complete; review pending
 ```
 
 当前 pipeline 的目标仍是：
@@ -18,7 +18,10 @@ Temporal Alignment v2                not started
 被诉时间轴 → 原剧集数 → 原剧时间轴
 ```
 
-本轮只闭合安全语义、benchmark/evaluator、数据库迁移、缓存身份和 retrieval 测量工具。没有实现 Temporal Alignment v2、8 FPS 外部验证、DINOv2、FAISS、镜像/crop/audio/Gemma、合理使用、网页抓取或 Excel。
+Temporal Alignment v2 已用 sparse slope-offset voting、robust local fit 和 iterative
+piecewise extraction 替换 constant-offset proposal。DCT、source/query 2 FPS、top-k=8
+保持不变。没有实现 8 FPS 外部验证、DINOv2、FAISS、镜像/crop/audio/Gemma、
+合理使用、网页抓取或 Excel。
 
 ## 安装
 
@@ -62,6 +65,7 @@ python -m ipvm analyze-all
 python -m ipvm benchmark --demo
 python -m ipvm benchmark --demo --all-diagnostic
 python -m ipvm retrieval-benchmark
+python -m ipvm temporal-benchmark
 python -m ipvm doctor
 ```
 
@@ -87,6 +91,22 @@ output/retrieval/retrieval_characterization.md
 
 报告使用 `E001` 形式的匿名 episode alias，不写原文件名、路径、SHA-256 或案件标识。完整 JSON 的逐帧观测只保存在 ignored output；另一个 aggregate JSON、CLI 和 Markdown 输出匿名聚合。每个 profile 包含 interval count、distinct content position count、effective sample size、ICC、interval-level cluster bootstrap 95% CI，以及 `ABOVE / STRADDLES / BELOW` 三态 threshold band。Harness 只输出测量，不选择后续路线。
 
+`temporal-benchmark` 默认运行不经过视觉 retrieval 的 deterministic ideal candidate
+benchmark；可选择在已配置且完成索引的 ignored real originals 上运行完整 matcher：
+
+```bash
+python -m ipvm temporal-benchmark
+python -m ipvm temporal-benchmark \
+  --real-media \
+  --samples-per-episode 10 \
+  --query-duration 6 \
+  --include-speed-profiles
+```
+
+Real profile 为 direct、P1/P2/P3 platform-like proxies，以及显式选择的 0.8× / 1.25×
+speed-only。Harness 不加入 crop、mirror、subtitle 等变量，并把 source-aware miss 粗分
+为 `RETRIEVAL_LIMIT` 或 `ALIGNMENT_LIMIT`。
+
 ## 安全语义
 
 匹配状态为 `MATCH_FOUND`、`MATCH_NOT_FOUND`、`AMBIGUOUS`、`INCOMPLETE_INDEX` 或 `ERROR`。
@@ -103,22 +123,26 @@ Segment contradiction 不再清空整案。Case status 为 `AMBIGUOUS`，冲突 
 
 A–J 每种 transformation 现在包含 5 个独立 source intervals、独立 off-grid phase，并尽量覆盖不同 episode。报告按 transformation 输出 recall、precision、source boundary error、false positives 和 status distribution。
 
-最新本地完整 diagnostic（73 cases、80 个非歧义 GT）：
+最新本地 Temporal v2 完整 diagnostic（73 cases、80 个非歧义 GT）：
 
 ```text
-source-aware recall@1s       42.5%
-segment precision@1s         57.6%
-candidate green precision    66.7%   diagnostic only
-A–J source-aware recall      31.7%
-A–J segment precision        46.3%
-A–J false positives          22 segments / 74.5s
+source-aware recall@1s       45.0%
+segment precision@1s         52.2%
+candidate green precision    21.1%   diagnostic only
+A–J source-aware recall      35.0%
+A–J segment precision        43.8%
+A–J false positives          27 segments / 104.5s
 CRF20/CRF26 shared intro     AMBIGUOUS
 incomplete index             refused
 ```
 
-Phase 1 gate subset 仍为 FAIL：source-aware recall 71.4%、precision 78.1%，且有 3 个 episode-level boundary misses。Pure negative、CRF20/CRF26 跨集歧义和 incomplete-index refusal 三项安全检查通过。以上均为低分辨率 synthetic regression，不是实际案件准确率。
+Phase 1 gate subset 仍为 FAIL：source-aware recall 68.6%、precision 66.7%、source
+boundary MAE 1.319 秒。Pure negative、CRF20/CRF26 跨集歧义和 incomplete-index
+refusal 三项安全检查通过。以上均为低分辨率 synthetic regression，不是实际案件
+准确率。Temporal v2 没有为 benchmark 放宽阈值。
 
-本地机器报告位于 `output/reports/phase1_5_1_gate.json` 和 `output/reports/phase1_5_1_a_to_m_diagnostic.json`，不提交 Git。
+本地机器报告位于 `output/reports/phase2a-temporal-phase1-gate.json` 和
+`output/reports/phase2a-temporal-after.json`，不提交 Git。
 
 ## Phase 2A-0 状态
 
@@ -130,7 +154,37 @@ Phase 2A-0.3 Safety & Semantics Closure：readiness gate 指标定为 `alignment
 
 平台档结果的正确解释：**compression / resolution / codec 的扰动低于当前低频 DCT descriptor 的主要灵敏度范围**（实测 `1 - cos ≈ 6e-6 ~ 1.3e-5`，比 median score margin `3.7e-3` 低 2–3 个数量级）。不得泛化为 crop / mirror / subtitle / picture-in-picture / 摄像头翻拍 的 robustness 结论。
 
-Architecture Owner 收到 real recall@k 与平台档结果后按既定决策树裁定。当前代码不实现或预选 Temporal Alignment v2、扩大 top-k/VectorIndex、提高 source FPS 或 DINOv2 中的任何路线。
+Architecture Owner 已将 Phase 2A-0 判定为 `PASS / CLOSED`，并授权在上述锁定输入下
+实现 Temporal Alignment v2。扩大 top-k/VectorIndex、提高 source FPS 和 DINOv2
+仍未实现或预选。
+
+## Phase 2A Temporal Alignment v2
+
+生产 temporal mapping 使用：
+
+```text
+source_time = speed_ratio * accused_time + fitted_offset
+speed_ratio ∈ [0.75, 1.50]
+```
+
+实现包含 episode-local sparse slope/offset soft voting、从 FPS 推导的 ±1 source-grid
+容差、bounded deterministic robust refit、continuity split、iterative evidence claiming、
+piecewise multi-episode extraction、cross-episode ambiguity，以及 source reuse 语义。
+诊断字段包括 fitted offset、residual RMS/max、inlier/candidate count 和 inlier ratio。
+
+Ideal candidate benchmark 为 14/14 source-aware segments，precision/recall 均 100%，
+speed MAE 0.00278；机器结果位于
+`benchmark/temporal/results/phase2a-temporal-ideal-v0.1.json`。
+
+两集 real segment characterization 使用 20 个独立 content positions、6 个共享位置的
+profiles（120 cases）：总体 source-aware recall/precision 89.17%，episode correctness
+94.17%，source boundary MAE 0.219 秒；13 个 miss 的 coarse attribution 均为
+`ALIGNMENT_LIMIT`，其中 7 个是跨集竞争导致的安全 `AMBIGUOUS`。`episode_n=2`，不能
+解释为跨集稳定性估计。详见
+`docs/review/PHASE2A-TEMPORAL-ALIGNMENT-V2-COMPLETION-REPORT.md`。
+
+当前 endpoints 仍是 `nominal_grid_time`。Audit 明确标记 authoritative `media_pts`
+尚未精修且不能法律交付；没有硬编码 PTS correction。
 
 ## 测试
 
@@ -138,13 +192,18 @@ Architecture Owner 收到 real recall@k 与平台档结果后按既定决策树�
 pytest
 ```
 
-当前结果：`39 passed`。在原有 coverage 之上新增 alignment-usable 边界、cluster bootstrap determinism、threshold 三态、profile isolation、interval count、真实 decode off-grid 与 anonymized aggregate 敏感性测试。
+当前结果：`65 passed`。在原有 coverage 之上新增 slope speed sweep、±1 grid jitter、
+高分 outlier/wrong episode、五段 piecewise/source reuse、merge refit、v4 migration
+rollback、timestamp-basis audit，以及 ideal benchmark 测试。
 
 ## Schema migration
 
-SQLite schema version 为 3。迁移使用 `BEGIN IMMEDIATE`，transaction 内不调用 `executescript`；失败会 rollback。需要迁移时先创建 `<database>.pre-v3.bak`。详见 `docs/migrations/SCHEMA-V3.md`。
+SQLite schema version 为 4。迁移使用 `BEGIN IMMEDIATE`，transaction 内不调用
+`executescript`；失败会 rollback。需要迁移时先创建 `<database>.pre-v4.bak`。详见
+`docs/migrations/SCHEMA-V4.md`。
 
-旧索引仍需强制重建：
+Schema v4 本身不更换 DCT cache identity，因此已通过现有 identity/completeness 检查的
+v3 source index 无需仅因数据库迁移而重建。未知 legacy index 仍会被拒绝；需要时执行：
 
 ```bash
 python -m ipvm index-originals --force
@@ -156,19 +215,21 @@ python -m ipvm index-originals --force
 IP-Video-Matcher/
 ├── benchmark/
 │   ├── results/phase1_5_gate.json
-│   └── retrieval/
-│       ├── README.md
-│       ├── schema-v0.1.json
-│       └── anonymized-aggregate-template.json
+│   ├── retrieval/
+│   │   ├── README.md
+│   │   ├── schema-v0.1.json
+│   │   └── anonymized-aggregate-template.json
+│   └── temporal/results/phase2a-temporal-ideal-v0.1.json
 ├── config/default.yaml
 ├── docs/
 │   ├── ARCHITECTURE.md
 │   ├── ARCHITECTURE-REVISION-0.1.1.md
 │   ├── adr/ADR-0001...ADR-0005
-│   ├── migrations/SCHEMA-V2.md, SCHEMA-V3.md
+│   ├── migrations/SCHEMA-V2.md, SCHEMA-V3.md, SCHEMA-V4.md
 │   └── review/
 ├── src/ipvm/
-│   └── retrieval_benchmark.py
+│   ├── retrieval_benchmark.py
+│   └── temporal_benchmark.py
 ├── tests/
 ├── pyproject.toml
 └── README.md
@@ -176,9 +237,13 @@ IP-Video-Matcher/
 
 ## 已知问题
 
-- Phase 1 Gate 仍未通过；off-grid retrieval 和当前 constant-offset alignment 都有测量到的失败。
-- Candidate GREEN 在完整 diagnostic 中仍可能错误，所以自动放行保持禁用。
-- Temporal Alignment v2 只有 ADR 草案，未实现。
-- 没有真实 golden set 或真实规模性能数据；real retrieval 目前只有两集匿名 aggregate（`episode_n=2`，不能估计集间方差）。
+- Phase 1 Gate 仍未通过；Temporal v2 的端到端 synthetic precision/FP/source MAE 比
+  constant-offset before 更差，虽然 episode recall 和 variable-speed slope error 改善。
+- Candidate GREEN 在 synthetic/real diagnostic 中仍可能错误，所以自动放行保持禁用。
+- Real segment benchmark 只有两集、20 个独立 content positions；不能估计跨集方差或
+  当作案件准确率。
+- Real miss attribution 为 coarse candidate-availability check，不能替代候选连续性和
+  竞争结构分析。
+- `source_start/source_end` 仍是 nominal grid time，尚未精修到 authoritative media PTS。
 - 没有跨集重复区间的索引期预计算；当前只按运行期竞争候选和 margin 降级。
 - DINOv2、FAISS、4/8 FPS source index、8 FPS external verification、镜像、crop、audio、Gemma、合理使用、网页抓取和 Excel 都未实现。

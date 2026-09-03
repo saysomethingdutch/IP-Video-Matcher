@@ -26,6 +26,11 @@ from .retrieval_benchmark import (
     anonymized_aggregate_report,
     write_report,
 )
+from .temporal_benchmark import (
+    IdealTemporalBenchmark,
+    RealSegmentBenchmark,
+    write_temporal_report,
+)
 
 
 class Context:
@@ -47,7 +52,7 @@ def _emit(payload: object) -> None:
 @click.option("--verbose", is_flag=True)
 @click.pass_context
 def main(ctx: click.Context, root: Path, config_path: Path | None, verbose: bool) -> None:
-    """IP Video Matcher — local-first Phase 0/1 CLI."""
+    """IP Video Matcher — local-first auditable matching CLI."""
     try:
         ctx.obj = Context(root, config_path, verbose)
     except (FileNotFoundError, ValueError) as exc:
@@ -256,6 +261,56 @@ def retrieval_benchmark(
     })
 
 
+@main.command("temporal-benchmark")
+@click.option(
+    "--real-media", is_flag=True,
+    help="Also run the segment-level harness against the configured ignored real originals.",
+)
+@click.option("--samples-per-episode", default=10, show_default=True, type=click.IntRange(min=1))
+@click.option("--query-duration", default=6.0, show_default=True, type=click.FloatRange(min=3.0))
+@click.option("--include-speed-profiles", is_flag=True)
+@click.option("--ideal-report", type=click.Path(path_type=Path))
+@click.option("--real-report", type=click.Path(path_type=Path))
+@click.pass_obj
+def temporal_benchmark(
+    context: Context,
+    real_media: bool,
+    samples_per_episode: int,
+    query_duration: float,
+    include_speed_profiles: bool,
+    ideal_report: Path | None,
+    real_report: Path | None,
+) -> None:
+    """Characterize Temporal Alignment v2 without changing visual retrieval."""
+    initialize_project(context.config)
+    output_dir = context.config.paths.output / "temporal"
+    ideal = IdealTemporalBenchmark(context.config.matching).run()
+    ideal_path = ideal_report or output_dir / "ideal_candidate_benchmark.json"
+    write_temporal_report(ideal, ideal_path)
+    payload: dict[str, object] = {
+        "ideal_report": str(ideal_path.resolve()),
+        "ideal_passed": ideal["passed"],
+        "ideal_aggregate": ideal["aggregate"],
+    }
+    if real_media:
+        try:
+            real = RealSegmentBenchmark(context.config, context.database).run(
+                samples_per_episode=samples_per_episode,
+                source_duration_seconds=query_duration,
+                include_speed_profiles=include_speed_profiles,
+            )
+        except (FileNotFoundError, ValueError, RuntimeError) as exc:
+            raise click.ClickException(str(exc)) from exc
+        real_path = real_report or output_dir / "real_segment_benchmark.json"
+        write_temporal_report(real, real_path)
+        payload.update({
+            "real_report": str(real_path.resolve()),
+            "real_aggregate": real["aggregate"],
+            "real_by_profile": real["by_profile"],
+        })
+    _emit(payload)
+
+
 @main.command("doctor")
 @click.pass_obj
 def doctor(context: Context) -> None:
@@ -275,7 +330,7 @@ def export() -> None:
     """Reserved for Phase 7; intentionally does not modify any workbook."""
     _emit({
         "status": "PHASE_NOT_IMPLEMENTED",
-        "message": "Excel export is excluded from the current Phase 0/1 scope.",
+        "message": "Excel export is excluded from the current implementation scope.",
     })
 
 
