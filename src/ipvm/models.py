@@ -71,6 +71,8 @@ class SegmentMatch:
     conflict_with: tuple[str, ...] = ()
     conflict_reason: str | None = None
     source_reuse: bool = False
+    speed_out_of_range: bool = False
+    unconstrained_speed_ratio: float | None = None
     timestamp_basis: str = "nominal_grid_time"
     algorithm_version: str = "phase2a-temporal-v2"
 

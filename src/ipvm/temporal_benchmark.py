@@ -37,6 +37,11 @@ IDEAL_SPEEDS = (0.75, 0.80, 0.90, 1.00, 1.10, 1.25, 1.40, 1.50)
 REAL_PROFILES = ("direct", "p1", "p2", "p3")
 
 
+def _snap_to_source_grid(value: float, grid_period: float) -> float:
+    """A real candidate's source_time is always an index frame timestamp."""
+    return round(round(value / grid_period) * grid_period, 6)
+
+
 def _line(
     episode: str,
     accused_start: float,
@@ -45,12 +50,22 @@ def _line(
     count: int,
     score: float = 0.98,
     jitter: tuple[float, ...] = (0.0,),
+    grid_period: float = 0.5,
 ) -> list[CandidateMatch]:
+    """Ideal candidates, snapped to the configured source grid.
+
+    Phase 2A.1 item 9: retrieval can only ever return index frame timestamps, so a
+    sub-grid source time is not a physically realizable candidate and must not be
+    used to claim sub-grid boundary precision.
+    """
     return [
         CandidateMatch(
-            accused_start + index * 0.5,
+            round(accused_start + index * grid_period, 6),
             episode,
-            source_start + speed * index * 0.5 + jitter[index % len(jitter)],
+            _snap_to_source_grid(
+                source_start + speed * index * grid_period, grid_period
+            )
+            + jitter[index % len(jitter)],
             score,
         )
         for index in range(count)
@@ -71,6 +86,107 @@ def _truth(
         "source_start": source_start,
         "source_end": source_start + speed * duration,
         "speed_ratio": speed,
+    }
+
+
+def _longest_supported_run(
+    supported_frames: set[int], frame_count: int, gap_seconds: float, fps: float
+) -> int:
+    """Longest run of ground-truth-supported frames, tolerating configured gaps."""
+    if not supported_frames:
+        return 0
+    allowed_missing = max(0, int(round(gap_seconds * fps)) - 1)
+    best = current = 0
+    missing = 0
+    for index in range(frame_count):
+        if index in supported_frames:
+            current += 1
+            missing = 0
+            best = max(best, current)
+        else:
+            missing += 1
+            if missing > allowed_missing:
+                current = 0
+            else:
+                current += 1
+    return best
+
+
+CASE_OUTCOMES = (
+    "CORRECT_MATCH",
+    "SAFE_AMBIGUITY_CONTAINS_GT",
+    "UNSAFE_WRONG_MATCH",
+    "NO_MATCH",
+)
+
+
+def _alternatives_contain_ground_truth(
+    alternatives: list[Any], truth: list[dict[str, Any]], tolerance: float = 1.0
+) -> bool:
+    for expected in truth:
+        for candidate in alternatives:
+            if (
+                candidate.source_episode == expected["source_episode"]
+                and abs(candidate.source_start - expected["source_start"]) <= tolerance
+                and abs(candidate.source_end - expected["source_end"]) <= tolerance
+            ):
+                return True
+    return False
+
+
+def classify_case_outcome(
+    status: str,
+    metrics: dict[str, Any],
+    truth: list[dict[str, Any]],
+    alternatives: list[Any],
+) -> str:
+    """Mutually exclusive, machine-derived outcome for one benchmark case.
+
+    A correct episode with a materially wrong source timeline is still an unsafe
+    wrong match: `UNSAFE_WRONG_MATCH` covers any emitted MATCH_FOUND that fails the
+    accepted ground-truth episode/timeline requirement.
+    """
+    recalled = metrics.get("source_aware_recalled_segments", 0)
+    expected_count = metrics.get("ground_truth_segments", len(truth))
+    if status == MatchStatus.MATCH_FOUND.value:
+        if expected_count and recalled == expected_count:
+            return "CORRECT_MATCH"
+        return "UNSAFE_WRONG_MATCH"
+    if status == MatchStatus.AMBIGUOUS.value:
+        if expected_count and recalled == expected_count:
+            return "CORRECT_MATCH"
+        if _alternatives_contain_ground_truth(alternatives, truth):
+            return "SAFE_AMBIGUITY_CONTAINS_GT"
+        if metrics.get("predicted_segments", 0):
+            return "UNSAFE_WRONG_MATCH"
+        return "NO_MATCH"
+    return "NO_MATCH"
+
+
+def _outcome_summary(cases: list[dict[str, Any]]) -> dict[str, Any]:
+    counts = {name: 0 for name in CASE_OUTCOMES}
+    for case in cases:
+        outcome = case.get("outcome")
+        if outcome in counts:
+            counts[outcome] += 1
+    total = len(cases)
+    assert sum(counts.values()) == total, "outcome counts must sum to case_count"
+    rate = lambda name: counts[name] / total if total else None  # noqa: E731
+    safe_coverage = (
+        (counts["CORRECT_MATCH"] + counts["SAFE_AMBIGUITY_CONTAINS_GT"]) / total
+        if total else None
+    )
+    return {
+        "case_count": total,
+        "counts": counts,
+        "exact_automatic_success_rate": rate("CORRECT_MATCH"),
+        "safe_ambiguity_rate": rate("SAFE_AMBIGUITY_CONTAINS_GT"),
+        "unsafe_wrong_rate": rate("UNSAFE_WRONG_MATCH"),
+        "no_match_rate": rate("NO_MATCH"),
+        "safe_coverage": safe_coverage,
+        "unsafe_wrong_cases": [
+            case["case_id"] for case in cases if case.get("outcome") == "UNSAFE_WRONG_MATCH"
+        ],
     }
 
 
@@ -194,6 +310,14 @@ class IdealTemporalBenchmark:
             "case_id": case_id,
             "transformation": transformation,
             "status": status,
+            "outcome": classify_case_outcome(
+                status, metrics, truth, outcome.alternatives
+            ),
+            "ambiguity_contains_ground_truth": _alternatives_contain_ground_truth(
+                outcome.alternatives, truth
+            ),
+            "truncated_episodes": list(outcome.truncated_episodes),
+            "alternatives": [segment.to_dict() for segment in outcome.alternatives],
             "metrics": metrics,
             "runtime_seconds": elapsed,
             "predictions": [item.to_dict() for item in outcome.segments],
@@ -258,15 +382,132 @@ class IdealTemporalBenchmark:
             "IDEAL_PIECEWISE_5", "piecewise_five_segments",
             piecewise_truth, piecewise_candidates,
         ))
-        aggregate = _metric_summary(cases)
+        # --- Phase 2A.1 item 9: additional required ideal coverage ---
+        cases.append(self._run_case(
+            "IDEAL_NEGATIVE_OFFSET", "negative_and_zero_offset",
+            [_truth("EP01", 12.0, 0.0, 1.0, 8.0)],
+            _line("EP01", 12.0, 0.0, 1.0, 16, score=0.97),
+        ))
+
+        noise_random = random.Random(20260903)
+        noise_candidates = [
+            CandidateMatch(
+                round(index * 0.5, 6),
+                noise_random.choice(("EP01", "EP02", "EP03")),
+                _snap_to_source_grid(noise_random.uniform(0.0, 2400.0), 0.5),
+                round(noise_random.uniform(0.83, 0.99), 4),
+            )
+            for index in range(160)
+            for _ in range(8)
+        ]
+        cases.append(self._run_case(
+            "IDEAL_PURE_NOISE", "pure_noise_negative", [], noise_candidates,
+        ))
+
+        competing = (
+            _line("EP01", 0.0, 300.0, 1.0, 20, score=0.90)
+            + _line("EP02", 0.0, 900.0, 1.0, 20, score=0.899)
+        )
+        cases.append(self._run_case(
+            "IDEAL_COMPETING_LINES", "competing_coherent_lines",
+            [_truth("EP01", 0.0, 300.0, 1.0, 10.0)], competing,
+        ))
+
+        # accused span clears minimum_segment_seconds but the SOURCE span is under 3s,
+        # so no measured speed may be claimed.
+        cases.append(self._run_case(
+            "IDEAL_SHORT_SOURCE_SPAN", "short_span_null_speed",
+            [_truth("EP01", 0.0, 600.0, 0.75, 3.5)],
+            _line("EP01", 0.0, 600.0, 0.75, 8, score=0.98),
+        ))
+
+        discontinuity = (
+            _line("EP01", 0.0, 100.0, 0.8, 24, score=0.99)
+            + _line("EP01", 12.0, 109.5, 1.25, 24, score=0.99)
+        )
+        cases.append(self._run_case(
+            "IDEAL_SPEED_DISCONTINUITY", "speed_discontinuity_merge_negative",
+            [
+                _truth("EP01", 0.0, 100.0, 0.8, 12.0),
+                _truth("EP01", 12.0, 109.5, 1.25, 12.0),
+            ],
+            discontinuity,
+        ))
+
+        # Out-of-range speeds have no recoverable ground-truth speed by definition, so
+        # these are behavioural cases: the requirement is that no clamped endpoint is
+        # ever reported as a measurement. They carry no recall ground truth.
+        for out_of_range in (0.65, 1.70):
+            case = self._run_case(
+                f"IDEAL_SPEED_OUT_OF_RANGE_{out_of_range:.2f}", "speed_out_of_range",
+                [], _line("EP01", 0.0, 800.0, out_of_range, 40, score=0.99),
+            )
+            case["no_clamped_speed_reported"] = all(
+                prediction["speed_ratio"] not in (
+                    self.config.minimum_speed_ratio, self.config.maximum_speed_ratio
+                )
+                for prediction in case["predictions"]
+            )
+            cases.append(case)
+
+        # Phase 2A.1 item 9: the added coverage includes deliberately adversarial and
+        # negative cases. Gating recall/precision is computed over the recoverable
+        # cases only; the adversarial cases are reported as behavioural diagnostics so
+        # they are neither hidden nor allowed to distort a pass/fail aggregate.
+        diagnostic_transformations = {
+            "pure_noise_negative",
+            "speed_out_of_range",
+            "speed_discontinuity_merge_negative",
+            "grid_jitter_outlier_wrong_episode",
+        }
+        gating_cases = [
+            case for case in cases
+            if case["transformation"] not in diagnostic_transformations
+        ]
+        diagnostic_cases = [
+            case for case in cases
+            if case["transformation"] in diagnostic_transformations
+        ]
+        aggregate = _metric_summary(gating_cases)
         return {
-            "schema_version": "temporal-alignment-characterization-v0.1",
+            "schema_version": "temporal-alignment-characterization-v0.2",
             "created_at": datetime.now(UTC).isoformat(),
             "scope": "ideal_candidate_temporal_alignment",
             "visual_retrieval_involved": False,
             "configuration": asdict(self.config),
             "speed_sweep": list(IDEAL_SPEEDS),
+            "source_grid_realistic": True,
+            "outcome_taxonomy": _outcome_summary(cases),
             "aggregate": aggregate,
+            "gating_case_ids": [case["case_id"] for case in gating_cases],
+            "diagnostic_aggregate": _metric_summary(diagnostic_cases),
+            "diagnostic_case_ids": [case["case_id"] for case in diagnostic_cases],
+            "behavioural_assertions": {
+                "pure_noise_produces_no_segments": all(
+                    case["metrics"]["predicted_segments"] == 0
+                    for case in cases
+                    if case["transformation"] == "pure_noise_negative"
+                ),
+                "no_clamped_speed_reported": all(
+                    case.get("no_clamped_speed_reported", True) for case in cases
+                ),
+                "speed_discontinuity_not_merged": all(
+                    case["metrics"]["predicted_segments"] >= 2
+                    for case in cases
+                    if case["transformation"] == "speed_discontinuity_merge_negative"
+                ),
+                "competing_lines_are_ambiguous": all(
+                    case["status"] == MatchStatus.AMBIGUOUS.value
+                    for case in cases
+                    if case["transformation"] == "competing_coherent_lines"
+                ),
+                "short_source_span_speed_is_null": all(
+                    prediction["speed_ratio"] is None
+                    for case in cases
+                    if case["transformation"] == "short_span_null_speed"
+                    for prediction in case["predictions"]
+                ),
+            },
             "by_transformation": _group_cases(cases, "transformation"),
             "passed": (
                 aggregate["source_aware_segment_recall_at_1s"] == 1.0
@@ -302,7 +543,7 @@ class RealSegmentBenchmark:
         episode: str,
         source_start: float,
         speed: float,
-    ) -> tuple[str | None, int, int]:
+    ) -> tuple[str | None, int, int, int]:
         frames = extract_grayscale_frames(
             query_path,
             fps=self.config.matching.coarse_fps,
@@ -326,8 +567,16 @@ class RealSegmentBenchmark:
         minimum = int(
             self.config.matching.minimum_segment_seconds * self.config.matching.coarse_fps
         )
-        attribution = None if len(hits) >= minimum else "RETRIEVAL_LIMIT"
-        return attribution, len(hits), len(frames)
+        # Phase 2A.1 item 7: the aligner needs a CONTIGUOUS supported run under the
+        # configured gap tolerance, not merely enough supported frames somewhere.
+        longest_run = _longest_supported_run(
+            hits,
+            len(frames),
+            self.config.matching.maximum_frame_gap_seconds,
+            self.config.matching.coarse_fps,
+        )
+        attribution = None if longest_run >= minimum else "RETRIEVAL_LIMIT"
+        return attribution, len(hits), len(frames), longest_run
 
     def run(
         self,
@@ -425,13 +674,30 @@ class RealSegmentBenchmark:
                         attribution = None
                         usable_hits = 0
                         query_frames = 0
+                        longest_run = 0
                         if metrics["source_aware_recalled_segments"] == 0:
-                            attribution, usable_hits, query_frames = self._retrieval_attribution(
+                            (
+                                attribution, usable_hits, query_frames, longest_run
+                            ) = self._retrieval_attribution(
                                 matcher, query_path, episode, start, speed
                             )
                             if attribution is None:
                                 attribution = "ALIGNMENT_LIMIT"
+                        outcome = classify_case_outcome(
+                            result.status, metrics, truth, result.alternatives
+                        )
                         cases.append({
+                            "outcome": outcome,
+                            "alignment_usable_longest_run_frames": longest_run,
+                            "alternatives": [
+                                segment.to_dict() for segment in result.alternatives
+                            ],
+                            "ambiguity_contains_ground_truth": _alternatives_contain_ground_truth(
+                                result.alternatives, truth
+                            ),
+                            "truncated_episodes": list(
+                                getattr(result, "truncated_episodes", []) or []
+                            ),
                             "case_id": f"{interval_id}-{mode}",
                             "interval_id": interval_id,
                             "episode_alias": alias,
@@ -464,6 +730,7 @@ class RealSegmentBenchmark:
             },
             "profile_status": profile_status,
             "aggregate": _metric_summary(cases),
+            "outcome_taxonomy": _outcome_summary(cases),
             "by_profile": _group_cases(cases, "profile"),
             "by_episode": _group_cases(cases, "episode_alias"),
             "by_interval": _group_cases(cases, "interval_id"),

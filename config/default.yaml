@@ -8,7 +8,10 @@ matching:
   top_k: 8
   minimum_segment_seconds: 3.0
   minimum_visual_similarity: 0.82
-  maximum_frame_gap_seconds: 1.1
+  # Provisional calibration (Phase 2A.1): 1.1 -> 1.5 bridges a 1.5s retrieval hole
+  # that alone caused 5 real-benchmark misses. Revisit when the real benchmark
+  # expands beyond 2 episodes.
+  maximum_frame_gap_seconds: 1.5
   algorithm_version: "phase1-dct-v1"
   temporal_algorithm_version: "phase2a-temporal-v2"
   minimum_speed_ratio: 0.75
@@ -17,6 +20,12 @@ matching:
   candidate_timestamp_uncertainty_grid_steps: 1
   maximum_hypothesis_peaks_per_episode: 128
   maximum_alignment_segments_per_episode: 128
+  explanation_span_saturation_seconds: 12.0
+  merge_line_divergence_grid_steps: 1.0
+  merge_minimum_inlier_ratio: 0.90
+  minimum_green_inlier_count: 6
+  minimum_green_inlier_ratio: 0.90
+  maximum_green_residual_rms_seconds: 0.25
   minimum_uniqueness_margin: 0.05
   maximum_temporal_residual_seconds: 0.55
   minimum_coverage: 0.90

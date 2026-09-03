@@ -77,6 +77,10 @@ Phase 2A-0 实测要求最终设计显式容忍 `±1` 个 source grid step（当
 
 因此本实现可以用于内部候选定位和人工复核，但 nominal boundary 不能直接成为法律交付时间。后续独立 boundary-refinement 层必须用 decoder 提供的 authoritative media PTS，将 fitted nominal endpoints 映射或局部精修后，才能允许法律交付或 Excel 使用。该层不属于本 ADR 本次实现。
 
+**Phase 2A.1 架构裁定**：authoritative media PTS 映射**不是 Phase 2A 的阻断条件**，也不在 Phase 2A.1 实施。它是 legal-facing evidence analysis 与最终 Excel 输出之前的硬性前置，将在 **Phase 3 Evidence Analysis 边界**处理。任何阶段都禁止硬编码 `+0.23` 秒或其它常数补偿。
+
+因此 `source boundary MAE` 一类指标是 **matcher 内部边界误差**，不是相对权威媒体时间轴的误差；两者在报告中必须分开陈述。
+
 ## 影响
 
 该变更会替换 Temporal Alignment 的候选提案逻辑，并改变 speed ratio 的可检测范围。它不应与视觉 backend 切换同时实施，否则无法归因指标变化。

@@ -49,6 +49,7 @@ class AlignmentOutcome:
     ambiguous: bool
     contradiction: bool
     reason: str | None
+    truncated_episodes: tuple[str, ...] = ()
 
 
 class CandidateRetriever:
@@ -116,6 +117,7 @@ class _FitResult:
     inliers: np.ndarray
     residual_rms: float
     residual_max: float
+    unconstrained_slope: float | None = None
 
 
 def _interval_iou(left: SegmentMatch, right: SegmentMatch) -> float:
@@ -276,7 +278,7 @@ class TemporalAligner:
             slope = initial_slope if initial_slope is not None else 1.0
             intercept = float(np.median(source - slope * accused))
             return _FitResult(
-                slope, intercept, np.ones(len(matches), dtype=bool), 0.0, 0.0
+                slope, intercept, np.ones(len(matches), dtype=bool), 0.0, 0.0, None
             )
         hypotheses: list[tuple[float, float]] = []
         if initial_slope is not None:
@@ -327,11 +329,15 @@ class TemporalAligner:
                 best_key = key
         if best_inliers.sum() < 2:
             best_inliers[:] = True
+        unconstrained_slope: float | None = None
         for _ in range(3):
             design = np.column_stack([accused[best_inliers], np.ones(best_inliers.sum())])
             slope, intercept = np.linalg.lstsq(
                 design, source[best_inliers], rcond=None
             )[0]
+            # Keep the unclipped estimate: Phase 2A.1 forbids reporting a clamped
+            # endpoint as a measured speed.
+            unconstrained_slope = float(slope)
             slope = float(np.clip(
                 slope,
                 self.config.minimum_speed_ratio,
@@ -349,6 +355,7 @@ class TemporalAligner:
             float(slope), float(intercept), best_inliers,
             float(np.sqrt(np.mean(np.square(inlier_residuals)))),
             float(np.max(inlier_residuals)),
+            unconstrained_slope,
         )
 
     def _proposal_to_segment(
@@ -367,6 +374,16 @@ class TemporalAligner:
         end = max(item.accused_time for item in inlier_matches) + self.frame_interval
         if end - start + 1e-6 < self.config.minimum_segment_seconds:
             return None
+        # Phase 2A.1 item 10: an emitted segment needs the same absolute support a
+        # hypothesis peak needs. A sparse low-support tail must not look authoritative.
+        minimum_support = max(
+            2,
+            int(math.ceil(
+                self.config.minimum_segment_seconds * self.config.coarse_fps
+            )),
+        )
+        if len(inlier_matches) < minimum_support:
+            return None
         visual = float(np.mean([item.visual_score for item in inlier_matches]))
         coverage = min(1.0, len(inlier_matches) / max(1.0, (end - start) * self.config.coarse_fps))
         temporal = min(1.0, len(inlier_matches) / len(proposal.matches))
@@ -375,7 +392,27 @@ class TemporalAligner:
         match_score = max(0.0, min(1.0, visual * (0.7 + 0.3 * coverage) * temporal))
         accused_span = float(np.ptp(accused)) if len(accused) > 1 else 0.0
         source_span = float(np.ptp(source)) if len(source) > 1 else 0.0
-        speed_ratio = round(fit.slope, 4) if min(accused_span, source_span) >= 3.0 else None
+        span_supports_speed = min(accused_span, source_span) >= 3.0
+        unconstrained = fit.unconstrained_slope
+        # Phase 2A.1: a fitted slope outside the configured range is never reported as a
+        # measured speed. The clipped endpoint is a fitting artefact, not evidence.
+        # A source-grid-quantized fit overshoots the configured endpoints by well under
+        # one slope bin; only an excursion the slope grid can actually resolve counts as
+        # out of range.
+        slope_tolerance = self.config.slope_bin_size
+        speed_out_of_range = bool(
+            unconstrained is not None
+            and not (
+                self.config.minimum_speed_ratio - slope_tolerance
+                <= unconstrained
+                <= self.config.maximum_speed_ratio + slope_tolerance
+            )
+        )
+        speed_ratio = (
+            round(fit.slope, 4)
+            if span_supports_speed and not speed_out_of_range
+            else None
+        )
         segment = SegmentMatch(
             accused_start=round(start, 3),
             accused_end=round(end, 3),
@@ -383,6 +420,10 @@ class TemporalAligner:
             source_start=round(max(0.0, fit.slope * start + fit.intercept), 3),
             source_end=round(max(0.0, fit.slope * end + fit.intercept), 3),
             speed_ratio=speed_ratio,
+            speed_out_of_range=speed_out_of_range,
+            unconstrained_speed_ratio=(
+                round(unconstrained, 4) if unconstrained is not None else None
+            ),
             visual_score=round(visual, 4),
             audio_score=None,
             temporal_score=round(temporal, 4),
@@ -400,25 +441,50 @@ class TemporalAligner:
         )
         return _FittedSegment(segment, inlier_matches)
 
-    @staticmethod
-    def _fit_quality(fitted: _FittedSegment) -> tuple[float, int, float, float]:
+    def _explanation_quality(self, segment: SegmentMatch) -> float:
+        """Normalized quality of a temporal explanation.
+
+        Visual agreement scaled by BOUNDED explained evidence. Evidence is required so
+        that a short fragment supported by a handful of high-scoring outliers cannot
+        outrank the longer line that actually explains the timeline; the bound is what
+        stops a long weak line from overwhelming a materially better short one, since
+        support saturates at twice the minimum segment length.
+
+        Neither duration nor coverage appears directly: coverage would penalize a
+        segment for the retrieval holes `maximum_frame_gap_seconds` exists to bridge,
+        and inlier_ratio is measured against the run, so a short pure fragment would
+        maximize it trivially. Both remain GREEN diagnostics and ranking tiebreaks.
+        """
+        saturation = max(
+            1.0,
+            2.0 * self.config.minimum_segment_seconds * self.config.coarse_fps,
+        )
+        support = min(1.0, segment.inlier_count / saturation)
+        return float(segment.visual_score * support)
+
+    def _fit_quality(
+        self, fitted: _FittedSegment
+    ) -> tuple[float, int, float, float, float]:
         segment = fitted.segment
-        duration = segment.accused_end - segment.accused_start
         return (
-            segment.match_score * duration,
+            self._explanation_quality(segment),
             segment.inlier_count,
+            segment.inlier_ratio,
             -segment.residual_rms_seconds,
-            segment.visual_score,
+            segment.accused_end - segment.accused_start,
         )
 
     def _extract_episode_segments(
         self, episode: str, matches: list[CandidateMatch]
-    ) -> list[_FittedSegment]:
+    ) -> tuple[list[_FittedSegment], bool]:
+        """Returns (segments, truncated). `truncated` means the per-episode cap was hit."""
         remaining = list(matches)
         extracted: list[_FittedSegment] = []
+        truncated = True
         for _ in range(self.config.maximum_alignment_segments_per_episode):
             peaks = self._sparse_peaks(episode, remaining)
             if not peaks:
+                truncated = False
                 break
             fits: list[_FittedSegment] = []
             for peak in peaks:
@@ -434,6 +500,7 @@ class TemporalAligner:
                     if fitted is not None:
                         fits.append(fitted)
             if not fits:
+                truncated = False
                 break
             best = max(fits, key=self._fit_quality)
             extracted.append(best)
@@ -456,7 +523,12 @@ class TemporalAligner:
                     <= tolerance
                 )
             ]
-        return extracted
+        if truncated:
+            logger.warning(
+                "Alignment segment cap reached for %s: results are truncated at %d segments",
+                episode, self.config.maximum_alignment_segments_per_episode,
+            )
+        return extracted, truncated
 
     def align(self, candidates: list[CandidateMatch]) -> list[SegmentMatch]:
         return self.align_with_diagnostics(candidates).segments
@@ -471,17 +543,52 @@ class TemporalAligner:
         by_episode: dict[str, list[CandidateMatch]] = defaultdict(list)
         for candidate in filtered:
             by_episode[candidate.source_episode].append(candidate)
-        scored_segments = [
-            fitted
-            for episode, episode_matches in sorted(by_episode.items())
-            for fitted in self._extract_episode_segments(episode, episode_matches)
-        ]
+        scored_segments: list[_FittedSegment] = []
+        truncated_episodes: list[str] = []
+        for episode, episode_matches in sorted(by_episode.items()):
+            episode_segments, truncated = self._extract_episode_segments(
+                episode, episode_matches
+            )
+            scored_segments.extend(episode_segments)
+            if truncated:
+                truncated_episodes.append(episode)
         scored_segments.sort(key=self._fit_quality, reverse=True)
         claimed_frames: set[int] = set()
         accepted: list[_FittedSegment] = []
+        suppressed_rivals: list[SegmentMatch] = []
         for fitted in scored_segments:
             frame_ids = {round(item.accused_time / self.frame_interval) for item in fitted.inliers}
             if frame_ids and len(frame_ids & claimed_frames) / len(frame_ids) > 0.5:
+                # Phase 2A.1: a suppressed but still credible rival is retained as an
+                # alternative rather than silently deleted.
+                rival = fitted.segment
+                rival_quality = self._explanation_quality(rival)
+                # Only a genuinely INCOMPATIBLE explanation is an ambiguity signal. A
+                # rival describing the same episode and source position is a duplicate
+                # of the winner, not a competing account of the evidence.
+                incompatible = [
+                    winner for winner in accepted
+                    if (
+                        {
+                            round(item.accused_time / self.frame_interval)
+                            for item in winner.inliers
+                        }
+                        & frame_ids
+                    )
+                    and not (
+                        winner.segment.source_episode == rival.source_episode
+                        and abs(winner.segment.source_start - rival.source_start) <= 1.0
+                    )
+                ]
+                dominant = max(
+                    (self._explanation_quality(winner.segment) for winner in incompatible),
+                    default=None,
+                )
+                if (
+                    dominant is not None
+                    and dominant - rival_quality < self.config.minimum_uniqueness_margin
+                ):
+                    suppressed_rivals.append(rival)
                 continue
             accepted.append(fitted)
             claimed_frames.update(frame_ids)
@@ -540,6 +647,12 @@ class TemporalAligner:
                     for rival in major_rivals
                 ])
 
+        if suppressed_rivals:
+            ambiguous = True
+            alternatives.extend(
+                replace(rival, candidate_tier="YELLOW", review_tier="REVIEW_REQUIRED")
+                for rival in suppressed_rivals
+            )
         assessed = self._mark_source_reuse(assessed)
         conflict_graph = self._conflict_graph(assessed)
         contradiction = bool(conflict_graph)
@@ -571,7 +684,13 @@ class TemporalAligner:
         reason = None
         reasons_out: list[str] = []
         if ambiguous:
-            reasons_out.append("Cross-episode competitors have uniqueness margin below 0.05")
+            reasons_out.append(
+                "Competing source explanations remain within the uniqueness margin"
+            )
+        if truncated_episodes:
+            reasons_out.append(
+                "Alignment segment cap reached for: " + ", ".join(sorted(truncated_episodes))
+            )
         if contradiction:
             conflict_ids = sorted({
                 item for edge in conflict_graph
@@ -594,17 +713,28 @@ class TemporalAligner:
             ambiguous=ambiguous,
             contradiction=contradiction,
             reason=reason,
+            truncated_episodes=tuple(sorted(truncated_episodes)),
         )
 
     def _candidate_tier(
         self, segment: SegmentMatch, margin: float, ambiguous: bool, index_complete: bool
     ) -> str:
+        """Diagnostic tier only. Production review_tier is always REVIEW_REQUIRED.
+
+        Phase 2A.1 replaces the tautological `residual_max <= 0.55` condition: inliers
+        are defined by residual <= 0.5, so that test could never fail. The conditions
+        below use residual RMS, inlier ratio and absolute support, which vary.
+        """
         if ambiguous:
             return "YELLOW"
         green = (
             index_complete
             and margin >= self.config.minimum_uniqueness_margin
-            and segment.temporal_residual_seconds <= self.config.maximum_temporal_residual_seconds
+            and segment.residual_rms_seconds <= self.config.maximum_green_residual_rms_seconds
+            and segment.inlier_ratio >= self.config.minimum_green_inlier_ratio
+            and segment.inlier_count >= self.config.minimum_green_inlier_count
+            and not segment.speed_out_of_range
+            and not segment.source_reuse
             and segment.coverage >= self.config.minimum_coverage
             and segment.temporal_score >= self.config.minimum_temporal_consistency
         )
@@ -663,6 +793,40 @@ class TemporalAligner:
             for segment in segments
         ]
 
+    @staticmethod
+    def _segment_line(segment: SegmentMatch) -> tuple[float, float] | None:
+        """Recover (slope, intercept) of a fitted segment in nominal grid time."""
+        span = segment.accused_end - segment.accused_start
+        if span <= 1e-9:
+            return None
+        slope = (segment.source_end - segment.source_start) / span
+        intercept = segment.source_start - slope * segment.accused_start
+        return slope, intercept
+
+    def _lines_stay_consistent(
+        self, left: SegmentMatch, right: SegmentMatch
+    ) -> tuple[bool, float]:
+        """Do two fitted mappings agree over the proposed union span?
+
+        Two segments only describe one continuous quotation if their mappings stay
+        within source-grid temporal uncertainty across the whole union span. A speed
+        discontinuity diverges linearly and is rejected here, before any refit.
+        """
+        left_line = self._segment_line(left)
+        right_line = self._segment_line(right)
+        if left_line is None or right_line is None:
+            return False, float("inf")
+        union_start = min(left.accused_start, right.accused_start)
+        union_end = max(left.accused_end, right.accused_end)
+        divergence = max(
+            abs((left_line[0] * t + left_line[1]) - (right_line[0] * t + right_line[1]))
+            for t in (union_start, union_end)
+        )
+        budget = (
+            self.config.merge_line_divergence_grid_steps * self.frame_interval + 1e-9
+        )
+        return divergence <= budget, divergence
+
     def _merge_adjacent(self, segments: list[_FittedSegment]) -> list[_FittedSegment]:
         if not segments:
             return []
@@ -671,13 +835,14 @@ class TemporalAligner:
             previous = merged[-1]
             previous_segment = previous.segment
             current_segment = segment.segment
-            compatible = (
+            adjacent = (
                 current_segment.source_episode == previous_segment.source_episode
                 and current_segment.accused_start - previous_segment.accused_end
                 <= self.config.maximum_frame_gap_seconds
                 and abs(current_segment.source_start - previous_segment.source_end) <= 1.5
             )
-            if not compatible:
+            consistent, _ = self._lines_stay_consistent(previous_segment, current_segment)
+            if not (adjacent and consistent):
                 merged.append(segment)
                 continue
             combined = previous.inliers + segment.inliers
@@ -687,7 +852,11 @@ class TemporalAligner:
                 previous_segment.match_score + current_segment.match_score,
             )
             refitted = self._proposal_to_segment(proposal)
-            if refitted is None:
+            # The merged refit must still explain the union; a refit that drops a large
+            # share of the combined evidence means the two segments were not one line.
+            if refitted is None or (
+                refitted.segment.inlier_ratio < self.config.merge_minimum_inlier_ratio
+            ):
                 merged.append(segment)
             else:
                 merged[-1] = refitted

@@ -114,3 +114,52 @@ audit 必须携带该 basis。已观察到 nominal grid 与 media content PTS �
 
 Phase 2A 实现完成后必须停止，等待 Claude Code 独立复核与 Architecture Owner
 Gate，不得自行进入其他 Phase 2 能力。
+
+## 9. Phase 2A.1 Calibration & Safety Closure 裁定
+
+### 9.1 AMBIGUOUS 与 segments 并存（有意）
+
+`status = AMBIGUOUS` 可以与非空 `segments` / `alternatives` 并存。这是有意设计，不得回退为清空全部 segment。
+
+下游语义必须显式：
+
+1. **先检查 case/segment status**，再看 `segments`；
+2. **非空 `segments` 绝不意味着自动接受**；
+3. 冲突或歧义的 segment 保持 `review_tier = REVIEW_REQUIRED`；
+4. 未受影响的可靠 segment 可以保留。
+
+生产 `review_tier` 恒为 `REVIEW_REQUIRED`；`candidate_tier`（含 `GREEN`）仅为诊断量，不得作为自动放行依据。
+
+### 9.2 Phase 1 end-to-end synthetic gate
+
+```text
+Phase 1 end-to-end synthetic gate = FAIL / BACKEND-DEPENDENT / DEFERRED
+```
+
+该 gate 建立在低分辨率合成语料上，其视觉检索质量已被多轮独立审查证明不足以支撑 precision 结论。
+
+- 旧结果**不得**被改写为 PASS；
+- 它**不再阻断** Temporal Alignment 的关闭；
+- 必须在 geometric retrieval / visual backend 工作之后**重新运行**。
+
+### 9.3 Timestamp policy
+
+`timestamp_basis = nominal_grid_time` 在 Phase 2A 有效。authoritative media PTS 映射是 legal-facing evidence analysis 与最终 Excel 之前的硬性前置，在 **Phase 3 Evidence Analysis 边界**处理。禁止硬编码 +0.23 秒。
+
+### 9.4 Frame-gap 标定
+
+`maximum_frame_gap_seconds` 由 1.1 调整为 **1.5（provisional）**。依据：独立审查复现出 5 个真实 miss 仅由一个 1.5 秒候选空洞造成，调至 1.5 全部修复，且纯噪声 false positive 保持为 0。真实 benchmark 扩展到 2 集以上后必须重新标定。
+
+### 9.5 Real benchmark outcome taxonomy
+
+真实 benchmark 必须输出机器推导、互斥且求和等于 case 数的四分类：
+
+```text
+CORRECT_MATCH
+SAFE_AMBIGUITY_CONTAINS_GT
+UNSAFE_WRONG_MATCH
+NO_MATCH
+```
+
+`UNSAFE_WRONG_MATCH` 包含任何未满足 ground-truth episode/timeline 要求的 `MATCH_FOUND`——**集数正确但源时间轴实质错误仍属 unsafe wrong match**。禁止人工转写计数。
+

@@ -12,6 +12,15 @@ def test_ideal_temporal_benchmark_covers_speed_jitter_and_piecewise(tmp_path) ->
     assert report["aggregate"]["source_aware_segment_recall_at_1s"] == 1.0
     assert report["aggregate"]["segment_precision_at_1s"] == 1.0
     assert report["aggregate"]["false_positive_segment_count"] == 0
+    assert report["source_grid_realistic"] is True
+    behavioural = report["behavioural_assertions"]
+    assert behavioural["pure_noise_produces_no_segments"] is True
+    assert behavioural["no_clamped_speed_reported"] is True
+    assert behavioural["speed_discontinuity_not_merged"] is True
+    assert behavioural["competing_lines_are_ambiguous"] is True
+    assert behavioural["short_source_span_speed_is_null"] is True
+    taxonomy = report["outcome_taxonomy"]
+    assert sum(taxonomy["counts"].values()) == taxonomy["case_count"]
     piecewise = next(item for item in report["cases"] if item["case_id"] == "IDEAL_PIECEWISE_5")
     assert piecewise["metrics"]["predicted_segments"] == 5
     assert sum(item["source_reuse"] for item in piecewise["predictions"]) == 2

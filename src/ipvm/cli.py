@@ -306,6 +306,7 @@ def temporal_benchmark(
         payload.update({
             "real_report": str(real_path.resolve()),
             "real_aggregate": real["aggregate"],
+            "real_outcome_taxonomy": real["outcome_taxonomy"],
             "real_by_profile": real["by_profile"],
         })
     _emit(payload)

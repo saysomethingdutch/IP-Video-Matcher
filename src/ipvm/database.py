@@ -10,7 +10,7 @@ from typing import Any, Iterator
 from .models import MediaMetadata, SegmentMatch
 
 
-SCHEMA_VERSION = 4
+SCHEMA_VERSION = 5
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS projects (
@@ -107,6 +107,8 @@ CREATE TABLE IF NOT EXISTS segment_matches (
     conflict_with_json TEXT NOT NULL DEFAULT '[]',
     conflict_reason TEXT,
     source_reuse INTEGER NOT NULL DEFAULT 0,
+    speed_out_of_range INTEGER NOT NULL DEFAULT 0,
+    unconstrained_speed_ratio REAL,
     timestamp_basis TEXT NOT NULL DEFAULT 'nominal_grid_time',
     mirrored INTEGER,
     cropped INTEGER,
@@ -367,6 +369,8 @@ class Database:
             ("candidate_count", "INTEGER NOT NULL DEFAULT 0"),
             ("inlier_ratio", "REAL NOT NULL DEFAULT 0"),
             ("source_reuse", "INTEGER NOT NULL DEFAULT 0"),
+            ("speed_out_of_range", "INTEGER NOT NULL DEFAULT 0"),
+            ("unconstrained_speed_ratio", "REAL"),
             ("timestamp_basis", "TEXT NOT NULL DEFAULT 'nominal_grid_time'"),
         )
         for column, definition in additions:
@@ -562,9 +566,10 @@ class Database:
                     inlier_count, candidate_count, inlier_ratio,
                     coverage, uniqueness_margin,
                     candidate_tier, review_tier, segment_id, conflict,
-                    conflict_with_json, conflict_reason, source_reuse, timestamp_basis,
+                    conflict_with_json, conflict_reason, source_reuse,
+                    speed_out_of_range, unconstrained_speed_ratio, timestamp_basis,
                     mirrored, cropped, created_at, algorithm_version
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 rows,
             )
@@ -585,7 +590,8 @@ class Database:
             segment.uniqueness_margin, segment.candidate_tier, segment.review_tier,
             segment.segment_id, int(segment.conflict),
             json.dumps(segment.conflict_with, ensure_ascii=False), segment.conflict_reason,
-            int(segment.source_reuse), segment.timestamp_basis,
+            int(segment.source_reuse), int(segment.speed_out_of_range),
+            segment.unconstrained_speed_ratio, segment.timestamp_basis,
             None if segment.mirrored is None else int(segment.mirrored),
             None if segment.cropped is None else int(segment.cropped),
             utc_now(), segment.algorithm_version,
