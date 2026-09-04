@@ -117,23 +117,19 @@ def test_temporal_alignment_v2_tolerates_grid_jitter_and_high_score_outliers() -
     assert outcome.segments
     segment = outcome.segments[0]
     assert segment.source_episode == "EP01"
-    # Phase 2A.1 item 10: extreme +/-1-grid jitter is a robustness diagnostic, not a
-    # production frequency. The requirement is that such a fit is not authoritative,
-    # not that it is precise.
-    if segment.speed_ratio is not None:
-        assert segment.speed_ratio == pytest.approx(speed, abs=0.10)
+    assert segment.speed_ratio == pytest.approx(speed, abs=0.05)
+    # jitter is a robustness diagnostic: the fit must not look authoritative
     assert segment.candidate_tier != "GREEN"
     assert segment.accused_start <= 0.5
-    # extreme-jitter regime: span may shrink; the requirement is non-authoritative
-    assert segment.accused_end >= 10.0
+    assert segment.accused_end >= 11.5
     # 3f5f4d5's duration-dominant ranking selected an 18-inlier run here; the Phase 2A.1
     # normalized ranking selects a marginally different run in this extreme-jitter regime.
     # Support must stay a clear majority of the span, and every candidate in the chosen
     # run must be an inlier.
-    # Phase 2A.1 ranking selects the line that explains the most evidence over the full
-    # span rather than a short pure fragment, so under +/-0.5s jitter some points
-    # legitimately fall outside tolerance.
-    assert segment.inlier_count >= 16
+    # With the four-frame (-1, 0, +1, 0)-grid pattern, at least three observations per
+    # cycle must support one coherent line. This derives 18/24 independently of today's
+    # deterministic result (currently 19/24); it is not a snapshot-calibrated 19.
+    assert segment.inlier_count >= 18
     assert segment.inlier_ratio >= 0.75
     assert segment.residual_max_seconds <= 0.5 + 1e-6
 
@@ -405,6 +401,16 @@ def test_segment_cap_is_reported_instead_of_silently_truncating() -> None:
     outcome = aligner.align_with_diagnostics(candidates, index_complete=True)
     assert outcome.truncated_episodes == ("EP01",)
     assert outcome.reason is not None and "segment cap" in outcome.reason
+    assert outcome.warnings == ({
+        "code": "ALIGNMENT_SEGMENT_CAP_REACHED",
+        "message": "Per-episode alignment segment cap reached; output is truncated",
+        "episodes": ["EP01"],
+        "limit_per_episode": 2,
+    },)
+    assert outcome.segments
+    assert all(segment.segment_cap_truncated for segment in outcome.segments)
+    assert all(segment.candidate_tier != "GREEN" for segment in outcome.segments)
+    assert all(segment.review_tier == "REVIEW_REQUIRED" for segment in outcome.segments)
 
 
 def test_green_diagnostic_is_not_tautological_on_residual() -> None:
@@ -426,3 +432,183 @@ def test_green_diagnostic_is_not_tautological_on_residual() -> None:
         # residual_max is bounded by the inlier tolerance, so it alone proves nothing
         assert segment.residual_max_seconds <= 0.5
         assert segment.candidate_tier != "GREEN"
+
+
+def _grid_piecewise(specifications):
+    matches = []
+    truth = []
+    accused_start = 0.0
+    source_start = 100.0
+    for speed, duration in specifications:
+        truth.append((accused_start, accused_start + duration, source_start, source_start + speed * duration, speed))
+        for index in range(int(duration * 2)):
+            accused = accused_start + index * 0.5
+            source = round((source_start + speed * index * 0.5) * 2) / 2
+            matches.append(CandidateMatch(accused, "EP01", source, 0.99))
+        accused_start += duration
+        source_start += speed * duration
+    return matches, truth
+
+
+@pytest.mark.parametrize(
+    "specifications",
+    [
+        [(0.8, 12.0), (1.25, 12.0)],
+        [(1.25, 12.0), (0.8, 12.0)],
+        [(1.0, 12.0), (1.25, 12.0)],
+    ],
+)
+def test_change_point_refinement_recovers_both_source_mappings(specifications) -> None:
+    matches, truth = _grid_piecewise(specifications)
+    outcome = TemporalAligner(MatchingConfig()).align_with_diagnostics(
+        matches, index_complete=True
+    )
+    assert len(outcome.segments) == 2
+    for segment, (acc_start, acc_end, src_start, src_end, speed) in zip(
+        outcome.segments, truth, strict=True
+    ):
+        assert segment.accused_start == pytest.approx(acc_start, abs=0.5)
+        assert segment.accused_end == pytest.approx(acc_end, abs=0.5)
+        assert segment.source_start == pytest.approx(src_start, abs=0.5)
+        assert segment.source_end == pytest.approx(src_end, abs=0.5)
+        assert segment.speed_ratio == pytest.approx(speed, abs=0.03)
+
+
+def test_change_point_refinement_recovers_three_speed_piecewise_mapping() -> None:
+    matches, truth = _grid_piecewise([(0.8, 8.0), (1.25, 8.0), (1.0, 8.0)])
+    outcome = TemporalAligner(MatchingConfig()).align_with_diagnostics(
+        matches, index_complete=True
+    )
+    assert len(outcome.segments) == 3
+    for segment, (acc_start, acc_end, src_start, src_end, speed) in zip(
+        outcome.segments, truth, strict=True
+    ):
+        assert segment.accused_start == pytest.approx(acc_start, abs=0.5)
+        assert segment.accused_end == pytest.approx(acc_end, abs=0.5)
+        assert segment.source_start == pytest.approx(src_start, abs=0.75)
+        assert segment.source_end == pytest.approx(src_end, abs=0.75)
+        assert segment.speed_ratio == pytest.approx(speed, abs=0.04)
+
+
+def test_change_point_does_not_split_short_near_equal_slopes() -> None:
+    matches, _ = _grid_piecewise([(1.0, 4.0), (1.05, 4.0)])
+    outcome = TemporalAligner(MatchingConfig()).align_with_diagnostics(
+        matches, index_complete=True
+    )
+    assert len(outcome.segments) == 1
+
+
+def test_change_point_does_not_split_one_line_for_score_fluctuation() -> None:
+    matches = [
+        CandidateMatch(
+            index * 0.5,
+            "EP01",
+            200.0 + index * 0.5,
+            0.90 if index % 2 else 0.99,
+        )
+        for index in range(48)
+    ]
+    outcome = TemporalAligner(MatchingConfig()).align_with_diagnostics(
+        matches, index_complete=True
+    )
+    assert len(outcome.segments) == 1
+
+
+def test_temporal_line_compatibility_uses_mapping_not_raw_boundaries() -> None:
+    aligner = TemporalAligner(MatchingConfig())
+    same_left = aligner._proposal_to_segment(
+        _Proposal("EP01", candidates("EP01", 0.0, 100.0, 16), 1.0)
+    )
+    same_right = aligner._proposal_to_segment(
+        _Proposal("EP01", candidates("EP01", 4.0, 104.0, 16), 1.0)
+    )
+    assert same_left is not None and same_right is not None
+    assert same_left.segment.source_start != same_right.segment.source_start
+    assert aligner._same_temporal_line(same_left.segment, same_right.segment)
+
+    diverging = [
+        CandidateMatch(index * 0.5, "EP01", 100.0 + 1.25 * index * 0.5, 0.99)
+        for index in range(24)
+    ]
+    diverging_fit = aligner._proposal_to_segment(_Proposal("EP01", diverging, 1.0))
+    assert diverging_fit is not None
+    assert not aligner._same_temporal_line(same_left.segment, diverging_fit.segment)
+
+    cross_episode = aligner._proposal_to_segment(
+        _Proposal("EP02", candidates("EP02", 0.0, 100.0, 16), 1.0)
+    )
+    assert cross_episode is not None
+    assert not aligner._same_temporal_line(same_left.segment, cross_episode.segment)
+
+
+def test_same_line_with_grid_jitter_does_not_create_artificial_ambiguity() -> None:
+    aligner = TemporalAligner(MatchingConfig())
+    jitter = (-0.5, 0.0, 0.5, 0.0)
+    matches = [
+        CandidateMatch(
+            index * 0.5,
+            "EP01",
+            round((300.0 + index * 0.5) * 2) / 2 + jitter[index % 4],
+            0.98,
+        )
+        for index in range(32)
+    ]
+    outcome = aligner.align_with_diagnostics(matches, index_complete=True)
+    assert outcome.segments
+    assert outcome.ambiguous is False
+
+
+def test_same_episode_incompatible_full_support_line_is_a_real_rival() -> None:
+    aligner = TemporalAligner(MatchingConfig())
+    primary = candidates("EP01", 0.0, 100.0, 20)
+    rival = candidates("EP01", 0.0, 500.0, 20)
+    for index, item in enumerate(rival):
+        rival[index] = CandidateMatch(
+            item.accused_time, item.source_episode, item.source_time, 0.989
+        )
+    outcome = aligner.align_with_diagnostics(primary + rival, index_complete=True)
+    assert outcome.ambiguous is True
+    assert outcome.alternatives
+    assert all(item.source_episode == "EP01" for item in outcome.alternatives)
+
+
+def test_minimum_support_fragment_is_not_a_major_rival_to_full_explanation() -> None:
+    aligner = TemporalAligner(MatchingConfig())
+    primary = candidates("EP01", 0.0, 100.0, 20)
+    fragment = [
+        CandidateMatch(index * 0.5, "EP01", 500.0 + index * 0.5, 0.999)
+        for index in range(6)
+    ]
+    outcome = aligner.align_with_diagnostics(primary + fragment, index_complete=True)
+    assert outcome.ambiguous is False
+    assert outcome.alternatives == []
+
+
+def test_orphan_support_marks_confirmed_partial_boundary_incomplete() -> None:
+    hits = (0, 1, *range(5, 12))
+    matches = [
+        CandidateMatch(index * 0.5, "EP01", 1867.5 + index * 0.5, 0.99)
+        for index in hits
+    ]
+    outcome = TemporalAligner(MatchingConfig()).align_with_diagnostics(
+        matches, index_complete=True
+    )
+    assert len(outcome.segments) == 1
+    segment = outcome.segments[0]
+    assert (segment.accused_start, segment.accused_end) == (2.5, 6.0)
+    assert segment.boundary_completeness == "INCOMPLETE"
+    assert "2 before start" in (segment.boundary_completeness_reason or "")
+    assert segment.candidate_tier != "GREEN"
+    assert segment.review_tier == "REVIEW_REQUIRED"
+
+
+def test_source_reuse_survives_speed_change_refinement() -> None:
+    matches, _ = _grid_piecewise([(0.8, 12.0), (1.25, 12.0)])
+    matches.extend(candidates("EP01", 30.0, 100.0, 16))
+    outcome = TemporalAligner(MatchingConfig()).align_with_diagnostics(
+        matches, index_complete=True
+    )
+    assert len(outcome.segments) == 3
+    reused = [segment for segment in outcome.segments if segment.source_reuse]
+    assert len(reused) == 2
+    assert all(segment.candidate_tier != "GREEN" for segment in reused)

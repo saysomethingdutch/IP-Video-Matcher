@@ -106,6 +106,8 @@ def _analyze(context: Context, case_id: str) -> dict[str, object]:
         "status": result.status,
         "review_tier": result.review_tier,
         "reason": result.reason,
+        "truncated_episodes": list(result.truncated_episodes),
+        "warnings": list(result.warnings),
         "segments": [segment.to_dict() for segment in result.segments],
         "alternative_candidates": [segment.to_dict() for segment in result.alternatives],
         "conflict_graph": result.conflict_graph,

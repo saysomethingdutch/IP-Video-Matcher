@@ -1,6 +1,6 @@
 # ADR-0005：Benchmark Metric Definitions
 
-状态：已接受，Phase 1.5.1 evaluator 修订
+状态：已接受，Phase 2A.2 integrity / boundary semantics 修订
 
 修订：Phase 2A-0.2 新增 retrieval 聚类推断与 alignment-usable 口径。
 
@@ -30,6 +30,38 @@ accused-side 与 source-side boundary MAE 分开报告。只要存在未评估�
 ## Ambiguity 与 Index Safety
 
 报告 ambiguous prediction 数、ambiguity case correctness、incomplete-index refusal 数。exact duplicate 的两个合法 source 用同一 `equivalence_group` 表示。
+
+Real temporal benchmark 的 case-level outcome 固定为四类，互斥且总和必须等于 case 数：
+
+```text
+CORRECT_UNAMBIGUOUS_MATCH
+SAFE_AMBIGUITY_CONTAINS_GT
+UNSAFE_WRONG_MATCH
+NO_MATCH
+```
+
+`AMBIGUOUS` 即使 primary 正确也只能归入 `SAFE_AMBIGUITY_CONTAINS_GT`。Alternative
+只有在 accused interval、episode、source interval、duration 与 slope/speed 全部匹配 GT
+时才能证明“contains GT”。多余 prediction 计 FP，且会阻止
+`CORRECT_UNAMBIGUOUS_MATCH`。
+
+边界安全另用正交字段报告，不改变上述四分类和 recall：
+
+```text
+FULL_MAPPING_CORRECT
+CONTAINED_PARTIAL_EVIDENCE
+INCORRECT_COMPLETE_ASSERTION
+UNRESOLVED_OR_INCORRECT_MAPPING
+NO_OUTPUT
+```
+
+明确标记 `INCOMPLETE` 的 contained partial evidence 可以保留供人工复核，但不能按完整
+GT 命中，也不能借新 taxonomy 提高 recall。
+
+Retrieval attribution 同时报告 `retrieval_sufficient_for_any_match` 与
+`retrieval_sufficient_for_full_boundary`。Tolerated hole 只延续 temporal span，不计作
+actual hit；必须另报 actual supported frame count、longest actual-hit run、run temporal
+span、tolerated holes 与 supported accused start/end。
 
 ## Speed Ratio
 

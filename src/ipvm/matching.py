@@ -14,7 +14,13 @@ from .config import AppConfig, MatchingConfig
 from .database import Database
 from .features import DCTVisualEncoder, ImageEncoder
 from .media import MediaToolError, extract_grayscale_frames, probe_media, sha256_file
-from .models import CandidateMatch, MatchStatus, MediaMetadata, SegmentMatch
+from .models import (
+    BoundaryCompleteness,
+    CandidateMatch,
+    MatchStatus,
+    MediaMetadata,
+    SegmentMatch,
+)
 
 
 logger = logging.getLogger(__name__)
@@ -38,6 +44,8 @@ class AnalysisResult:
     conflict_graph: list[dict[str, Any]]
     review_tier: str
     reason: str | None = None
+    truncated_episodes: tuple[str, ...] = ()
+    warnings: tuple[dict[str, Any], ...] = ()
 
 
 @dataclass(frozen=True)
@@ -50,6 +58,7 @@ class AlignmentOutcome:
     contradiction: bool
     reason: str | None
     truncated_episodes: tuple[str, ...] = ()
+    warnings: tuple[dict[str, Any], ...] = ()
 
 
 class CandidateRetriever:
@@ -474,6 +483,181 @@ class TemporalAligner:
             segment.accused_end - segment.accused_start,
         )
 
+    @staticmethod
+    def _ordinary_line_cost(
+        matches: list[CandidateMatch],
+    ) -> tuple[float, float, float]:
+        """Return an OLS line and total squared residual over every supplied point.
+
+        Robust fitting is appropriate for extracting a line, but its inlier-only RMS is
+        the wrong objective for change-point selection: it can hide the very second
+        regime that a split is supposed to explain.
+        """
+        accused = np.asarray([item.accused_time for item in matches], dtype=np.float64)
+        source = np.asarray([item.source_time for item in matches], dtype=np.float64)
+        design = np.column_stack([accused, np.ones(len(matches))])
+        slope, intercept = np.linalg.lstsq(design, source, rcond=None)[0]
+        residuals = source - (slope * accused + intercept)
+        return float(slope), float(intercept), float(np.sum(np.square(residuals)))
+
+    def _candidate_path_for_change_point(
+        self,
+        left: _FittedSegment,
+        right: _FittedSegment,
+        episode_matches: list[CandidateMatch],
+    ) -> list[CandidateMatch]:
+        """Select one observed candidate per frame near either extracted line."""
+        left_line = self._segment_line(left.segment)
+        right_line = self._segment_line(right.segment)
+        if left_line is None or right_line is None:
+            return []
+        start = min(left.segment.accused_start, right.segment.accused_start)
+        end = max(left.segment.accused_end, right.segment.accused_end)
+        tolerance = self.candidate_timestamp_tolerance_seconds + 1e-6
+        best_by_frame: dict[int, tuple[tuple[float, float], CandidateMatch]] = {}
+        for match in episode_matches:
+            if not (start - 1e-9 <= match.accused_time < end - 1e-9):
+                continue
+            residual = min(
+                abs(match.source_time - (left_line[0] * match.accused_time + left_line[1])),
+                abs(match.source_time - (right_line[0] * match.accused_time + right_line[1])),
+            )
+            if residual > tolerance:
+                continue
+            frame_id = round(match.accused_time / self.frame_interval)
+            quality = (residual, -match.visual_score)
+            current = best_by_frame.get(frame_id)
+            if current is None or quality < current[0]:
+                best_by_frame[frame_id] = (quality, match)
+        return sorted(
+            (item[1] for item in best_by_frame.values()),
+            key=lambda item: item.accused_time,
+        )
+
+    def _refine_change_point_pair(
+        self,
+        left: _FittedSegment,
+        right: _FittedSegment,
+        episode_matches: list[CandidateMatch],
+    ) -> list[_FittedSegment] | None:
+        """Refit one adjacent incompatible pair around a supported change point.
+
+        This deliberately does not create a line from nothing. It only revisits two
+        already-extracted, source-continuous explanations and partitions the observed
+        candidate path between them. No boundary extrapolation is performed.
+        """
+        if not self.config.change_point_split_enabled:
+            return None
+        if left.segment.source_episode != right.segment.source_episode:
+            return None
+        if self._same_temporal_line(left.segment, right.segment):
+            return None
+        accused_gap = right.segment.accused_start - left.segment.accused_end
+        source_gap = abs(right.segment.source_start - left.segment.source_end)
+        if accused_gap > self.config.maximum_frame_gap_seconds + 1e-9:
+            return None
+        if source_gap > self.config.maximum_frame_gap_seconds + 1e-9:
+            return None
+
+        inliers = self._candidate_path_for_change_point(left, right, episode_matches)
+        minimum_side = max(
+            self.config.change_point_minimum_side_seconds,
+            self.config.minimum_segment_seconds,
+        )
+        minimum_support = max(
+            2, int(math.ceil(minimum_side * self.config.coarse_fps))
+        )
+        if len(inliers) < 2 * minimum_support:
+            return None
+        _, _, whole_cost = self._ordinary_line_cost(inliers)
+        if whole_cost <= 1e-12:
+            return None
+        best: tuple[float, float, list[_FittedSegment]] | None = None
+        for index in range(minimum_support, len(inliers) - minimum_support + 1):
+            left_matches, right_matches = inliers[:index], inliers[index:]
+            if (
+                left_matches[-1].accused_time - left_matches[0].accused_time
+                + self.frame_interval + 1e-6 < minimum_side
+                or right_matches[-1].accused_time - right_matches[0].accused_time
+                + self.frame_interval + 1e-6 < minimum_side
+            ):
+                continue
+            left_fit = self._proposal_to_segment(
+                _Proposal(left.segment.source_episode, left_matches, 1.0)
+            )
+            right_fit = self._proposal_to_segment(
+                _Proposal(right.segment.source_episode, right_matches, 1.0)
+            )
+            if left_fit is None or right_fit is None:
+                continue
+            if (
+                left_fit.segment.inlier_ratio < self.config.merge_minimum_inlier_ratio
+                or right_fit.segment.inlier_ratio < self.config.merge_minimum_inlier_ratio
+            ):
+                continue
+            if self._same_temporal_line(left_fit.segment, right_fit.segment):
+                continue
+            # A change point is observed between adjacent query samples. A gap at the
+            # proposed boundary is not evidence for the location of that boundary.
+            if (
+                right_matches[0].accused_time - left_matches[-1].accused_time
+                > self.frame_interval + 1e-6
+            ):
+                continue
+            left_slope, left_intercept, left_cost = self._ordinary_line_cost(left_matches)
+            right_slope, right_intercept, right_cost = self._ordinary_line_cost(right_matches)
+            transition = right_matches[0].accused_time
+            boundary_jump = abs(
+                (left_slope * transition + left_intercept)
+                - (right_slope * transition + right_intercept)
+            )
+            # This refinement models a speed change on a continuous source timeline.
+            # A larger jump is a montage boundary and must remain two independent lines.
+            if boundary_jump > self.frame_interval + 1e-6:
+                continue
+            split_cost = left_cost + right_cost + boundary_jump**2
+            gain = 1.0 - split_cost / whole_cost
+            if gain < self.config.change_point_minimum_residual_gain:
+                continue
+            if best is None or (split_cost, boundary_jump) < (best[0], best[1]):
+                best = (split_cost, boundary_jump, [left_fit, right_fit])
+        if best is None:
+            return None
+        gain = 1.0 - best[0] / whole_cost
+        logger.info(
+            "Change point refined at accused %.2f (full-evidence residual gain %.2f)",
+            best[2][1].segment.accused_start, gain,
+        )
+        return best[2]
+
+    def _refine_adjacent_change_points(
+        self,
+        segments: list[_FittedSegment],
+        episode_matches: list[CandidateMatch],
+    ) -> list[_FittedSegment]:
+        """Refine each already-extracted adjacent pair without changing its count."""
+        if len(segments) < 2 or not self.config.change_point_split_enabled:
+            return segments
+        ordered = sorted(segments, key=lambda item: item.segment.accused_start)
+        refined: list[_FittedSegment] = []
+        current = ordered[0]
+        refinements = 0
+        for following in ordered[1:]:
+            pair = None
+            if refinements < self.config.change_point_maximum_splits:
+                pair = self._refine_change_point_pair(
+                    current, following, episode_matches
+                )
+            if pair is None:
+                refined.append(current)
+                current = following
+                continue
+            refined.append(pair[0])
+            current = pair[1]
+            refinements += 1
+        refined.append(current)
+        return refined
+
     def _extract_episode_segments(
         self, episode: str, matches: list[CandidateMatch]
     ) -> tuple[list[_FittedSegment], bool]:
@@ -528,7 +712,7 @@ class TemporalAligner:
                 "Alignment segment cap reached for %s: results are truncated at %d segments",
                 episode, self.config.maximum_alignment_segments_per_episode,
             )
-        return extracted, truncated
+        return self._refine_adjacent_change_points(extracted, matches), truncated
 
     def align(self, candidates: list[CandidateMatch]) -> list[SegmentMatch]:
         return self.align_with_diagnostics(candidates).segments
@@ -575,10 +759,7 @@ class TemporalAligner:
                         }
                         & frame_ids
                     )
-                    and not (
-                        winner.segment.source_episode == rival.source_episode
-                        and abs(winner.segment.source_start - rival.source_start) <= 1.0
-                    )
+                    and not self._same_temporal_line(winner.segment, rival)
                 ]
                 dominant = max(
                     (self._explanation_quality(winner.segment) for winner in incompatible),
@@ -600,22 +781,40 @@ class TemporalAligner:
         competing: list[dict[str, Any]] = []
         assessed: list[SegmentMatch] = []
         for winner_index, winner_fitted in enumerate(accepted, start=1):
-            winner = replace(winner_fitted.segment, segment_id=f"S{winner_index:03d}")
+            completeness, completeness_reason = self._classify_boundary_completeness(
+                winner_fitted.segment,
+                filtered,
+                [
+                    other.segment
+                    for other in accepted
+                    if other is not winner_fitted
+                ],
+            )
+            winner = replace(
+                winner_fitted.segment,
+                segment_id=f"S{winner_index:03d}",
+                boundary_completeness=completeness,
+                boundary_completeness_reason=completeness_reason,
+                segment_cap_truncated=winner_fitted.segment.source_episode in truncated_episodes,
+            )
             rivals = [
                 fitted.segment for fitted in scored_segments
                 if _interval_iou(winner, fitted.segment) >= 0.8
-                and not (
-                    fitted.segment.source_episode == winner.source_episode
-                    and abs(fitted.segment.source_start - winner.source_start) <= 1.0
-                )
+                and not self._same_temporal_line(winner, fitted.segment)
             ]
-            rivals.sort(key=lambda item: item.match_score, reverse=True)
+            # Use the same bounded-evidence quality for winner/rival comparison that
+            # selected the primary. Raw match_score does not contain absolute support
+            # and made minimum-support fragments look like major alternatives.
+            rivals.sort(key=self._explanation_quality, reverse=True)
             runner_up = rivals[0] if rivals else None
-            margin = winner.match_score - runner_up.match_score if runner_up else 1.0
+            winner_quality = self._explanation_quality(winner)
+            margin = (
+                winner_quality - self._explanation_quality(runner_up)
+                if runner_up else 1.0
+            )
             major_rivals = [
                 rival for rival in rivals
-                if rival.source_episode != winner.source_episode
-                and winner.match_score - rival.match_score
+                if winner_quality - self._explanation_quality(rival)
                 < self.config.minimum_uniqueness_margin
             ]
             is_ambiguous = bool(major_rivals)
@@ -637,20 +836,41 @@ class TemporalAligner:
                 competing.append({
                     "winner": winner.to_dict(),
                     "candidate": rival.to_dict(),
-                    "score_margin": round(winner.match_score - rival.match_score, 4),
+                    "score_margin": round(
+                        winner_quality - self._explanation_quality(rival), 4
+                    ),
+                    "margin_basis": "bounded_explanation_quality",
+                    "quality_margin": round(
+                        winner_quality - self._explanation_quality(rival), 4
+                    ),
+                    "match_score_margin": round(
+                        winner.match_score - rival.match_score, 4
+                    ),
                     "score_ratio": round(rival.match_score / max(winner.match_score, 1e-9), 4),
                 })
             if is_ambiguous:
                 ambiguous = True
                 alternatives.extend([
-                    replace(rival, candidate_tier="YELLOW", review_tier="REVIEW_REQUIRED")
+                    replace(
+                        rival,
+                        candidate_tier="YELLOW",
+                        review_tier="REVIEW_REQUIRED",
+                        segment_cap_truncated=(
+                            rival.source_episode in truncated_episodes
+                        ),
+                    )
                     for rival in major_rivals
                 ])
 
         if suppressed_rivals:
             ambiguous = True
             alternatives.extend(
-                replace(rival, candidate_tier="YELLOW", review_tier="REVIEW_REQUIRED")
+                replace(
+                    rival,
+                    candidate_tier="YELLOW",
+                    review_tier="REVIEW_REQUIRED",
+                    segment_cap_truncated=(rival.source_episode in truncated_episodes),
+                )
                 for rival in suppressed_rivals
             )
         assessed = self._mark_source_reuse(assessed)
@@ -698,6 +918,14 @@ class TemporalAligner:
             })
             reasons_out.append(f"Segment contradiction detected: {', '.join(conflict_ids)}")
         reason = "; ".join(reasons_out) or None
+        warnings: tuple[dict[str, Any], ...] = ()
+        if truncated_episodes:
+            warnings = ({
+                "code": "ALIGNMENT_SEGMENT_CAP_REACHED",
+                "message": "Per-episode alignment segment cap reached; output is truncated",
+                "episodes": sorted(truncated_episodes),
+                "limit_per_episode": self.config.maximum_alignment_segments_per_episode,
+            },)
         unique_alternatives: dict[tuple[Any, ...], SegmentMatch] = {}
         for segment in alternatives:
             key = (
@@ -714,7 +942,71 @@ class TemporalAligner:
             contradiction=contradiction,
             reason=reason,
             truncated_episodes=tuple(sorted(truncated_episodes)),
+            warnings=warnings,
         )
+
+    def _classify_boundary_completeness(
+        self,
+        segment: SegmentMatch,
+        candidates: list[CandidateMatch],
+        other_emitted_segments: list[SegmentMatch] | None = None,
+    ) -> tuple[str, str | None]:
+        """Classify whether the emitted span is the whole confirmable span.
+
+        INCOMPLETE requires positive evidence: candidates that lie ON this segment's own
+        temporal line but OUTSIDE the emitted accused span. Nothing is extrapolated; the
+        emitted boundaries are never widened to cover them.
+
+        Absent such evidence the answer is UNKNOWN, not FULL. The temporal layer has no
+        negative-boundary evidence — it cannot show that no further matching content
+        exists — so FULL is reserved for cases the evidence model can actually support.
+        """
+        line = self._segment_line(segment)
+        if line is None:
+            return "UNKNOWN", None
+        slope, intercept = line
+        tolerance = self.candidate_timestamp_tolerance_seconds + 1e-6
+        other_emitted_segments = other_emitted_segments or []
+        before_frames: set[int] = set()
+        after_frames: set[int] = set()
+        for candidate in candidates:
+            if candidate.source_episode != segment.source_episode:
+                continue
+            if segment.accused_start - 1e-9 <= candidate.accused_time < segment.accused_end - 1e-9:
+                continue
+            # Evidence already explained by an adjacent emitted piece is not an orphan
+            # of this segment merely because the two fitted lines meet near a boundary.
+            if any(
+                other.source_episode == segment.source_episode
+                and other.accused_start - 1e-9
+                <= candidate.accused_time
+                < other.accused_end - 1e-9
+                for other in other_emitted_segments
+            ):
+                continue
+            predicted = slope * candidate.accused_time + intercept
+            if abs(candidate.source_time - predicted) > tolerance:
+                continue
+            frame_id = round(candidate.accused_time / self.frame_interval)
+            if candidate.accused_time < segment.accused_start:
+                before_frames.add(frame_id)
+            else:
+                after_frames.add(frame_id)
+        # One top-k collision is not stable boundary evidence. Two distinct query
+        # frames are enough to represent the orphan/partial support seen in the real
+        # truncated-boundary case while avoiding candidate-count inflation.
+        before = len(before_frames)
+        after = len(after_frames)
+        if before >= 2 or after >= 2:
+            sides = []
+            if before >= 2:
+                sides.append(f"{before} before start")
+            if after >= 2:
+                sides.append(f"{after} after end")
+            return BoundaryCompleteness.INCOMPLETE.value, (
+                "compatible orphan support outside the emitted span: " + ", ".join(sides)
+            )
+        return BoundaryCompleteness.UNKNOWN.value, None
 
     def _candidate_tier(
         self, segment: SegmentMatch, margin: float, ambiguous: bool, index_complete: bool
@@ -729,6 +1021,9 @@ class TemporalAligner:
             return "YELLOW"
         green = (
             index_complete
+            # Phase 2A.2: positive evidence of a missing boundary disqualifies GREEN.
+            and segment.boundary_completeness != "INCOMPLETE"
+            and not segment.segment_cap_truncated
             and margin >= self.config.minimum_uniqueness_margin
             and segment.residual_rms_seconds <= self.config.maximum_green_residual_rms_seconds
             and segment.inlier_ratio >= self.config.minimum_green_inlier_ratio
@@ -740,8 +1035,7 @@ class TemporalAligner:
         )
         return "GREEN" if green else "YELLOW"
 
-    @staticmethod
-    def _conflict_graph(segments: list[SegmentMatch]) -> list[dict[str, Any]]:
+    def _conflict_graph(self, segments: list[SegmentMatch]) -> list[dict[str, Any]]:
         graph: list[dict[str, Any]] = []
         for index, left in enumerate(segments):
             for right in segments[index + 1:]:
@@ -749,10 +1043,7 @@ class TemporalAligner:
                     0.0, min(left.accused_end, right.accused_end)
                     - max(left.accused_start, right.accused_start)
                 )
-                if accused_overlap > 0.25 and (
-                    left.source_episode != right.source_episode
-                    or abs(left.source_start - right.source_start) > 1.0
-                ):
+                if accused_overlap > 0.25 and not self._same_temporal_line(left, right):
                     graph.append({
                         "left_segment_id": left.segment_id,
                         "right_segment_id": right.segment_id,
@@ -804,28 +1095,42 @@ class TemporalAligner:
         return slope, intercept
 
     def _lines_stay_consistent(
-        self, left: SegmentMatch, right: SegmentMatch
+        self,
+        left: SegmentMatch,
+        right: SegmentMatch,
+        span: tuple[float, float] | None = None,
     ) -> tuple[bool, float]:
-        """Do two fitted mappings agree over the proposed union span?
+        """Do two fitted mappings describe the same temporal line?
 
-        Two segments only describe one continuous quotation if their mappings stay
-        within source-grid temporal uncertainty across the whole union span. A speed
-        discontinuity diverges linearly and is rejected here, before any refit.
+        This is the single temporal-line compatibility test in the aligner. It compares
+        the mappings themselves — `source = slope * accused + intercept` — never raw
+        `source_start`, which cannot tell a shifted boundary of one line from a genuinely
+        different line. Divergence is linear in accused time, so evaluating the union
+        endpoints bounds it exactly.
         """
+        if left.source_episode != right.source_episode:
+            return False, float("inf")
         left_line = self._segment_line(left)
         right_line = self._segment_line(right)
         if left_line is None or right_line is None:
             return False, float("inf")
-        union_start = min(left.accused_start, right.accused_start)
-        union_end = max(left.accused_end, right.accused_end)
+        if span is None:
+            start = min(left.accused_start, right.accused_start)
+            end = max(left.accused_end, right.accused_end)
+        else:
+            start, end = span
         divergence = max(
             abs((left_line[0] * t + left_line[1]) - (right_line[0] * t + right_line[1]))
-            for t in (union_start, union_end)
+            for t in (start, end)
         )
         budget = (
             self.config.merge_line_divergence_grid_steps * self.frame_interval + 1e-9
         )
         return divergence <= budget, divergence
+
+    def _same_temporal_line(self, left: SegmentMatch, right: SegmentMatch) -> bool:
+        """Compatibility used for suppression, rivals, alternatives and conflicts."""
+        return self._lines_stay_consistent(left, right)[0]
 
     def _merge_adjacent(self, segments: list[_FittedSegment]) -> list[_FittedSegment]:
         if not segments:
@@ -913,6 +1218,7 @@ class VideoMatcher:
                 alignment.alternatives, time.perf_counter() - started, len(extracted),
                 digest, metadata, index_health, asdict(self.config.matching), self.encoder.name,
                 alignment.competing_candidates, alignment.conflict_graph, tier, alignment.reason,
+                alignment.truncated_episodes, alignment.warnings,
             )
         except (MediaToolError, FileNotFoundError, OSError, ValueError) as exc:
             logger.exception("Analysis failed for %s", case_id)
@@ -925,7 +1231,13 @@ class VideoMatcher:
             self.database.replace_case_result(
                 self.project_id, case_id, accused_path, result.accused_sha256,
                 result.media_metadata, result.status, result.reason,
-                result.segments, result.alternatives,
+                result.segments, result.alternatives, result.truncated_episodes,
+                result.warnings,
+            )
+        if result.truncated_episodes:
+            logger.warning(
+                "Segment cap reached for %s in case %s; results are truncated",
+                ", ".join(result.truncated_episodes), case_id,
             )
         logger.info(
             "Analysis %s: %s (%d segments)", case_id, result.status, len(result.segments),

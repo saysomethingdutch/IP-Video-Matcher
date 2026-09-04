@@ -155,7 +155,7 @@ Phase 1 end-to-end synthetic gate = FAIL / BACKEND-DEPENDENT / DEFERRED
 真实 benchmark 必须输出机器推导、互斥且求和等于 case 数的四分类：
 
 ```text
-CORRECT_MATCH
+CORRECT_UNAMBIGUOUS_MATCH
 SAFE_AMBIGUITY_CONTAINS_GT
 UNSAFE_WRONG_MATCH
 NO_MATCH
@@ -163,3 +163,18 @@ NO_MATCH
 
 `UNSAFE_WRONG_MATCH` 包含任何未满足 ground-truth episode/timeline 要求的 `MATCH_FOUND`——**集数正确但源时间轴实质错误仍属 unsafe wrong match**。禁止人工转写计数。
 
+### 9.6 Phase 2A.2 integrity 与 boundary semantics
+
+统一 temporal-line compatibility 按 `source_time = slope × accused_time + intercept`
+比较完整 mapping，供 suppression、rival、alternative、conflict 与 merge 共用。Change-point
+refinement 只在已提取的相邻同集不相容段之间执行，并要求两侧实际 evidence、minimum
+support 和显著残差改善；不允许用边界外推修复 benchmark。
+
+`BoundaryCompleteness = FULL / INCOMPLETE / UNKNOWN`。当前 evidence 能证明存在相容 orphan
+support 时标 `INCOMPLETE`；不能证明时保持 `UNKNOWN`，不默认 FULL。INCOMPLETE 或命中
+segment cap 的 segment 禁止 candidate GREEN；cap 产生结构化 warning 并贯通所有输出层。
+Production `review_tier` 继续恒为 `REVIEW_REQUIRED`。
+
+Real benchmark 同时保留完整 GT 四分类与正交 boundary assertion。Confirmed partial evidence
+不得提高 TP/recall。Retrieval attribution 必须区分“足以形成任一匹配”与“足以恢复完整
+边界”，且 tolerated hole 不计为 actual support。

@@ -170,18 +170,23 @@ speed_ratio ∈ [0.75, 1.50]
 实现包含 episode-local sparse slope/offset soft voting、从 FPS 推导的 ±1 source-grid
 容差、bounded deterministic robust refit、continuity split、iterative evidence claiming、
 piecewise multi-episode extraction、cross-episode ambiguity，以及 source reuse 语义。
-诊断字段包括 fitted offset、residual RMS/max、inlier/candidate count 和 inlier ratio。
+Phase 2A.2 增加统一 temporal-line compatibility、evidence-backed change-point refinement、
+`BoundaryCompleteness`、segment-cap structured warning，以及贯通 matcher / DB / audit / CLI /
+benchmark 的 truncation diagnostics。诊断字段包括 fitted offset、residual RMS/max、
+inlier/candidate count 和 inlier ratio。
 
-Ideal candidate benchmark 为 14/14 source-aware segments，precision/recall 均 100%，
-speed MAE 0.00278；机器结果位于
+当前 fresh ideal candidate benchmark 的 12 个 gating cases 含 16 个 GT segments，
+TP/FP/FN 为 16/0/0，precision/recall 均 100%，speed MAE 0.00693；另有 5 个非 gating
+safety diagnostics。1824 个 candidate timestamps 全部位于 2 FPS source grid。机器结果位于
 `benchmark/temporal/results/phase2a-temporal-ideal-v0.1.json`。
 
 两集 real segment characterization 使用 20 个独立 content positions、6 个共享位置的
-profiles（120 cases）：总体 source-aware recall/precision 89.17%，episode correctness
-94.17%，source boundary MAE 0.219 秒；13 个 miss 的 coarse attribution 均为
-`ALIGNMENT_LIMIT`，其中 7 个是跨集竞争导致的安全 `AMBIGUOUS`。`episode_n=2`，不能
-解释为跨集稳定性估计。详见
-`docs/review/PHASE2A-TEMPORAL-ALIGNMENT-V2-COMPLETION-REPORT.md`。
+profiles（120 cases）：总体 TP/FP/FN 为 109/11/11，source-aware recall/precision
+90.83%，episode correctness 94.17%，source boundary MAE 0.199 秒。四类 outcome 为
+96 `CORRECT_UNAMBIGUOUS_MATCH`、20 `SAFE_AMBIGUITY_CONTAINS_GT`、4
+`UNSAFE_WRONG_MATCH`、0 `NO_MATCH`。4 个 unsafe case 均同时以正交语义标为
+`CONTAINED_PARTIAL_EVIDENCE`，不提高 TP/recall。`episode_n=2`，不能解释为跨集稳定性
+估计。详见 `docs/review/PHASE2A.2-INTEGRITY-BOUNDARY-CLOSURE-REPORT.md`。
 
 当前 endpoints 仍是 `nominal_grid_time`。Audit 明确标记 authoritative `media_pts`
 尚未精修且不能法律交付；没有硬编码 PTS correction。
@@ -192,15 +197,17 @@ profiles（120 cases）：总体 source-aware recall/precision 89.17%，episode 
 pytest
 ```
 
-当前结果：`65 passed`。在原有 coverage 之上新增 slope speed sweep、±1 grid jitter、
-高分 outlier/wrong episode、五段 piecewise/source reuse、merge refit、v4 migration
-rollback、timestamp-basis audit，以及 ideal benchmark 测试。
+当前结果：见 Phase 2A.2 completion report。新增 temporal-line compatibility、双向及三段
+speed change、boundary completeness、segment-cap 贯通、taxonomy adversarial、source-grid
+invariant、genuine v4 / poisoned-v5 / rollback migration 与 ideal benchmark 测试。
 
 ## Schema migration
 
-SQLite schema version 为 4。迁移使用 `BEGIN IMMEDIATE`，transaction 内不调用
-`executescript`；失败会 rollback。需要迁移时先创建 `<database>.pre-v4.bak`。详见
-`docs/migrations/SCHEMA-V4.md`。
+SQLite schema version 为 6，显式阶梯为 `v3 → v4 → v5 → v6`。每一步使用
+`BEGIN IMMEDIATE`，transaction 内不调用 `executescript`；失败会 rollback，成功后才更新
+version。需要迁移或 repair 时先创建 `<database>.pre-v6.bak`。Poisoned v5 会先 introspect、
+原子 repair、validate，再进入 v6；缺 required table 则备份后响亮失败。详见
+`docs/migrations/SCHEMA-V4.md`、`SCHEMA-V5.md`、`SCHEMA-V6.md`。
 
 Schema v4 本身不更换 DCT cache identity，因此已通过现有 identity/completeness 检查的
 v3 source index 无需仅因数据库迁移而重建。未知 legacy index 仍会被拒绝；需要时执行：
@@ -225,7 +232,7 @@ IP-Video-Matcher/
 │   ├── ARCHITECTURE.md
 │   ├── ARCHITECTURE-REVISION-0.1.1.md
 │   ├── adr/ADR-0001...ADR-0005
-│   ├── migrations/SCHEMA-V2.md, SCHEMA-V3.md, SCHEMA-V4.md
+│   ├── migrations/SCHEMA-V2.md ... SCHEMA-V6.md
 │   └── review/
 ├── src/ipvm/
 │   ├── retrieval_benchmark.py
@@ -239,11 +246,12 @@ IP-Video-Matcher/
 
 - Phase 1 Gate 仍未通过；Temporal v2 的端到端 synthetic precision/FP/source MAE 比
   constant-offset before 更差，虽然 episode recall 和 variable-speed slope error 改善。
-- Candidate GREEN 在 synthetic/real diagnostic 中仍可能错误，所以自动放行保持禁用。
+- Candidate GREEN 仅是内部 alignment-quality diagnostic；它不证明 boundary complete。
+  自动放行保持禁用，所有生产结果仍为 `REVIEW_REQUIRED`。
 - Real segment benchmark 只有两集、20 个独立 content positions；不能估计跨集方差或
   当作案件准确率。
-- Real miss attribution 为 coarse candidate-availability check，不能替代候选连续性和
-  竞争结构分析。
+- Real attribution 已区分“足以产生任一 temporal match”与“足以恢复完整边界”，但仍是
+  GT-aware benchmark 诊断，不能替代生产边界证明。
 - `source_start/source_end` 仍是 nominal grid time，尚未精修到 authoritative media PTS。
 - 没有跨集重复区间的索引期预计算；当前只按运行期竞争候选和 margin 降级。
 - DINOv2、FAISS、4/8 FPS source index、8 FPS external verification、镜像、crop、audio、Gemma、合理使用、网页抓取和 Excel 都未实现。

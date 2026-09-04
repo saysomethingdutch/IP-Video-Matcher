@@ -14,6 +14,14 @@ class MatchStatus(StrEnum):
     ERROR = "ERROR"
 
 
+class BoundaryCompleteness(StrEnum):
+    """What the current evidence says about emitted temporal boundaries."""
+
+    FULL = "FULL"
+    INCOMPLETE = "INCOMPLETE"
+    UNKNOWN = "UNKNOWN"
+
+
 @dataclass(frozen=True)
 class MediaMetadata:
     path: Path
@@ -72,6 +80,9 @@ class SegmentMatch:
     conflict_reason: str | None = None
     source_reuse: bool = False
     speed_out_of_range: bool = False
+    boundary_completeness: str = BoundaryCompleteness.UNKNOWN.value
+    boundary_completeness_reason: str | None = None
+    segment_cap_truncated: bool = False
     unconstrained_speed_ratio: float | None = None
     timestamp_basis: str = "nominal_grid_time"
     algorithm_version: str = "phase2a-temporal-v2"

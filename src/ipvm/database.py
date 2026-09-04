@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import sqlite3
 from contextlib import contextmanager
 from datetime import UTC, datetime
@@ -10,7 +11,14 @@ from typing import Any, Iterator
 from .models import MediaMetadata, SegmentMatch
 
 
-SCHEMA_VERSION = 5
+logger = logging.getLogger(__name__)
+
+
+class SchemaIntegrityError(RuntimeError):
+    """Raised when the database schema cannot be brought to the required shape."""
+
+
+SCHEMA_VERSION = 6
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS projects (
@@ -55,6 +63,8 @@ CREATE TABLE IF NOT EXISTS accused_videos (
     media_metadata_json TEXT,
     status TEXT NOT NULL,
     reason TEXT,
+    truncated_episodes_json TEXT NOT NULL DEFAULT '[]',
+    analysis_warnings_json TEXT NOT NULL DEFAULT '[]',
     analyzed_at TEXT,
     UNIQUE(project_id, case_id),
     FOREIGN KEY(project_id) REFERENCES projects(id)
@@ -109,6 +119,9 @@ CREATE TABLE IF NOT EXISTS segment_matches (
     source_reuse INTEGER NOT NULL DEFAULT 0,
     speed_out_of_range INTEGER NOT NULL DEFAULT 0,
     unconstrained_speed_ratio REAL,
+    boundary_completeness TEXT NOT NULL DEFAULT 'UNKNOWN',
+    boundary_completeness_reason TEXT,
+    segment_cap_truncated INTEGER NOT NULL DEFAULT 0,
     timestamp_basis TEXT NOT NULL DEFAULT 'nominal_grid_time',
     mirrored INTEGER,
     cropped INTEGER,
@@ -145,6 +158,37 @@ CREATE INDEX IF NOT EXISTS idx_original_sha ON original_assets(project_id, sha25
 """
 
 
+V4_SEGMENT_COLUMNS: tuple[tuple[str, str], ...] = (
+    ("fitted_offset_seconds", "REAL"),
+    ("residual_rms_seconds", "REAL NOT NULL DEFAULT 0"),
+    ("residual_max_seconds", "REAL NOT NULL DEFAULT 0"),
+    ("inlier_count", "INTEGER NOT NULL DEFAULT 0"),
+    ("candidate_count", "INTEGER NOT NULL DEFAULT 0"),
+    ("inlier_ratio", "REAL NOT NULL DEFAULT 0"),
+    ("source_reuse", "INTEGER NOT NULL DEFAULT 0"),
+    ("timestamp_basis", "TEXT NOT NULL DEFAULT 'nominal_grid_time'"),
+)
+V5_SEGMENT_COLUMNS: tuple[tuple[str, str], ...] = (
+    ("speed_out_of_range", "INTEGER NOT NULL DEFAULT 0"),
+    ("unconstrained_speed_ratio", "REAL"),
+)
+V6_SEGMENT_COLUMNS: tuple[tuple[str, str], ...] = (
+    ("boundary_completeness", "TEXT NOT NULL DEFAULT 'UNKNOWN'"),
+    ("boundary_completeness_reason", "TEXT"),
+    ("segment_cap_truncated", "INTEGER NOT NULL DEFAULT 0"),
+)
+V6_ACCUSED_COLUMNS: tuple[tuple[str, str], ...] = (
+    ("truncated_episodes_json", "TEXT NOT NULL DEFAULT '[]'"),
+    ("analysis_warnings_json", "TEXT NOT NULL DEFAULT '[]'"),
+)
+
+# Structural invariant the running code depends on, independent of user_version.
+REQUIRED_COLUMNS: dict[str, tuple[tuple[str, str], ...]] = {
+    "segment_matches": V4_SEGMENT_COLUMNS + V5_SEGMENT_COLUMNS + V6_SEGMENT_COLUMNS,
+    "accused_videos": V6_ACCUSED_COLUMNS,
+}
+
+
 def utc_now() -> str:
     return datetime.now(UTC).isoformat()
 
@@ -178,50 +222,190 @@ class Database:
         connection.execute("PRAGMA journal_mode = WAL")
         connection.execute("PRAGMA foreign_keys = OFF")
         try:
-            existing = connection.execute(
+            existing = bool(connection.execute(
                 "SELECT 1 FROM sqlite_master WHERE type='table' AND name='original_assets'"
-            ).fetchone()
+            ).fetchone())
             version = int(connection.execute("PRAGMA user_version").fetchone()[0])
             legacy = bool(
                 existing and "project_id" not in _columns(connection, "original_assets")
             )
-            migration_needed = legacy or bool(existing and version < SCHEMA_VERSION)
-            if should_backup and migration_needed:
-                backup = self.path.with_suffix(self.path.suffix + ".pre-v4.bak")
-                if not backup.exists():
-                    with sqlite3.connect(backup) as backup_connection:
-                        connection.backup(backup_connection)
-            connection.execute("BEGIN IMMEDIATE")
-            if legacy:
-                self._migrate_legacy(connection, project_root)
-            else:
-                self._execute_schema(connection)
-                if existing and version < 3:
-                    self._migrate_v2_to_v3(connection)
-                if existing and "fitted_offset_seconds" not in _columns(
-                    connection, "segment_matches"
-                ):
-                    self._migrate_v3_to_v4(connection)
-            self._execute_schema(connection)
-            connection.execute(
-                "INSERT OR IGNORE INTO projects(root_path, created_at) VALUES (?, ?)",
-                (str(project_root.resolve()), utc_now()),
+            if version > SCHEMA_VERSION:
+                raise SchemaIntegrityError(
+                    f"Database user_version {version} is newer than supported "
+                    f"version {SCHEMA_VERSION}"
+                )
+            claimed_requirements = self._required_columns_for_version(version)
+            needs_repair = (
+                existing
+                and not legacy
+                and self._missing_required_columns(connection, claimed_requirements)
             )
-            connection.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
-            self._migration_checkpoint("before_commit")
-            connection.execute("COMMIT")
+            migration_needed = legacy or (existing and version < SCHEMA_VERSION) or bool(needs_repair)
+            if should_backup and migration_needed:
+                self._write_backup(connection)
+
+            if legacy:
+                # v1 -> v2 rebuild, then the ladder takes over from version 2.
+                self._run_atomic(connection, lambda: self._migrate_legacy(connection, project_root), 2)
+                version = 2
+            elif not existing:
+                self._run_atomic(connection, lambda: self._execute_schema(connection), SCHEMA_VERSION)
+                version = SCHEMA_VERSION
+            elif needs_repair:
+                # Repair the schema shape claimed by user_version before moving to a
+                # later version. A poisoned v5 must never be stamped v6 first.
+                self._validate_and_repair_schema(
+                    connection,
+                    claimed_requirements,
+                    stamp_version=version,
+                )
+
+            # Explicit version ladder. Each step is its own atomic transaction and only
+            # stamps user_version after it succeeds; a failure rolls that step back.
+            for target in range(max(version, 2) + 1, SCHEMA_VERSION + 1):
+                step = self._MIGRATION_LADDER.get(target)
+                if step is None:
+                    continue
+                self._run_atomic(connection, lambda step=step: step(self, connection), target)
+
+            # PRAGMA user_version is an application integer, not a schema validator: a
+            # database can claim a version it does not structurally satisfy. Validate the
+            # invariant and repair it idempotently, or fail loudly.
+            self._validate_and_repair_schema(
+                connection,
+                REQUIRED_COLUMNS,
+                stamp_version=SCHEMA_VERSION,
+            )
+
+            self._run_atomic(
+                connection,
+                lambda: connection.execute(
+                    "INSERT OR IGNORE INTO projects(root_path, created_at) VALUES (?, ?)",
+                    (str(project_root.resolve()), utc_now()),
+                ),
+                SCHEMA_VERSION,
+            )
             row = connection.execute(
                 "SELECT id FROM projects WHERE root_path = ?", (str(project_root.resolve()),)
             ).fetchone()
             assert row is not None
             return int(row["id"])
+        finally:
+            connection.execute("PRAGMA foreign_keys = ON")
+            connection.close()
+
+    def _write_backup(self, connection: sqlite3.Connection) -> None:
+        backup = self.path.with_suffix(self.path.suffix + f".pre-v{SCHEMA_VERSION}.bak")
+        if backup.exists():
+            return
+        with sqlite3.connect(backup) as backup_connection:
+            connection.backup(backup_connection)
+
+    def _run_atomic(
+        self, connection: sqlite3.Connection, action: Any, stamp_version: int | None
+    ) -> None:
+        """Run one migration step atomically; stamp user_version only on success."""
+        connection.execute("BEGIN IMMEDIATE")
+        try:
+            action()
+            if stamp_version is not None:
+                connection.execute(f"PRAGMA user_version = {int(stamp_version)}")
+            self._migration_checkpoint("before_commit")
+            connection.execute("COMMIT")
         except Exception:
             if connection.in_transaction:
                 connection.execute("ROLLBACK")
             raise
-        finally:
-            connection.execute("PRAGMA foreign_keys = ON")
-            connection.close()
+
+    @staticmethod
+    def _required_columns_for_version(
+        version: int,
+    ) -> dict[str, tuple[tuple[str, str], ...]]:
+        segment_columns: tuple[tuple[str, str], ...] = ()
+        accused_columns: tuple[tuple[str, str], ...] = ()
+        if version >= 4:
+            segment_columns += V4_SEGMENT_COLUMNS
+        if version >= 5:
+            segment_columns += V5_SEGMENT_COLUMNS
+        if version >= 6:
+            segment_columns += V6_SEGMENT_COLUMNS
+            accused_columns += V6_ACCUSED_COLUMNS
+        result: dict[str, tuple[tuple[str, str], ...]] = {}
+        if segment_columns:
+            result["segment_matches"] = segment_columns
+        if accused_columns:
+            result["accused_videos"] = accused_columns
+        return result
+
+    @staticmethod
+    def _missing_required_columns(
+        connection: sqlite3.Connection,
+        required: dict[str, tuple[tuple[str, str], ...]] | None = None,
+    ) -> dict[str, list[tuple[str, str]]]:
+        missing: dict[str, list[tuple[str, str]]] = {}
+        requirements = REQUIRED_COLUMNS if required is None else required
+        for table, columns in requirements.items():
+            if not connection.execute(
+                "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", (table,)
+            ).fetchone():
+                continue
+            present = _columns(connection, table)
+            absent = [(name, ddl) for name, ddl in columns if name not in present]
+            if absent:
+                missing[table] = absent
+        return missing
+
+    @staticmethod
+    def _missing_required_tables(
+        connection: sqlite3.Connection,
+        required: dict[str, tuple[tuple[str, str], ...]] | None = None,
+    ) -> list[str]:
+        requirements = REQUIRED_COLUMNS if required is None else required
+        return [
+            table
+            for table in requirements
+            if not connection.execute(
+                "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", (table,)
+            ).fetchone()
+        ]
+
+    def _validate_and_repair_schema(
+        self,
+        connection: sqlite3.Connection,
+        required: dict[str, tuple[tuple[str, str], ...]] | None = None,
+        stamp_version: int | None = None,
+    ) -> None:
+        """Idempotent repair for a database whose user_version overstates its schema."""
+        missing_tables = self._missing_required_tables(connection, required)
+        if missing_tables:
+            self._write_backup(connection)
+            raise SchemaIntegrityError(
+                "Database schema cannot be repaired safely; required tables are missing: "
+                + ", ".join(sorted(missing_tables))
+            )
+        missing = self._missing_required_columns(connection, required)
+        if not missing:
+            return
+        logger.warning(
+            "Schema invariant violation: user_version claims %d but columns are missing: %s",
+            int(connection.execute("PRAGMA user_version").fetchone()[0]),
+            {table: [name for name, _ in cols] for table, cols in missing.items()},
+        )
+        self._write_backup(connection)
+
+        def repair() -> None:
+            for table, columns in missing.items():
+                for name, ddl in columns:
+                    connection.execute(f"ALTER TABLE {table} ADD COLUMN {name} {ddl}")
+            self._migration_checkpoint("schema_repaired")
+
+        self._run_atomic(connection, repair, stamp_version)
+        still_missing = self._missing_required_columns(connection, required)
+        if still_missing:
+            raise SchemaIntegrityError(
+                "Database schema cannot be repaired; refusing to run with missing columns: "
+                + repr({t: [n for n, _ in c] for t, c in still_missing.items()})
+            )
 
     @staticmethod
     def _execute_schema(connection: sqlite3.Connection) -> None:
@@ -369,8 +553,6 @@ class Database:
             ("candidate_count", "INTEGER NOT NULL DEFAULT 0"),
             ("inlier_ratio", "REAL NOT NULL DEFAULT 0"),
             ("source_reuse", "INTEGER NOT NULL DEFAULT 0"),
-            ("speed_out_of_range", "INTEGER NOT NULL DEFAULT 0"),
-            ("unconstrained_speed_ratio", "REAL"),
             ("timestamp_basis", "TEXT NOT NULL DEFAULT 'nominal_grid_time'"),
         )
         for column, definition in additions:
@@ -379,6 +561,31 @@ class Database:
                     f"ALTER TABLE segment_matches ADD COLUMN {column} {definition}"
                 )
         self._migration_checkpoint("v4_diagnostics_added")
+
+    def _migrate_v4_to_v5(self, connection: sqlite3.Connection) -> None:
+        """Add out-of-range speed diagnostics (Phase 2A.1)."""
+        for column, definition in V5_SEGMENT_COLUMNS:
+            if column not in _columns(connection, "segment_matches"):
+                connection.execute(
+                    f"ALTER TABLE segment_matches ADD COLUMN {column} {definition}"
+                )
+        self._migration_checkpoint("v5_speed_range_added")
+
+    def _migrate_v5_to_v6(self, connection: sqlite3.Connection) -> None:
+        """Add boundary completeness and segment-cap propagation (Phase 2A.2)."""
+        for column, definition in V6_SEGMENT_COLUMNS:
+            if column not in _columns(connection, "segment_matches"):
+                connection.execute(
+                    f"ALTER TABLE segment_matches ADD COLUMN {column} {definition}"
+                )
+        for column, definition in V6_ACCUSED_COLUMNS:
+            if column not in _columns(connection, "accused_videos"):
+                connection.execute(
+                    f"ALTER TABLE accused_videos ADD COLUMN {column} {definition}"
+                )
+        self._migration_checkpoint("v6_boundary_completeness_added")
+
+    _MIGRATION_LADDER: dict[int, Any] = {}
 
     def project_id(self, project_root: Path) -> int:
         return self.initialize(project_root)
@@ -523,19 +730,24 @@ class Database:
         reason: str | None,
         segments: list[SegmentMatch],
         alternatives: list[SegmentMatch] | None = None,
+        truncated_episodes: tuple[str, ...] = (),
+        warnings: tuple[dict[str, Any], ...] = (),
     ) -> None:
         with self.connect() as connection:
             connection.execute(
                 """
                 INSERT INTO accused_videos(
                     project_id, case_id, file_path, file_size, sha256, duration,
-                    media_metadata_json, status, reason, analyzed_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    media_metadata_json, status, reason, truncated_episodes_json,
+                    analysis_warnings_json, analyzed_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(project_id, case_id) DO UPDATE SET
                     file_path=excluded.file_path, file_size=excluded.file_size,
                     sha256=excluded.sha256, duration=excluded.duration,
                     media_metadata_json=excluded.media_metadata_json,
                     status=excluded.status, reason=excluded.reason,
+                    truncated_episodes_json=excluded.truncated_episodes_json,
+                    analysis_warnings_json=excluded.analysis_warnings_json,
                     analyzed_at=excluded.analyzed_at
                 """,
                 (
@@ -543,7 +755,8 @@ class Database:
                     path.stat().st_size if path.exists() else None, sha256,
                     metadata.duration if metadata else None,
                     json.dumps(metadata.to_dict(), ensure_ascii=False) if metadata else None,
-                    status, reason, utc_now(),
+                    status, reason, json.dumps(list(truncated_episodes)),
+                    json.dumps(list(warnings), ensure_ascii=False), utc_now(),
                 ),
             )
             connection.execute(
@@ -567,9 +780,11 @@ class Database:
                     coverage, uniqueness_margin,
                     candidate_tier, review_tier, segment_id, conflict,
                     conflict_with_json, conflict_reason, source_reuse,
-                    speed_out_of_range, unconstrained_speed_ratio, timestamp_basis,
+                    speed_out_of_range, unconstrained_speed_ratio,
+                    boundary_completeness, boundary_completeness_reason,
+                    segment_cap_truncated, timestamp_basis,
                     mirrored, cropped, created_at, algorithm_version
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 rows,
             )
@@ -591,8 +806,18 @@ class Database:
             segment.segment_id, int(segment.conflict),
             json.dumps(segment.conflict_with, ensure_ascii=False), segment.conflict_reason,
             int(segment.source_reuse), int(segment.speed_out_of_range),
-            segment.unconstrained_speed_ratio, segment.timestamp_basis,
+            segment.unconstrained_speed_ratio, segment.boundary_completeness,
+            segment.boundary_completeness_reason, int(segment.segment_cap_truncated),
+            segment.timestamp_basis,
             None if segment.mirrored is None else int(segment.mirrored),
             None if segment.cropped is None else int(segment.cropped),
             utc_now(), segment.algorithm_version,
         )
+
+
+Database._MIGRATION_LADDER = {
+    3: Database._migrate_v2_to_v3,
+    4: Database._migrate_v3_to_v4,
+    5: Database._migrate_v4_to_v5,
+    6: Database._migrate_v5_to_v6,
+}

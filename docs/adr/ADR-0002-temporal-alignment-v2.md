@@ -1,8 +1,12 @@
 # ADR-0002：Temporal Alignment v2
 
-状态：已实现，等待独立 Review / Architecture Owner Gate
+状态：Phase 2A.2 完整性与边界语义修订已实现，等待独立 Review / Architecture Owner Gate
 
 修订：Phase 2A 实现于 2026-09-03；DCT、source/query 2 FPS 与 retrieval top-k=8 保持不变。
+
+再修订：Phase 2A.2 于 2026-09-04 增加统一 temporal-line compatibility、窄范围
+change-point refinement 与边界完整性语义；未改 sparse voting、视觉 backend、FPS 或
+retrieval。
 
 ## 问题
 
@@ -49,6 +53,22 @@ segment extraction 均为确定性；同一 episode 的已接受 inliers 会被 
 提取剩余 piecewise segment。相邻 segment 只有在 episode、accused gap 与 source
 continuity 均满足条件时合并，且合并后从完整原始 inliers 重拟合。
 
+同集 proposal 的相容性统一按完整映射比较：
+
+```text
+source_time = slope * accused_time + intercept
+```
+
+在两条线的 union accused domain 两端计算最大分叉，并与 source-grid uncertainty
+比较。该判据统一用于 suppression、rival preservation、alternatives、conflict 与 merge；
+禁止仅比较 `source_start`。边界不同但映射相同的 proposal 相容，起点接近但 slope
+持续分叉的 proposal 不相容；跨 episode 永不相容。
+
+Change-point refinement 只作用于已经提取出的相邻、同集、不相容且 source 连续的两段。
+候选 split 两侧必须各自满足 minimum support，使用实际候选帧，且两线解释相对单线的
+全证据残差改善必须达到配置阈值。它不外推缺失边界，也不重写 sparse voting / robust
+fit / hypothesis extraction。
+
 ### 复杂度约束
 
 设过滤后候选数为 `C`、固定 slope bin 数为 `S`（当前 31）、每个 episode
@@ -57,6 +77,8 @@ vote 构建为 `O(CS)`，空间只与实际触达 cell 数量相关，不创建
 `episode × slope × offset` dense tensor。每次 peak support scan 为 episode 候选数
 的线性扫描；pair refit 上限为 `O(R² + C)`。每 episode segment 和 peak 数均有
 configuration 上限，避免无界 `O(C²)` pair 枚举。
+Phase 2A.2 的相邻 change-point refinement 只检查已经有界的 segment 相邻对，且最多
+接受配置规定数量的 refinement；没有新增对全量候选或全量 proposal 的无界 `O(N²)`。
 
 ## 已决定与尚未实现的边界
 
@@ -67,6 +89,11 @@ configuration 上限，避免无界 `O(C²)` pair 枚举。
 - 相隔 accused interval 映射到同一 source interval 是 `source_reuse`，不是
   contradiction；
 - candidate GREEN 仅作 diagnostic，所有生产结果仍为 `REVIEW_REQUIRED`；
+- `BoundaryCompleteness` 为 `FULL / INCOMPLETE / UNKNOWN`。只有发现 emitted span 外仍有
+  与同一 temporal line 相容的实际 orphan support 时才标记 `INCOMPLETE`；无法证明完整或
+  缺失时为 `UNKNOWN`，不得因低 RMS、高 IR 或高 coverage 默认 `FULL`；
+- `INCOMPLETE` 或命中 per-episode segment cap 的 segment 禁止 candidate GREEN；cap 必须
+  产生结构化 warning，并贯通 matcher、DB、audit、CLI 与 benchmark；
 - 未实现 8 FPS 或 media-PTS boundary refinement。
 
 Phase 2A-0 实测要求最终设计显式容忍 `±1` 个 source grid step（当前 2 FPS → 0.5 秒）的 retrieval 偏差；这不是可选优化，而是 89% 的 strict miss 属于"相邻格可用"这一实测结果所对应的必要条件。

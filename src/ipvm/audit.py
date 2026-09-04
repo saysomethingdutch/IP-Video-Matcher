@@ -11,13 +11,16 @@ from .matching import AnalysisResult
 def write_audit_result(result: AnalysisResult, output_dir: Path) -> Path:
     output_dir.mkdir(parents=True, exist_ok=True)
     payload = {
-        "schema_version": "0.4",
+        "schema_version": "0.5",
         "program_version": __version__,
         "created_at": datetime.now(UTC).isoformat(),
         "case_id": result.case_id,
         "status": result.status,
         "review_tier": result.review_tier,
         "reason": result.reason,
+        "truncated_episodes": list(result.truncated_episodes),
+        "segment_cap_reached": bool(result.truncated_episodes),
+        "warnings": list(result.warnings),
         "input": {
             "file_path": str(result.accused_path.resolve()),
             "file_size": result.accused_path.stat().st_size if result.accused_path.exists() else None,
@@ -49,6 +52,13 @@ def write_audit_result(result: AnalysisResult, output_dir: Path) -> Path:
             ),
             "elapsed_seconds": result.elapsed_seconds,
             "sampled_frame_count": result.frame_count,
+            "boundary_completeness": {
+                segment.segment_id or f"S{index:03d}": {
+                    "status": segment.boundary_completeness,
+                    "reason": segment.boundary_completeness_reason,
+                }
+                for index, segment in enumerate(result.segments, start=1)
+            },
         },
         "not_implemented": [
             "audio_fingerprint", "asr", "semantic_analysis", "rule_engine", "excel_export"
