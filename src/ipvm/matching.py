@@ -978,6 +978,7 @@ class TemporalAligner:
             # of this segment merely because the two fitted lines meet near a boundary.
             if any(
                 other.source_episode == segment.source_episode
+                and not self._same_temporal_line(segment, other)
                 and other.accused_start - 1e-9
                 <= candidate.accused_time
                 < other.accused_end - 1e-9
@@ -1140,11 +1141,29 @@ class TemporalAligner:
             previous = merged[-1]
             previous_segment = previous.segment
             current_segment = segment.segment
+            accused_gap = current_segment.accused_start - previous_segment.accused_end
+            previous_line = self._segment_line(previous_segment)
+            current_line = self._segment_line(current_segment)
+            source_continuous = False
+            if previous_line is not None and current_line is not None:
+                # The source-side distance represented by an accused retrieval hole
+                # scales with the temporal slope. Compare the observed boundary delta
+                # with that expected delta, using the existing source-grid uncertainty
+                # as the only error budget. A fixed number of source seconds incorrectly
+                # split valid 1.25x/1.50x lines at the configured 1.5s accused gap.
+                representative_slope = (previous_line[0] + current_line[0]) / 2.0
+                expected_source_gap = representative_slope * accused_gap
+                observed_source_gap = (
+                    current_segment.source_start - previous_segment.source_end
+                )
+                source_continuous = (
+                    abs(observed_source_gap - expected_source_gap)
+                    <= self.candidate_timestamp_tolerance_seconds + 1e-9
+                )
             adjacent = (
                 current_segment.source_episode == previous_segment.source_episode
-                and current_segment.accused_start - previous_segment.accused_end
-                <= self.config.maximum_frame_gap_seconds
-                and abs(current_segment.source_start - previous_segment.source_end) <= 1.5
+                and accused_gap <= self.config.maximum_frame_gap_seconds
+                and source_continuous
             )
             consistent, _ = self._lines_stay_consistent(previous_segment, current_segment)
             if not (adjacent and consistent):

@@ -192,6 +192,36 @@ CASE_OUTCOMES = (
     "NO_MATCH",
 )
 
+REQUIRED_IDEAL_BEHAVIOURAL_ASSERTIONS = (
+    "pure_noise_produces_no_segments",
+    "no_clamped_speed_reported",
+    "out_of_range_semantics_complete",
+    "speed_discontinuity_source_aware",
+    "competing_lines_are_ambiguous",
+    "short_source_span_speed_is_null",
+)
+
+
+def _ideal_gate_passed(
+    aggregate: dict[str, Any],
+    behavioural_assertions: dict[str, bool],
+    source_grid_invariant: dict[str, Any],
+) -> bool:
+    """Return the ideal Gate result from all required, named safety inputs."""
+    aggregate_passed = (
+        aggregate["source_aware_segment_recall_at_1s"] == 1.0
+        and aggregate["segment_precision_at_1s"] == 1.0
+    )
+    assertions_passed = all(
+        behavioural_assertions.get(name) is True
+        for name in REQUIRED_IDEAL_BEHAVIOURAL_ASSERTIONS
+    )
+    return bool(
+        aggregate_passed
+        and assertions_passed
+        and source_grid_invariant.get("all_candidates_on_grid") is True
+    )
+
 
 def _mapping_matches_truth(
     candidate: Any, expected: dict[str, Any], tolerance: float = 1.0
@@ -754,6 +784,34 @@ class IdealTemporalBenchmark:
             if case["transformation"] in diagnostic_transformations
         ]
         aggregate = _metric_summary(gating_cases)
+        source_grid_invariant = _grid_invariant(cases, 0.5)
+        behavioural_assertions = {
+            "pure_noise_produces_no_segments": all(
+                case["metrics"]["predicted_segments"] == 0
+                for case in cases
+                if case["transformation"] == "pure_noise_negative"
+            ),
+            "no_clamped_speed_reported": all(
+                case.get("no_clamped_speed_reported", True) for case in cases
+            ),
+            "out_of_range_semantics_complete": all(
+                case.get("out_of_range_semantics_complete", True) for case in cases
+            ),
+            "speed_discontinuity_source_aware": all(
+                case.get("change_point_source_aware", True) for case in cases
+            ),
+            "competing_lines_are_ambiguous": all(
+                case["status"] == MatchStatus.AMBIGUOUS.value
+                for case in cases
+                if case["transformation"] == "competing_coherent_lines"
+            ),
+            "short_source_span_speed_is_null": all(
+                prediction["speed_ratio"] is None
+                for case in cases
+                if case["transformation"] == "short_span_null_speed"
+                for prediction in case["predictions"]
+            ),
+        }
         return {
             "schema_version": "temporal-alignment-characterization-v0.2",
             "created_at": datetime.now(UTC).isoformat(),
@@ -761,44 +819,20 @@ class IdealTemporalBenchmark:
             "visual_retrieval_involved": False,
             "configuration": asdict(self.config),
             "speed_sweep": list(IDEAL_SPEEDS),
-            "source_grid_realistic": _grid_invariant(cases, 0.5)["all_candidates_on_grid"],
+            "source_grid_realistic": source_grid_invariant["all_candidates_on_grid"],
             "outcome_taxonomy": _outcome_summary(cases),
             "aggregate": aggregate,
             "gating_case_ids": [case["case_id"] for case in gating_cases],
             "diagnostic_aggregate": _metric_summary(diagnostic_cases),
             "diagnostic_case_ids": [case["case_id"] for case in diagnostic_cases],
-            "source_grid_invariant": _grid_invariant(cases, 0.5),
-            "behavioural_assertions": {
-                "pure_noise_produces_no_segments": all(
-                    case["metrics"]["predicted_segments"] == 0
-                    for case in cases
-                    if case["transformation"] == "pure_noise_negative"
-                ),
-                "no_clamped_speed_reported": all(
-                    case.get("no_clamped_speed_reported", True) for case in cases
-                ),
-                "out_of_range_semantics_complete": all(
-                    case.get("out_of_range_semantics_complete", True) for case in cases
-                ),
-                "speed_discontinuity_source_aware": all(
-                    case.get("change_point_source_aware", True) for case in cases
-                ),
-                "competing_lines_are_ambiguous": all(
-                    case["status"] == MatchStatus.AMBIGUOUS.value
-                    for case in cases
-                    if case["transformation"] == "competing_coherent_lines"
-                ),
-                "short_source_span_speed_is_null": all(
-                    prediction["speed_ratio"] is None
-                    for case in cases
-                    if case["transformation"] == "short_span_null_speed"
-                    for prediction in case["predictions"]
-                ),
-            },
+            "source_grid_invariant": source_grid_invariant,
+            "required_behavioural_assertions": list(
+                REQUIRED_IDEAL_BEHAVIOURAL_ASSERTIONS
+            ),
+            "behavioural_assertions": behavioural_assertions,
             "by_transformation": _group_cases(cases, "transformation"),
-            "passed": (
-                aggregate["source_aware_segment_recall_at_1s"] == 1.0
-                and aggregate["segment_precision_at_1s"] == 1.0
+            "passed": _ideal_gate_passed(
+                aggregate, behavioural_assertions, source_grid_invariant
             ),
             "cases": cases,
         }

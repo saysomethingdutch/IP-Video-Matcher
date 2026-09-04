@@ -5,13 +5,39 @@ import json
 from ipvm.models import MatchStatus, SegmentMatch
 from ipvm.temporal_benchmark import (
     IdealTemporalBenchmark,
+    REQUIRED_IDEAL_BEHAVIOURAL_ASSERTIONS,
     _alternatives_contain_ground_truth,
+    _ideal_gate_passed,
     _retrieval_sufficiency,
     _supported_run_statistics,
     classify_boundary_assertion,
     classify_case_outcome,
     write_temporal_report,
 )
+
+
+def test_ideal_gate_requires_aggregate_all_required_assertions_and_grid() -> None:
+    aggregate = {
+        "source_aware_segment_recall_at_1s": 1.0,
+        "segment_precision_at_1s": 1.0,
+    }
+    assertions = {
+        name: True for name in REQUIRED_IDEAL_BEHAVIOURAL_ASSERTIONS
+    }
+    grid = {"all_candidates_on_grid": True}
+    assert _ideal_gate_passed(aggregate, assertions, grid) is True
+
+    failed_discontinuity = dict(assertions)
+    failed_discontinuity["speed_discontinuity_source_aware"] = False
+    assert _ideal_gate_passed(aggregate, failed_discontinuity, grid) is False
+
+    assert _ideal_gate_passed(
+        aggregate, assertions, {"all_candidates_on_grid": False}
+    ) is False
+
+    missing_required = dict(assertions)
+    missing_required.pop("pure_noise_produces_no_segments")
+    assert _ideal_gate_passed(aggregate, missing_required, grid) is False
 
 
 def test_ideal_temporal_benchmark_covers_speed_jitter_and_piecewise(tmp_path) -> None:

@@ -283,6 +283,68 @@ def test_retrieval_hole_within_gap_tolerance_stays_one_segment() -> None:
     assert outcome.segments[0].source_start == pytest.approx(1867.5, abs=0.25)
 
 
+@pytest.mark.parametrize("speed", [0.75, 0.80, 1.00, 1.25, 1.50])
+def test_same_line_merges_across_maximum_tolerated_hole_at_all_speeds(
+    speed: float,
+) -> None:
+    """A 1.5s accused retrieval hole scales to `speed * 1.5` on source."""
+    matches = [
+        CandidateMatch(
+            index * 0.5,
+            "EP01",
+            round((100.0 + speed * index * 0.5) * 2) / 2,
+            0.99,
+        )
+        for index in range(49)
+        if index not in (20, 21, 22)
+    ]
+    outcome = TemporalAligner(MatchingConfig()).align_with_diagnostics(
+        matches, index_complete=True
+    )
+    assert len(outcome.segments) == 1
+    assert outcome.segments[0].accused_start == 0.0
+    assert outcome.segments[0].accused_end == 24.5
+
+
+def test_slope_aware_continuity_does_not_bridge_inserted_accused_content() -> None:
+    """A source pause across an accused gap is not a retrieval hole on one line."""
+    aligner = TemporalAligner(MatchingConfig())
+    before = [
+        CandidateMatch(index * 0.5, "EP01", 100.0 + 1.5 * index * 0.5, 0.99)
+        for index in range(20)
+    ]
+    after = [
+        CandidateMatch(11.5 + index * 0.5, "EP01", 115.0 + 1.5 * index * 0.5, 0.99)
+        for index in range(20)
+    ]
+    left = aligner._proposal_to_segment(_Proposal("EP01", before, 1.0))
+    right = aligner._proposal_to_segment(_Proposal("EP01", after, 1.0))
+    assert left is not None and right is not None
+    assert not aligner._same_temporal_line(left.segment, right.segment)
+    assert len(aligner._merge_adjacent([left, right])) == 2
+
+
+def test_separate_same_line_fragments_fall_back_to_incomplete_non_green(
+    monkeypatch,
+) -> None:
+    """If merge cannot run, same-line neighbours must not mask orphan evidence."""
+    matches = [
+        CandidateMatch(index * 0.5, "EP01", 100.0 + 1.25 * index * 0.5, 0.99)
+        for index in range(49)
+        if index not in (20, 21, 22)
+    ]
+    aligner = TemporalAligner(MatchingConfig())
+    monkeypatch.setattr(aligner, "_merge_adjacent", lambda segments: segments)
+    outcome = aligner.align_with_diagnostics(matches, index_complete=True)
+    assert len(outcome.segments) == 2
+    assert all(
+        segment.boundary_completeness == "INCOMPLETE"
+        for segment in outcome.segments
+    )
+    assert all(segment.candidate_tier != "GREEN" for segment in outcome.segments)
+    assert all(segment.review_tier == "REVIEW_REQUIRED" for segment in outcome.segments)
+
+
 def test_long_weak_wrong_line_does_not_suppress_short_strong_correct_line() -> None:
     """Phase 2A.1 item 2 (Critical): reviewer's exact adversarial ranking case."""
     aligner = TemporalAligner(MatchingConfig())
@@ -374,6 +436,41 @@ def test_out_of_range_speed_is_never_reported_as_a_clamped_endpoint(speed: float
         # nor may it claim the true out-of-range speed it cannot represent
         if segment.speed_ratio is not None:
             assert 0.75 <= segment.speed_ratio <= 1.50
+
+
+@pytest.mark.parametrize(
+    ("speed", "detectable"),
+    [(0.72, True), (0.74, False), (1.51, False), (1.53, True)],
+)
+def test_near_endpoint_out_of_range_quantization_band_is_explicit(
+    speed: float, detectable: bool
+) -> None:
+    """Document which near-boundary slopes 2 FPS can distinguish reliably."""
+    candidates = [
+        CandidateMatch(
+            index * 0.5,
+            "EP01",
+            round((200.0 + speed * index * 0.5) * 2) / 2,
+            0.99,
+        )
+        for index in range(40)
+    ]
+    outcome = TemporalAligner(MatchingConfig()).align_with_diagnostics(
+        candidates, index_complete=True
+    )
+    assert len(outcome.segments) == 1
+    segment = outcome.segments[0]
+    assert segment.review_tier == "REVIEW_REQUIRED"
+    assert segment.unconstrained_speed_ratio is not None
+    if detectable:
+        assert segment.speed_ratio is None
+        assert segment.speed_out_of_range is True
+        assert segment.candidate_tier != "GREEN"
+    else:
+        # At 2 FPS these lines quantize into the configured endpoint bin. This is a
+        # documented representation limit, never a production auto-release signal.
+        assert segment.speed_ratio in (0.75, 1.50)
+        assert segment.speed_out_of_range is False
 
 
 def test_short_span_reports_null_speed_ratio() -> None:

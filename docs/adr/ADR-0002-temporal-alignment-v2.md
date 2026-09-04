@@ -79,6 +79,13 @@ vote 构建为 `O(CS)`，空间只与实际触达 cell 数量相关，不创建
 configuration 上限，避免无界 `O(C²)` pair 枚举。
 Phase 2A.2 的相邻 change-point refinement 只检查已经有界的 segment 相邻对，且最多
 接受配置规定数量的 refinement；没有新增对全量候选或全量 proposal 的无界 `O(N²)`。
+但单个不相容相邻 pair 会枚举 split position 并在两侧重复 fit，因此具有超线性成本；
+reviewer probe 在长两段输入上观察到该成本。当前 production 的 segment/split cap 使规模
+有界，real 6 秒 query 未见显著回归，但不能把这一结论外推到长 query。
+
+`change_point_minimum_side_seconds=3.0` 只是 split 两侧各自进入 fit 的最低支持阈值，
+不是 3 秒 regime 必然可恢复的承诺。当前 2 FPS source grid 上的实测 recoverability 约为
+4–6 秒，并随 slope separation 改变；更短 regime 被 extraction 吞并是已知限制。
 
 ## 已决定与尚未实现的边界
 

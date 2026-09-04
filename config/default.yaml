@@ -23,7 +23,9 @@ matching:
   merge_line_divergence_grid_steps: 1.0
   # Phase 2A.2 change-point split: a fitted segment is split only when both sides carry
   # independent support, their fitted lines are incompatible, and the split explains the
-  # evidence measurably better than one forced line.
+  # evidence measurably better than one forced line. 3s is a fit-side support threshold,
+  # not a recoverability guarantee; observed recovery is roughly 4–6s depending on slope
+  # separation at the current 2 FPS grid.
   change_point_split_enabled: true
   change_point_minimum_side_seconds: 3.0
   change_point_minimum_residual_gain: 0.25

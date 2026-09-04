@@ -133,8 +133,9 @@ Schema version 为 6。每步均有独立 function，以 `BEGIN IMMEDIATE` 原�
 | missing required table | introspection | backup 后抛 `SchemaIntegrityError`，不猜测重建 |
 | newer user_version | none | 响亮拒绝 |
 
-真实 benchmark 使用源 DB 的 scratch copy。源 DB fresh 检查前后均为 v4、2 assets；没有对
-真实 DB 执行 initialize 或 migration。
+真实 benchmark 使用 `real-retrieval` source-index DB 的 scratch copy；该源索引库 fresh
+检查前后均为 v4、2 assets，未对它执行 initialize 或 migration。默认空 workspace DB 和
+benchmark demo DB 曾由测试流程迁移到 v6；它们不含 asset、accused 或 segment 数据。
 
 ## 4. Tests
 
