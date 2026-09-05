@@ -1,0 +1,107 @@
+{
+  "a010_rival_regression": {
+    "DCT": true,
+    "TAU_0.55": false,
+    "TAU_0.60": false,
+    "TAU_0.64": false,
+    "TAU_0.68": false,
+    "TAU_0.72": false,
+    "TAU_0.76": false,
+    "TAU_0.80": false,
+    "TAU_0.82": false
+  },
+  "anti_leak_probes": {
+    "candidate_identity_identical_after_gt_mutation": true,
+    "correct_band_removal": {
+      "after_segment_count": 1,
+      "after_total_accused_span": 7.0,
+      "before_segment_count": 1,
+      "before_total_accused_span": 10.0,
+      "coverage_degraded": true
+    },
+    "direct_candidate_permutation_alignment_identical": true,
+    "gt_mutation_and_adapter_permutation_stream_identical": true,
+    "one_coherent_wrong_line": {
+      "candidate_green_count": 1,
+      "emitted_segment_count": 1,
+      "production_review_tiers": [
+        "REVIEW_REQUIRED"
+      ]
+    },
+    "probe_policy": "TAU_0.64",
+    "repeat_alignment_identical": true,
+    "two_strong_cross_source_lines": {
+      "alternative_count": 1,
+      "ambiguous": true,
+      "production_review_tiers": [
+        "REVIEW_REQUIRED"
+      ]
+    }
+  },
+  "batching": {
+    "actual_batch_length_distribution": {
+      "13": 20,
+      "16": 220,
+      "4": 20
+    },
+    "configured_batch_size": 16,
+    "oversized_batch_count": 0
+  },
+  "candidate_identity": {
+    "cross_tau_mismatch_count": 0,
+    "dev_case_family_count": 240
+  },
+  "independent_taxonomy": {
+    "mismatch_count": 0,
+    "positive_backend_case_count": 1980
+  },
+  "lifecycle": {
+    "eligible_policy_count": 0,
+    "fresh_data_exists": false,
+    "fresh_held_out_executed": false,
+    "selected_policy_exists": false,
+    "stage_reached": "DEV_COMPLETE"
+  },
+  "mathematical_special_cases": {
+    "all_policy_mappings_monotonic": true,
+    "tau_0_64_max_dct_affine_error": 3.3306690738754696e-16,
+    "tau_0_82_max_identity_error_on_unit_interval": 0.0
+  },
+  "negative_safety": {
+    "all_zero": true,
+    "emitted_segments_by_backend": {
+      "DCT": 0,
+      "TAU_0.55": 0,
+      "TAU_0.60": 0,
+      "TAU_0.64": 0,
+      "TAU_0.68": 0,
+      "TAU_0.72": 0,
+      "TAU_0.76": 0,
+      "TAU_0.80": 0,
+      "TAU_0.82": 0
+    }
+  },
+  "privacy": {
+    "contains_exact_timelines": false,
+    "contains_media_identity": false,
+    "contains_paths": false,
+    "contains_per_frame_records": false,
+    "contains_private_hashes": false
+  },
+  "protocol_commit": "277dea444545b5555f6bc4813334c6528df8a4cb",
+  "release_safety": {
+    "candidate_green_remains_diagnostic_only": true,
+    "non_review_required_prediction_count": 0
+  },
+  "schema_version": "phase2b3-dev-stop-verification-v0.1",
+  "score_mapping": {
+    "adapted_candidate_count": 247040,
+    "effective_threshold_mismatch_count": 0,
+    "not_retained_count": 0,
+    "score_mismatch_count": 0
+  },
+  "source_grid": {
+    "audited_candidate_count_including_policy_replays": 277920,
+    "off_grid_count": 0
+  }
+}
