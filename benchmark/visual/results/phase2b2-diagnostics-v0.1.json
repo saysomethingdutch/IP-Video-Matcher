@@ -1,0 +1,660 @@
+{
+  "batch_comparison_with_previous_query_records": {
+    "CENTER_CROP": {
+      "candidate_count": 2560,
+      "candidate_identity_differences": 0,
+      "cosine_difference_over_2e_5": 0
+    },
+    "DIRECT": {
+      "candidate_count": 2560,
+      "candidate_identity_differences": 0,
+      "cosine_difference_over_2e_5": 0
+    },
+    "H264_REENCODE": {
+      "candidate_count": 2560,
+      "candidate_identity_differences": 0,
+      "cosine_difference_over_2e_5": 0
+    },
+    "LETTERBOX": {
+      "candidate_count": 2560,
+      "candidate_identity_differences": 0,
+      "cosine_difference_over_2e_5": 0
+    },
+    "MIRROR": {
+      "candidate_count": 2560,
+      "candidate_identity_differences": 0,
+      "cosine_difference_over_2e_5": 0
+    },
+    "NEGATIVE": {
+      "candidate_count": 2560,
+      "candidate_identity_differences": 0,
+      "cosine_difference_over_2e_5": 0
+    },
+    "PIP_REDUCED_VIEWPORT": {
+      "candidate_count": 2560,
+      "candidate_identity_differences": 0,
+      "cosine_difference_over_2e_5": 0
+    },
+    "SPEED_0_8X": {
+      "candidate_count": 3200,
+      "candidate_identity_differences": 1212,
+      "cosine_difference_over_2e_5": 3188
+    },
+    "SPEED_1_25X": {
+      "candidate_count": 2080,
+      "candidate_identity_differences": 0,
+      "cosine_difference_over_2e_5": 0
+    },
+    "SUBTITLE_OVERLAY": {
+      "candidate_count": 2560,
+      "candidate_identity_differences": 0,
+      "cosine_difference_over_2e_5": 0
+    },
+    "VERTICAL_9_16": {
+      "candidate_count": 2560,
+      "candidate_identity_differences": 0,
+      "cosine_difference_over_2e_5": 0
+    },
+    "ZOOM": {
+      "candidate_count": 2560,
+      "candidate_identity_differences": 0,
+      "cosine_difference_over_2e_5": 0
+    }
+  },
+  "calibration": {
+    "accused_boundary_error_denominator": 68,
+    "paired_outcome_transitions": [
+      {
+        "count": 13,
+        "dct": "CORRECT_UNAMBIGUOUS_MATCH",
+        "selected": "CORRECT_UNAMBIGUOUS_MATCH"
+      },
+      {
+        "count": 11,
+        "dct": "CORRECT_UNAMBIGUOUS_MATCH",
+        "selected": "NO_MATCH"
+      },
+      {
+        "count": 2,
+        "dct": "CORRECT_UNAMBIGUOUS_MATCH",
+        "selected": "UNSAFE_WRONG_MATCH"
+      },
+      {
+        "count": 38,
+        "dct": "NO_MATCH",
+        "selected": "NO_MATCH"
+      },
+      {
+        "count": 13,
+        "dct": "SAFE_AMBIGUITY_CONTAINS_GT",
+        "selected": "CORRECT_UNAMBIGUOUS_MATCH"
+      },
+      {
+        "count": 1,
+        "dct": "SAFE_AMBIGUITY_CONTAINS_GT",
+        "selected": "NO_MATCH"
+      },
+      {
+        "count": 4,
+        "dct": "SAFE_AMBIGUITY_CONTAINS_GT",
+        "selected": "UNSAFE_WRONG_MATCH"
+      },
+      {
+        "count": 1,
+        "dct": "UNSAFE_WRONG_MATCH",
+        "selected": "CORRECT_UNAMBIGUOUS_MATCH"
+      },
+      {
+        "count": 22,
+        "dct": "UNSAFE_WRONG_MATCH",
+        "selected": "NO_MATCH"
+      },
+      {
+        "count": 5,
+        "dct": "UNSAFE_WRONG_MATCH",
+        "selected": "UNSAFE_WRONG_MATCH"
+      }
+    ],
+    "pip": {
+      "coherence_definition": "before floor/filter, frozen sparse peaks and continuous support >=6 actual frames over >=3s; not an emitted match",
+      "effective_candidate_count": 0,
+      "emitted_query_count": 0,
+      "pre_filter_coherence": {
+        "competing_wrong_peak_with_minimum_support": 10,
+        "correct_gt_support_for_any_match": 7,
+        "correct_gt_support_for_full_boundary": 2
+      },
+      "query_count": 10,
+      "retained_candidate_count": 30
+    },
+    "safe_but_strict_full_mapping_absent": 0,
+    "source_boundary_error_denominator": 66,
+    "speed_error_denominator": 16,
+    "unsafe_inspection": [
+      {
+        "accused_boundary_errors_seconds": [],
+        "attribution": "RETRIEVAL_INSUFFICIENT_FOR_FULL_BOUNDARY",
+        "boundary_assertion": "UNRESOLVED_OR_INCORRECT_MAPPING",
+        "candidate_tiers": {
+          "YELLOW": 1
+        },
+        "dct_outcome": "UNSAFE_WRONG_MATCH",
+        "effective_actual_gt_hits": 8,
+        "effective_full_boundary_support": false,
+        "position_alias": "SOURCE_A-POSITION_001",
+        "query_frame_count": 16,
+        "raw_top8_actual_gt_hits": 16,
+        "selected_status": "AMBIGUOUS",
+        "source_boundary_errors_seconds": [],
+        "source_mae_denominator_note": "wrong-episode predictions excluded by frozen evaluator",
+        "transformation": "DIRECT",
+        "wrong_episode_emitted": true
+      },
+      {
+        "accused_boundary_errors_seconds": [],
+        "attribution": "RETRIEVAL_INSUFFICIENT_FOR_FULL_BOUNDARY",
+        "boundary_assertion": "UNRESOLVED_OR_INCORRECT_MAPPING",
+        "candidate_tiers": {
+          "YELLOW": 1
+        },
+        "dct_outcome": "UNSAFE_WRONG_MATCH",
+        "effective_actual_gt_hits": 7,
+        "effective_full_boundary_support": false,
+        "position_alias": "SOURCE_A-POSITION_001",
+        "query_frame_count": 16,
+        "raw_top8_actual_gt_hits": 16,
+        "selected_status": "AMBIGUOUS",
+        "source_boundary_errors_seconds": [],
+        "source_mae_denominator_note": "wrong-episode predictions excluded by frozen evaluator",
+        "transformation": "H264_REENCODE",
+        "wrong_episode_emitted": true
+      },
+      {
+        "accused_boundary_errors_seconds": [],
+        "attribution": "RETRIEVAL_INSUFFICIENT_FOR_FULL_BOUNDARY",
+        "boundary_assertion": "UNRESOLVED_OR_INCORRECT_MAPPING",
+        "candidate_tiers": {
+          "YELLOW": 1
+        },
+        "dct_outcome": "UNSAFE_WRONG_MATCH",
+        "effective_actual_gt_hits": 11,
+        "effective_full_boundary_support": false,
+        "position_alias": "SOURCE_A-POSITION_001",
+        "query_frame_count": 20,
+        "raw_top8_actual_gt_hits": 20,
+        "selected_status": "AMBIGUOUS",
+        "source_boundary_errors_seconds": [],
+        "source_mae_denominator_note": "wrong-episode predictions excluded by frozen evaluator",
+        "transformation": "SPEED_0_8X",
+        "wrong_episode_emitted": true
+      },
+      {
+        "accused_boundary_errors_seconds": [
+          1.5,
+          0.09999999999999964
+        ],
+        "attribution": "RETRIEVAL_INSUFFICIENT_FOR_FULL_BOUNDARY",
+        "boundary_assertion": "UNRESOLVED_OR_INCORRECT_MAPPING",
+        "candidate_tiers": {
+          "YELLOW": 1
+        },
+        "dct_outcome": "UNSAFE_WRONG_MATCH",
+        "effective_actual_gt_hits": 8,
+        "effective_full_boundary_support": false,
+        "position_alias": "SOURCE_A-POSITION_001",
+        "query_frame_count": 13,
+        "raw_top8_actual_gt_hits": 13,
+        "selected_status": "AMBIGUOUS",
+        "source_boundary_errors_seconds": [],
+        "source_mae_denominator_note": "wrong-episode predictions excluded by frozen evaluator",
+        "transformation": "SPEED_1_25X",
+        "wrong_episode_emitted": true
+      },
+      {
+        "accused_boundary_errors_seconds": [
+          2.0,
+          0.0
+        ],
+        "attribution": "RETRIEVAL_INSUFFICIENT_FOR_FULL_BOUNDARY",
+        "boundary_assertion": "UNRESOLVED_OR_INCORRECT_MAPPING",
+        "candidate_tiers": {
+          "YELLOW": 1
+        },
+        "dct_outcome": "SAFE_AMBIGUITY_CONTAINS_GT",
+        "effective_actual_gt_hits": 15,
+        "effective_full_boundary_support": false,
+        "position_alias": "SOURCE_A-POSITION_003",
+        "query_frame_count": 20,
+        "raw_top8_actual_gt_hits": 20,
+        "selected_status": "MATCH_FOUND",
+        "source_boundary_errors_seconds": [
+          1.6448649999999816,
+          0.12713499999995292
+        ],
+        "source_mae_denominator_note": "wrong-episode predictions excluded by frozen evaluator",
+        "transformation": "SPEED_0_8X",
+        "wrong_episode_emitted": false
+      },
+      {
+        "accused_boundary_errors_seconds": [
+          4.0,
+          0.0
+        ],
+        "attribution": "RETRIEVAL_INSUFFICIENT_FOR_ANY_MATCH",
+        "boundary_assertion": "UNRESOLVED_OR_INCORRECT_MAPPING",
+        "candidate_tiers": {
+          "YELLOW": 1
+        },
+        "dct_outcome": "UNSAFE_WRONG_MATCH",
+        "effective_actual_gt_hits": 3,
+        "effective_full_boundary_support": false,
+        "position_alias": "SOURCE_A-POSITION_007",
+        "query_frame_count": 16,
+        "raw_top8_actual_gt_hits": 15,
+        "selected_status": "MATCH_FOUND",
+        "source_boundary_errors_seconds": [
+          5.082724999999982,
+          1.2137250000000677
+        ],
+        "source_mae_denominator_note": "wrong-episode predictions excluded by frozen evaluator",
+        "transformation": "ZOOM",
+        "wrong_episode_emitted": false
+      },
+      {
+        "accused_boundary_errors_seconds": [
+          2.0,
+          0.0
+        ],
+        "attribution": "RETRIEVAL_INSUFFICIENT_FOR_FULL_BOUNDARY",
+        "boundary_assertion": "UNRESOLVED_OR_INCORRECT_MAPPING",
+        "candidate_tiers": {
+          "GREEN": 1
+        },
+        "dct_outcome": "SAFE_AMBIGUITY_CONTAINS_GT",
+        "effective_actual_gt_hits": 11,
+        "effective_full_boundary_support": false,
+        "position_alias": "SOURCE_A-POSITION_007",
+        "query_frame_count": 16,
+        "raw_top8_actual_gt_hits": 16,
+        "selected_status": "MATCH_FOUND",
+        "source_boundary_errors_seconds": [
+          2.227724999999964,
+          0.06027500000004693
+        ],
+        "source_mae_denominator_note": "wrong-episode predictions excluded by frozen evaluator",
+        "transformation": "SUBTITLE_OVERLAY",
+        "wrong_episode_emitted": false
+      },
+      {
+        "accused_boundary_errors_seconds": [
+          0.5,
+          3.0
+        ],
+        "attribution": "ALIGNMENT_LIMIT",
+        "boundary_assertion": "UNRESOLVED_OR_INCORRECT_MAPPING",
+        "candidate_tiers": {
+          "YELLOW": 2
+        },
+        "dct_outcome": "SAFE_AMBIGUITY_CONTAINS_GT",
+        "effective_actual_gt_hits": 20,
+        "effective_full_boundary_support": true,
+        "position_alias": "SOURCE_A-POSITION_009",
+        "query_frame_count": 20,
+        "raw_top8_actual_gt_hits": 20,
+        "selected_status": "AMBIGUOUS",
+        "source_boundary_errors_seconds": [
+          0.03382599999986269,
+          2.1091740000001664
+        ],
+        "source_mae_denominator_note": "wrong-episode predictions excluded by frozen evaluator",
+        "transformation": "SPEED_0_8X",
+        "wrong_episode_emitted": false
+      },
+      {
+        "accused_boundary_errors_seconds": [],
+        "attribution": "RETRIEVAL_INSUFFICIENT_FOR_FULL_BOUNDARY",
+        "boundary_assertion": "UNRESOLVED_OR_INCORRECT_MAPPING",
+        "candidate_tiers": {
+          "YELLOW": 1
+        },
+        "dct_outcome": "CORRECT_UNAMBIGUOUS_MATCH",
+        "effective_actual_gt_hits": 7,
+        "effective_full_boundary_support": false,
+        "position_alias": "SOURCE_B-POSITION_001",
+        "query_frame_count": 16,
+        "raw_top8_actual_gt_hits": 16,
+        "selected_status": "MATCH_FOUND",
+        "source_boundary_errors_seconds": [],
+        "source_mae_denominator_note": "wrong-episode predictions excluded by frozen evaluator",
+        "transformation": "H264_REENCODE",
+        "wrong_episode_emitted": false
+      },
+      {
+        "accused_boundary_errors_seconds": [
+          2.5,
+          0.5
+        ],
+        "attribution": "ALIGNMENT_LIMIT",
+        "boundary_assertion": "UNRESOLVED_OR_INCORRECT_MAPPING",
+        "candidate_tiers": {
+          "YELLOW": 2
+        },
+        "dct_outcome": "SAFE_AMBIGUITY_CONTAINS_GT",
+        "effective_actual_gt_hits": 18,
+        "effective_full_boundary_support": true,
+        "position_alias": "SOURCE_B-POSITION_001",
+        "query_frame_count": 20,
+        "raw_top8_actual_gt_hits": 20,
+        "selected_status": "AMBIGUOUS",
+        "source_boundary_errors_seconds": [
+          1.584401999999983,
+          0.16259800000000268
+        ],
+        "source_mae_denominator_note": "wrong-episode predictions excluded by frozen evaluator",
+        "transformation": "SPEED_0_8X",
+        "wrong_episode_emitted": false
+      },
+      {
+        "accused_boundary_errors_seconds": [
+          1.0,
+          0.09999999999999964
+        ],
+        "attribution": "RETRIEVAL_INSUFFICIENT_FOR_FULL_BOUNDARY",
+        "boundary_assertion": "UNRESOLVED_OR_INCORRECT_MAPPING",
+        "candidate_tiers": {
+          "GREEN": 1
+        },
+        "dct_outcome": "CORRECT_UNAMBIGUOUS_MATCH",
+        "effective_actual_gt_hits": 11,
+        "effective_full_boundary_support": false,
+        "position_alias": "SOURCE_B-POSITION_009",
+        "query_frame_count": 13,
+        "raw_top8_actual_gt_hits": 13,
+        "selected_status": "MATCH_FOUND",
+        "source_boundary_errors_seconds": [
+          1.295558999999912,
+          0.19555900000000292
+        ],
+        "source_mae_denominator_note": "wrong-episode predictions excluded by frozen evaluator",
+        "transformation": "SPEED_1_25X",
+        "wrong_episode_emitted": false
+      }
+    ]
+  },
+  "held_out": {
+    "accused_boundary_error_denominator": 78,
+    "paired_outcome_transitions": [
+      {
+        "count": 16,
+        "dct": "CORRECT_UNAMBIGUOUS_MATCH",
+        "selected": "CORRECT_UNAMBIGUOUS_MATCH"
+      },
+      {
+        "count": 7,
+        "dct": "CORRECT_UNAMBIGUOUS_MATCH",
+        "selected": "NO_MATCH"
+      },
+      {
+        "count": 2,
+        "dct": "CORRECT_UNAMBIGUOUS_MATCH",
+        "selected": "UNSAFE_WRONG_MATCH"
+      },
+      {
+        "count": 35,
+        "dct": "NO_MATCH",
+        "selected": "NO_MATCH"
+      },
+      {
+        "count": 1,
+        "dct": "NO_MATCH",
+        "selected": "UNSAFE_WRONG_MATCH"
+      },
+      {
+        "count": 12,
+        "dct": "SAFE_AMBIGUITY_CONTAINS_GT",
+        "selected": "CORRECT_UNAMBIGUOUS_MATCH"
+      },
+      {
+        "count": 2,
+        "dct": "SAFE_AMBIGUITY_CONTAINS_GT",
+        "selected": "NO_MATCH"
+      },
+      {
+        "count": 1,
+        "dct": "SAFE_AMBIGUITY_CONTAINS_GT",
+        "selected": "SAFE_AMBIGUITY_CONTAINS_GT"
+      },
+      {
+        "count": 4,
+        "dct": "SAFE_AMBIGUITY_CONTAINS_GT",
+        "selected": "UNSAFE_WRONG_MATCH"
+      },
+      {
+        "count": 2,
+        "dct": "UNSAFE_WRONG_MATCH",
+        "selected": "CORRECT_UNAMBIGUOUS_MATCH"
+      },
+      {
+        "count": 27,
+        "dct": "UNSAFE_WRONG_MATCH",
+        "selected": "NO_MATCH"
+      },
+      {
+        "count": 1,
+        "dct": "UNSAFE_WRONG_MATCH",
+        "selected": "UNSAFE_WRONG_MATCH"
+      }
+    ],
+    "pip": {
+      "coherence_definition": "before floor/filter, frozen sparse peaks and continuous support >=6 actual frames over >=3s; not an emitted match",
+      "effective_candidate_count": 0,
+      "emitted_query_count": 0,
+      "pre_filter_coherence": {
+        "competing_wrong_peak_with_minimum_support": 5,
+        "correct_gt_support_for_any_match": 5,
+        "correct_gt_support_for_full_boundary": 1
+      },
+      "query_count": 10,
+      "retained_candidate_count": 83
+    },
+    "safe_but_strict_full_mapping_absent": 0,
+    "source_boundary_error_denominator": 72,
+    "speed_error_denominator": 17,
+    "unsafe_inspection": [
+      {
+        "accused_boundary_errors_seconds": [
+          0.0,
+          1.5
+        ],
+        "attribution": "RETRIEVAL_INSUFFICIENT_FOR_FULL_BOUNDARY",
+        "boundary_assertion": "UNRESOLVED_OR_INCORRECT_MAPPING",
+        "candidate_tiers": {
+          "YELLOW": 1
+        },
+        "dct_outcome": "CORRECT_UNAMBIGUOUS_MATCH",
+        "effective_actual_gt_hits": 9,
+        "effective_full_boundary_support": false,
+        "position_alias": "SOURCE_A-POSITION_006",
+        "query_frame_count": 16,
+        "raw_top8_actual_gt_hits": 16,
+        "selected_status": "MATCH_FOUND",
+        "source_boundary_errors_seconds": [
+          0.3541809999999259,
+          1.4421809999998914
+        ],
+        "source_mae_denominator_note": "wrong-episode predictions excluded by frozen evaluator",
+        "transformation": "H264_REENCODE",
+        "wrong_episode_emitted": false
+      },
+      {
+        "accused_boundary_errors_seconds": [
+          0.0,
+          1.0
+        ],
+        "attribution": "RETRIEVAL_INSUFFICIENT_FOR_FULL_BOUNDARY",
+        "boundary_assertion": "UNRESOLVED_OR_INCORRECT_MAPPING",
+        "candidate_tiers": {
+          "YELLOW": 1
+        },
+        "dct_outcome": "SAFE_AMBIGUITY_CONTAINS_GT",
+        "effective_actual_gt_hits": 12,
+        "effective_full_boundary_support": false,
+        "position_alias": "SOURCE_A-POSITION_008",
+        "query_frame_count": 16,
+        "raw_top8_actual_gt_hits": 15,
+        "selected_status": "MATCH_FOUND",
+        "source_boundary_errors_seconds": [
+          1.0227119999999559,
+          0.4937119999999595
+        ],
+        "source_mae_denominator_note": "wrong-episode predictions excluded by frozen evaluator",
+        "transformation": "H264_REENCODE",
+        "wrong_episode_emitted": false
+      },
+      {
+        "accused_boundary_errors_seconds": [
+          2.0,
+          0.5
+        ],
+        "attribution": "RETRIEVAL_INSUFFICIENT_FOR_FULL_BOUNDARY",
+        "boundary_assertion": "UNRESOLVED_OR_INCORRECT_MAPPING",
+        "candidate_tiers": {
+          "GREEN": 1
+        },
+        "dct_outcome": "UNSAFE_WRONG_MATCH",
+        "effective_actual_gt_hits": 10,
+        "effective_full_boundary_support": false,
+        "position_alias": "SOURCE_A-POSITION_008",
+        "query_frame_count": 16,
+        "raw_top8_actual_gt_hits": 13,
+        "selected_status": "MATCH_FOUND",
+        "source_boundary_errors_seconds": [
+          2.0852879999999914,
+          0.5097120000000359
+        ],
+        "source_mae_denominator_note": "wrong-episode predictions excluded by frozen evaluator",
+        "transformation": "SUBTITLE_OVERLAY",
+        "wrong_episode_emitted": false
+      },
+      {
+        "accused_boundary_errors_seconds": [
+          0.0,
+          0.0
+        ],
+        "attribution": "RETRIEVAL_INSUFFICIENT_FOR_ANY_MATCH",
+        "boundary_assertion": "UNRESOLVED_OR_INCORRECT_MAPPING",
+        "candidate_tiers": {
+          "GREEN": 1
+        },
+        "dct_outcome": "SAFE_AMBIGUITY_CONTAINS_GT",
+        "effective_actual_gt_hits": 1,
+        "effective_full_boundary_support": false,
+        "position_alias": "SOURCE_A-POSITION_010",
+        "query_frame_count": 16,
+        "raw_top8_actual_gt_hits": 15,
+        "selected_status": "MATCH_FOUND",
+        "source_boundary_errors_seconds": [],
+        "source_mae_denominator_note": "wrong-episode predictions excluded by frozen evaluator",
+        "transformation": "DIRECT",
+        "wrong_episode_emitted": true
+      },
+      {
+        "accused_boundary_errors_seconds": [
+          4.0,
+          0.0
+        ],
+        "attribution": "RETRIEVAL_INSUFFICIENT_FOR_ANY_MATCH",
+        "boundary_assertion": "UNRESOLVED_OR_INCORRECT_MAPPING",
+        "candidate_tiers": {
+          "YELLOW": 1
+        },
+        "dct_outcome": "SAFE_AMBIGUITY_CONTAINS_GT",
+        "effective_actual_gt_hits": 0,
+        "effective_full_boundary_support": false,
+        "position_alias": "SOURCE_A-POSITION_010",
+        "query_frame_count": 16,
+        "raw_top8_actual_gt_hits": 13,
+        "selected_status": "MATCH_FOUND",
+        "source_boundary_errors_seconds": [],
+        "source_mae_denominator_note": "wrong-episode predictions excluded by frozen evaluator",
+        "transformation": "H264_REENCODE",
+        "wrong_episode_emitted": true
+      },
+      {
+        "accused_boundary_errors_seconds": [
+          4.5,
+          0.5
+        ],
+        "attribution": "RETRIEVAL_INSUFFICIENT_FOR_FULL_BOUNDARY",
+        "boundary_assertion": "UNRESOLVED_OR_INCORRECT_MAPPING",
+        "candidate_tiers": {
+          "YELLOW": 2
+        },
+        "dct_outcome": "SAFE_AMBIGUITY_CONTAINS_GT",
+        "effective_actual_gt_hits": 11,
+        "effective_full_boundary_support": false,
+        "position_alias": "SOURCE_A-POSITION_010",
+        "query_frame_count": 20,
+        "raw_top8_actual_gt_hits": 18,
+        "selected_status": "AMBIGUOUS",
+        "source_boundary_errors_seconds": [],
+        "source_mae_denominator_note": "wrong-episode predictions excluded by frozen evaluator",
+        "transformation": "SPEED_0_8X",
+        "wrong_episode_emitted": true
+      },
+      {
+        "accused_boundary_errors_seconds": [
+          2.0,
+          0.0
+        ],
+        "attribution": "ALIGNMENT_LIMIT",
+        "boundary_assertion": "CONTAINED_PARTIAL_EVIDENCE",
+        "candidate_tiers": {
+          "YELLOW": 1
+        },
+        "dct_outcome": "CORRECT_UNAMBIGUOUS_MATCH",
+        "effective_actual_gt_hits": 15,
+        "effective_full_boundary_support": true,
+        "position_alias": "SOURCE_B-POSITION_002",
+        "query_frame_count": 16,
+        "raw_top8_actual_gt_hits": 16,
+        "selected_status": "MATCH_FOUND",
+        "source_boundary_errors_seconds": [
+          2.1251570000000015,
+          0.2938429999999812
+        ],
+        "source_mae_denominator_note": "wrong-episode predictions excluded by frozen evaluator",
+        "transformation": "H264_REENCODE",
+        "wrong_episode_emitted": false
+      },
+      {
+        "accused_boundary_errors_seconds": [
+          4.0,
+          0.0
+        ],
+        "attribution": "RETRIEVAL_INSUFFICIENT_FOR_FULL_BOUNDARY",
+        "boundary_assertion": "UNRESOLVED_OR_INCORRECT_MAPPING",
+        "candidate_tiers": {
+          "YELLOW": 1
+        },
+        "dct_outcome": "NO_MATCH",
+        "effective_actual_gt_hits": 10,
+        "effective_full_boundary_support": false,
+        "position_alias": "SOURCE_B-POSITION_004",
+        "query_frame_count": 16,
+        "raw_top8_actual_gt_hits": 16,
+        "selected_status": "MATCH_FOUND",
+        "source_boundary_errors_seconds": [
+          4.4124140000000125,
+          0.5385860000000093
+        ],
+        "source_mae_denominator_note": "wrong-episode predictions excluded by frozen evaluator",
+        "transformation": "MIRROR",
+        "wrong_episode_emitted": false
+      }
+    ]
+  },
+  "purpose": "post-evaluation inspection; does not change calibration, held-out outcomes or Gate",
+  "schema_version": "phase2b2-descriptive-diagnostics-v0.1",
+  "selected_policy": "FLOOR_0.70"
+}
