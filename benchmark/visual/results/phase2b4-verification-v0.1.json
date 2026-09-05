@@ -1,0 +1,22 @@
+{
+  "aggregate_reproduction_exact": true,
+  "candidate_grid_check": {
+    "candidate_count": 56640,
+    "off_grid_count": 0
+  },
+  "content_position_count": 20,
+  "dev_only": true,
+  "fresh_data_absent": true,
+  "paired_positive_case_count": 440,
+  "primary_trace_case_count": 6,
+  "primary_trace_matrix_complete": true,
+  "production_commit": "93bf13b",
+  "production_diff_empty": true,
+  "production_review_required_preserved": true,
+  "protocol_commit": "79decff3270c028056f34fdd11902545fad0b74a",
+  "protocol_unchanged": true,
+  "sanitization_passed": true,
+  "schema_version": "phase2b4-verification-v0.1",
+  "selected_policy_absent": true,
+  "synthetic_replay_exact": true
+}
