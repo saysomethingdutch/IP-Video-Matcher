@@ -303,7 +303,7 @@ to require byte-for-byte deterministic sanitized output.
 Only one axis changes from the base cloud at a time:
 
 1. **Distributed duplicate concentration:** a same-correct-episode plateau candidate
-   at source time 104.0 and score 0.98 is active on an evenly distributed deterministic
+   at source time 120.0 and score 0.98 is active on an evenly distributed deterministic
    subset of `0, 4, 8, 12, 16` frames; the true candidate remains at rank 2.
 2. **Timestamp quantization/collision:** the true candidate source time is rounded to
    the nearest grid with step `0.5, 1.0, 2.0, 4.0` seconds (half-to-even NumPy rounding),
@@ -318,7 +318,7 @@ Only one axis changes from the base cloud at a time:
    `0.80, 0.82, 0.90, 0.96, 0.99`; all other fields remain base. The correct line is
    unchanged.
 6. **Local temporal plateau length:** activate a same-correct-episode source-time
-   104.0, score-0.98 plateau over the centered contiguous block of
+   120.0, score-0.98 plateau over the centered contiguous block of
    `0, 2, 4, 6, 8, 12, 16` query frames; the true candidate remains present at rank 2.
 
 For every setting report frozen outcome/status, complete correct primary or alternative,
