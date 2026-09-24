@@ -8,7 +8,8 @@ import tempfile
 import time
 
 from .pipeline import (assign_screenshots, build_rows, build_sessions, compile_ocr,
-                       frame_ocr, match_sessions, observations, screenshot_ocr, video_duration)
+                       frame_ocr, link_without_readings, match_sessions, observations,
+                       quality_audit, screenshot_ocr, video_duration)
 from .report import write_outputs
 from .workbook import read_qsjx, read_zhuyu
 
@@ -48,7 +49,7 @@ def run_case(config_path, only_videos=None):
                 records = frame_ocr(path, config["videos"][name], fps, output / "ocr_cache",
                                     Path(directory), force_full=force_full)
                 frame_count += len(records)
-                obs = observations(records)
+                obs = observations(records, {row["duration"] for row in rows if row["video"] == name})
                 obs_by_video[name] = obs
                 sessions.extend(build_sessions(obs, fps, name))
             print(f"{case_id}: {name} {len(records)} frames, {sum(s['video']==name for s in sessions)} sessions", flush=True)
@@ -58,8 +59,10 @@ def run_case(config_path, only_videos=None):
             add_screenshots([s for s in sessions if s["video"] == name], shots)
         linked, unmatched = match_sessions(sessions, rows)
         ledger = build_rows(rows, linked, output, video_paths, fps=fps)
+        link_without_readings(ledger, mapped, obs_by_video, output, video_paths)
+        audit = quality_audit(ledger, obs_by_video)
         summary = write_outputs(output, ledger, unmatched, names, durations,
-                                time.monotonic() - started, frame_count, case_id, fps)
+                                time.monotonic() - started, frame_count, case_id, fps, audit)
         summary["screenshots_ocr"] = len(screens)
         summary["screenshots_aligned"] = sum(len(v) for v in mapped.values())
         summary["clock_offsets"] = offsets

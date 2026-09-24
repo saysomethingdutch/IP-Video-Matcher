@@ -14,7 +14,56 @@ DATE = re.compile(r"20\d{2}\s*[年./-]\s*\d{1,2}\s*[月./-]\s*\d{1,2}")
 VIEWS = re.compile(r"(?:播放(?:量)?\s*[:：]?\s*([\d.]+\s*[万亿]?)|([\d.]+\s*[万亿]?)\s*(?:播放|次观看))")
 
 
-def parse_reading(text):
+def parse_reading(text, candidate_totals=None, current_total=None):
+    if candidate_totals is not None:
+        normalized = text.translate(str.maketrans("①②③④⑤⑥⑦⑧⑨Ｏｏ／｜；．·－", "123456789Oo/|;.·-"))
+        normalized = re.sub(r"(?<=\d)[Oo](?=\d|[:;.·\-/| 7])|(?<=[/:;.·\- 7])[Oo](?=\d)", "0", normalized)
+        normalized = re.sub(r"^四(?=\d)", "", normalized)
+        if re.search(r"[\u4e00-\u9fff]", normalized):
+            return None
+        # A player readout is a short, mostly numeric OCR box. Candidate totals
+        # prevent clocks and unrelated counters from becoming player evidence.
+        if (len(normalized) > 24 or "上午" in normalized or "下午" in normalized
+                or not re.search(r"[:;.·\-/| ]", normalized)):
+            return None
+        digits = "".join(re.findall(r"\d", normalized))
+        explicit_slash = bool(re.search(r"[/|]", normalized))
+        if explicit_slash and re.search(r"[:;.·-]\d[/|]", normalized):
+            return None
+        possibilities = []
+        expected = set(round(x) for x in candidate_totals if x is not None)
+        if current_total is not None:
+            expected.add(round(current_total))
+        for total in expected:
+            if not 5 <= total <= 4 * 3600:
+                continue
+            for observed_total in range(max(5, total - 1), total + 2):
+                minute, second = divmod(observed_total, 60)
+                for tail in {f"{minute:02d}{second:02d}", f"{minute}{second:02d}"}:
+                    if not digits.endswith(tail):
+                        continue
+                    prefix = digits[:-len(tail)]
+                    for separator in ("", "7", "1"):
+                        if separator and (explicit_slash or len(prefix) < 5):
+                            continue
+                        if separator and not prefix.endswith(separator):
+                            continue
+                        current = prefix[:-1] if separator else prefix
+                        if not 3 <= len(current) <= 5:
+                            continue
+                        m, s = int(current[:-2]), int(current[-2:])
+                        pos = m * 60 + s
+                        if s >= 60 or pos > observed_total + 5:
+                            continue
+                        score = (3 if explicit_slash else 0) + (4 if separator else 0)
+                        score += 4 if len(tail) == 4 else 0
+                        score += (2 if observed_total == total else 0) + (2 if current_total == observed_total else 0)
+                        score -= abs(observed_total - total)
+                        possibilities.append((score, -abs(observed_total - total), pos, observed_total))
+        if not possibilities:
+            return None
+        _, _, position, total = max(possibilities)
+        return {"position": position, "total": total, "raw": text}
     match = READING.search(text.replace(" ", ""))
     if not match:
         return None
@@ -79,9 +128,9 @@ def uploader_score(text, uploader):
     return SequenceMatcher(None, a[:30], b[:30]).ratio()
 
 
-def parse_items(items):
+def parse_items(items, candidate_totals=None):
     strings = [item["text"].strip() for item in items if item.get("text")]
-    readings = [r for text in strings if (r := parse_reading(text))]
+    readings = [r for text in strings if (r := parse_reading(text, candidate_totals))]
     speeds = [float(m.group(1)) for text in strings for m in SPEED.finditer(text)]
     bvs = [value for text in strings if (value := normalize_bv(text))]
     clocks = [parse_clock(item["text"]) for item in items
@@ -99,7 +148,7 @@ def parse_items(items):
                 views.append(numbers[-1].strip())
     speed = speeds[0] if len(set(speeds)) == 1 else None  # Ignore an open speed menu.
     if readings:
-        reading_boxes = [item for item in items if parse_reading(item.get("text", ""))]
+        reading_boxes = [item for item in items if parse_reading(item.get("text", ""), candidate_totals)]
         page = "竖屏详情页" if any(box.get("y", 1) < .42 for box in reading_boxes) else "横屏播放器"
     elif any("搜索" in s for s in strings):
         page = "搜索结果页"
