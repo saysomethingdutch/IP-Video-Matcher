@@ -6,6 +6,7 @@ from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 from functools import lru_cache
 import hashlib
+import io
 import json
 import math
 from pathlib import Path
@@ -15,9 +16,9 @@ import subprocess
 import tempfile
 import time
 
-from PIL import Image
+from PIL import Image, ImageChops, ImageOps, ImageStat
 
-from .parse import edit_distance, parse_items, title_score, uploader_score
+from .parse import edit_distance, parse_items, parse_reading, title_score, uploader_score
 from .workbook import read_qsjx, read_zhuyu
 
 REPO = Path(__file__).resolve().parents[2]
@@ -156,8 +157,29 @@ def screenshot_ocr(paths, case, cache_dir):
 
 def observations(records, candidate_totals=None):
     result = []
+    selected_speed = None
+    speed_source = None
+    speed_at = float("-inf")
+    last_bvs = set()
     for record in records:
         item = {**record, **parse_items(record["items"], candidate_totals)}
+        observed_bvs = set(item["bvs"])
+        if observed_bvs and last_bvs and not observed_bvs & last_bvs:
+            selected_speed = speed_source = None
+        if observed_bvs:
+            last_bvs = observed_bvs
+        if item["speed_menu"] or item["page"] == "搜索结果页":
+            selected_speed = speed_source = None
+        elif item["speed_cue"] in ("central_confirmation", "player_button"):
+            selected_speed = item["speed"]
+            speed_source = record["frame"]
+            speed_at = record["t"]
+        if selected_speed is not None and record["t"] - speed_at <= 120:
+            item["speed"] = selected_speed
+            item["speed_source_frame"] = speed_source
+        else:
+            item["speed"] = None
+            item["speed_source_frame"] = None
         if any("用" in text and "M" in text and "G" in text for text in item["texts"]):
             item["readings"] = []  # File manager playback previews are not the accused video.
         # Long strings near the page heading are plausible titles, not subtitles.
@@ -166,6 +188,114 @@ def observations(records, candidate_totals=None):
                           and not re.search(r"\d\d[:;]\d\d\s*[/7]", part["text"])]
         result.append(item)
     return result
+
+
+def resolve_nearby_identity_readings(obs, rows):
+    """Resolve /MM beside a full readout when local BV/title confirms its row."""
+    def same_title_identity(observed, expected):
+        if title_score(observed, expected) < .82:
+            return False
+        observed_ep = re.search(r"EP[.．:]?\s*(\d+)", observed, re.I)
+        expected_ep = re.search(r"EP[.．:]?\s*(\d+)", expected, re.I)
+        if observed_ep and expected_ep and observed_ep.group(1) != expected_ep.group(1):
+            return False
+        observed_part = re.search(r"(?<!\d)[12]\s*/\s*2(?!\d)", observed)
+        expected_part = re.search(r"(?<!\d)[12]\s*/\s*2(?!\d)", expected)
+        return not (observed_part and expected_part and observed_part.group() != expected_part.group())
+
+    by_second = defaultdict(list)
+    for frame in obs:
+        by_second[round(frame["t"])].append(frame)
+    adopted = 0
+    for frame in obs:
+        if frame["readings"] or not frame["reading_raw_candidates"]:
+            continue
+        t = round(frame["t"])
+        near = [other for second in range(t - 15, t + 16)
+                for other in by_second.get(second, [])]
+        full = {reading["total"] for other in near if abs(other["t"] - frame["t"]) <= 5
+                for reading in other["readings"] if not reading.get("truncated_total")}
+        choices = []
+        for total in full:
+            matching = [row for row in rows if row["duration"] is not None
+                        and abs(row["duration"] - total) <= 1]
+            for row in matching:
+                identity = any((row["bv"] and row["bv"] in other["bvs"]) or
+                               any(same_title_identity(title, row["title"]) for title in other["titles"])
+                               for other in near)
+                if not identity:
+                    continue
+                for raw in frame["reading_raw_candidates"]:
+                    reading = parse_reading(raw, {r["duration"] for r in rows}, total)
+                    if reading and reading.get("truncated_total"):
+                        choices.append(reading)
+        unique = {(reading["position"], reading["total"]): reading for reading in choices}
+        if len(unique) == 1:
+            frame["readings"].append(next(iter(unique.values())))
+            adopted += 1
+    return adopted
+
+
+def resolve_truncated_readings(obs, rows, linked):
+    """Use a BV/title-confirmed preliminary session to disambiguate /MM OCR."""
+    by_id = {row["row_id"]: row for row in rows}
+    confirmed = []
+    for row_id, (session, basis, _) in linked.items():
+        if row_id not in by_id or ("BV" not in basis and "标题" not in basis):
+            continue
+        row = by_id[row_id]
+        if row["video"] != session["video"] or row["duration"] is None:
+            continue
+        confirmed.append((session, row))
+    if not confirmed:
+        return 0
+    totals = {row["duration"] for row in rows if row["duration"] is not None}
+    by_second = defaultdict(list)
+    for item in obs:
+        by_second[round(item["t"])].append(item)
+    adopted = 0
+    for frame in obs:
+        if frame["readings"] or not frame["reading_raw_candidates"]:
+            continue
+        frame_part = next((match.group().replace(" ", "") for text in frame["texts"]
+                           if (match := re.search(r"(?<!\d)[12]\s*/\s*2(?!\d)", text))), None)
+        choices = []
+        for session, row in confirmed:
+            row_part_match = re.search(r"(?<!\d)[12]\s*/\s*2(?!\d)", row["title"])
+            if frame_part and row_part_match and frame_part != row_part_match.group().replace(" ", ""):
+                continue
+            start, end, t = session["start"], session["end"], frame["t"]
+            distance = max(start - t, t - end, 0)
+            if distance > 120:
+                continue
+            local_full = {reading["total"] for second in range(round(t) - 5, round(t) + 6)
+                          for other in by_second.get(second, [])
+                          for reading in other["readings"] if not reading.get("truncated_total")}
+            if local_full and row["duration"] not in local_full:
+                continue
+            if distance:
+                edge = start if t < start else end
+                between = [other for other in obs if min(t, edge) < other["t"] < max(t, edge)]
+                if any((other["bvs"] and row["bv"] and
+                         all(edit_distance(bv, row["bv"]) > 1 for bv in other["bvs"]))
+                       or other["page"] == "搜索结果页"
+                       or any("推荐视频" in text for text in other["texts"]) for other in between):
+                    continue
+            for raw in frame["reading_raw_candidates"]:
+                reading = parse_reading(raw, totals, row["duration"])
+                if reading and reading.get("truncated_total"):
+                    anchor = min(abs(t - item["t"]) for item in session["readings"])
+                    choices.append((distance, anchor, session, row, reading))
+        choices.sort(key=lambda item: (item[0], item[1]))
+        if not choices:
+            continue
+        if (len(choices) > 1 and choices[1][3]["row_id"] != choices[0][3]["row_id"]
+                and choices[1][0] - choices[0][0] <= 5
+                and choices[1][1] - choices[0][1] <= 5):
+            continue
+        frame["readings"].append(choices[0][4])
+        adopted += 1
+    return adopted
 
 
 def clock_offset(obs):
@@ -204,9 +334,14 @@ def build_sessions(obs, fps, video):
         if not valid:
             continue
         reading = max(valid, key=lambda r: r["total"])
+        part = next((match.group() for text in frame["texts"]
+                     if (match := re.search(r"(?<!\d)[12]\s*/\s*2(?!\d)", text))), None)
         readings.append({"t": frame["t"], "position": reading["position"],
                          "total": reading["total"], "raw": reading["raw"],
-                         "speed": frame["speed"], "frame": frame["frame"]})
+                         "part_marker": part,
+                         "truncated_total": reading.get("truncated_total", False),
+                         "speed": frame["speed"], "speed_source_frame": frame.get("speed_source_frame"),
+                         "frame": frame["frame"]})
     # A one or two frame duration switch surrounded by the same duration is
     # normally OCR noise, not a second video page.
     runs = []
@@ -225,7 +360,10 @@ def build_sessions(obs, fps, video):
         if group:
             last = group[-1]
             gap = reading["t"] - last["t"]
-            changed = abs(reading["total"] - last["total"]) > 2
+            changed = (abs(reading["total"] - last["total"]) > 2 or
+                       bool(reading.get("part_marker") and last.get("part_marker") and
+                            reading["part_marker"] != last["part_marker"] and
+                            reading["position"] <= 60 and last["position"] > 60))
             intervening = (frame for frame in obs if last["t"] < frame["t"] < reading["t"])
             between = list(intervening)
             search_streak = 0
@@ -313,7 +451,7 @@ def add_screenshots(sessions, screenshots):
         candidates = [s for s in sessions if s["start"] - 30 <= shot["t"] <= s["end"] + 30]
         if candidates:
             session = min(candidates, key=lambda s: abs(shot["t"] - (s["start"] + s["end"]) / 2))
-            if shot["bvs"]:
+            if shot["bvs"] and not any(old.get("path") == shot.get("path") for old in session["screenshots"]):
                 session["screenshots"].append(shot)
                 session["bvs"].update(shot["bvs"])
                 session["titles"].update(t for t in shot["texts"] if len(t) >= 8)
@@ -406,18 +544,56 @@ def match_sessions(sessions, rows):
     return linked, unmatched
 
 
-def playback(readings, total):
+@lru_cache(maxsize=512)
+def _video_patch(path, second):
+    result = subprocess.run(["ffmpeg", "-hide_banner", "-loglevel", "error", "-ss", str(second),
+                             "-i", str(path), "-frames:v", "1", "-f", "image2pipe", "-vcodec", "mjpeg", "-"],
+                            check=True, capture_output=True)
+    with Image.open(io.BytesIO(result.stdout)) as image:
+        width, height = image.size
+        box = (round(width * .24), round(height * .27), round(width * .72), round(height * .68))
+        return ImageOps.autocontrast(image.convert("L").crop(box).resize((150, 75)))
+
+
+def has_playback_evidence(obs, video_path, left, right):
+    """Require changing subtitles or changing video pixels before a forward seek."""
+    frames = [frame for frame in obs if left["t"] <= frame["t"] < right["t"]]
+    if any(frame["speed_menu"] or frame["page"] == "搜索结果页" or
+           any("推荐视频" in text for text in frame["texts"]) for frame in frames):
+        return False
+    captions = []
+    for frame in frames:
+        lines = tuple(item["text"].strip() for item in frame["items"]
+                      if .20 <= item.get("x", -1) <= .75 and .55 <= item.get("y", -1) <= .85
+                      and len(item.get("text", "").strip()) >= 5
+                      and not any(word in item["text"] for word in
+                                  ("发个友善", "弹幕", "关注", "选集", "自动", "播放")))
+        if lines:
+            captions.append(lines)
+    if len(set(captions)) >= 2:
+        return True
+    end = right["t"] - 1
+    if end <= left["t"]:
+        return False
+    times = [left["t"], end] if end - left["t"] <= 4 else [left["t"], (left["t"] + end) / 2, end]
+    patches = [_video_patch(str(video_path), round(t, 2)) for t in times]
+    return all(ImageStat.Stat(ImageChops.difference(a, b)).mean[0] >= 9
+               for a, b in zip(patches, patches[1:]))
+
+
+def playback(readings, total, seek_playback_evidence=None):
     if len(readings) < 2:
         return {"capture_seconds": None, "complete": None, "seeks": [], "pauses": [],
                 "replays": [], "max_position": max((r["position"] for r in readings), default=None),
                 "speed": None, "played_intervals": [], "inferred_segments": [],
-                "playback_map": [], "speed_conflict": False}
+                "playback_map": [], "speed_conflict": False,
+                "unsupported_gaps": [], "slope_evidence": None}
     speeds = [r["speed"] for r in readings if r["speed"]]
-    slopes = []
+    slope_pairs = []
     for i, a in enumerate(readings):
         for b in readings[i + 1:i + 7]:
             dt = b["t"] - a["t"]
-            if not 2 <= dt <= 10:
+            if not 2 <= dt <= 60:
                 continue
             between = readings[i + 1:readings.index(b)]
             points = [a, *between, b]
@@ -427,11 +603,24 @@ def playback(readings, total):
                 continue
             slope = (b["position"] - a["position"]) / dt
             if .35 <= slope <= 2.2:
-                slopes.append(slope)
-    median_slope = statistics.median(slopes) if slopes else None
+                # Prefer longer uninterrupted spans: one-second OCR readings
+                # quantize 1.5x playback to alternating one/two-second steps.
+                slope_pairs.append((slope, min(dt, 20), a, b))
+    if slope_pairs:
+        ordered = sorted(slope_pairs, key=lambda item: item[0])
+        half = sum(item[1] for item in ordered) / 2
+        running = 0
+        median_slope = ordered[-1][0]
+        for value, weight, _, _ in ordered:
+            running += weight
+            if running >= half:
+                median_slope = value
+                break
+    else:
+        median_slope = None
     inferred_speed = (min((.5, .75, 1, 1.25, 1.5, 2),
-                          key=lambda rate: abs(rate - median_slope)) if slopes else None)
-    count = sum(abs(slope - inferred_speed) <= .25 for slope in slopes) if inferred_speed else 0
+                          key=lambda rate: abs(rate - median_slope)) if slope_pairs else None)
+    count = sum(abs(slope - inferred_speed) <= .25 for slope, _, _, _ in slope_pairs) if inferred_speed else 0
     label = Counter(speeds).most_common(1)[0][0] if speeds else None
     speed = (label if label is not None and median_slope is not None
              and abs(median_slope - label) <= .2 else
@@ -443,7 +632,13 @@ def playback(readings, total):
         speed = min((.5, .75, 1, 1.25, 1.5, 2),
                     key=lambda rate: abs(rate - statistics.median(positive))) if positive else 1.0
     speed_conflict = bool(label is not None and count >= 3 and label != speed)
-    intervals, seeks, pauses, replays, inferred, mapping = [], [], [], [], [], []
+    comparable = sorted(slope_pairs, key=lambda pair: (abs(pair[0] - speed), -pair[1])) if speed else []
+    long_pairs = [pair for pair in comparable if pair[3]["t"] - pair[2]["t"] >= 10]
+    chosen = long_pairs[0] if long_pairs else comparable[0] if comparable else None
+    slope_evidence = ({"speed": round(chosen[0], 3), "frame_start": chosen[2]["frame"],
+                       "frame_end": chosen[3]["frame"],
+                       "span_seconds": chosen[3]["t"] - chosen[2]["t"]} if chosen else None)
+    intervals, seeks, pauses, replays, inferred, mapping, unsupported = [], [], [], [], [], [], []
     for left, right in zip(readings, readings[1:]):
         dt = right["t"] - left["t"]
         if dt <= 0:
@@ -454,13 +649,22 @@ def playback(readings, total):
         if delta < -4:
             event = "replay"
             replays.append({"at": right["t"], "from": left["position"], "to": right["position"]})
-            intervals.append((left["position"], min(total, left["position"] + min(dt, 1) * rate)))
-        elif delta - expected > 4:
+            if seek_playback_evidence is None or seek_playback_evidence.get((left["frame"], right["frame"])):
+                intervals.append((left["position"], min(total, left["position"] + rate * max(0, dt - 1))))
+            elif dt > 1:
+                unsupported.append({"start": left["t"], "end": right["t"]})
+        elif delta - expected > 3:
             event = "seek"
-            before = min(total, left["position"] + min(dt, 1) * rate)
+            supported = (seek_playback_evidence is None or
+                         seek_playback_evidence.get((left["frame"], right["frame"]), False))
+            before = left["position"] + (min(rate * max(0, dt - 1), delta) if supported else 0)
+            before = min(total, before)
             seeks.append({"at": right["t"], "from": round(before, 1), "to": right["position"],
                           "frame_before": left["frame"], "frame_after": right["frame"]})
-            intervals.append((left["position"], before))
+            if before > left["position"]:
+                intervals.append((left["position"], before))
+            elif dt > 1 and not supported:
+                unsupported.append({"start": left["t"], "end": right["t"]})
         elif delta < max(1, dt * 0.25) and dt >= 2:
             event = "pause"
             pauses.append({"start": left["t"], "end": right["t"]})
@@ -498,7 +702,8 @@ def playback(readings, total):
             "pauses": pauses, "replays": replays,
             "max_position": max(r["position"] for r in readings), "speed": speed,
             "played_intervals": merged, "inferred_segments": inferred,
-            "playback_map": mapping, "speed_conflict": speed_conflict}
+            "playback_map": mapping, "speed_conflict": speed_conflict,
+            "unsupported_gaps": unsupported, "slope_evidence": slope_evidence}
 
 
 def evidence_image(video_path, t, destination, temp_frames=None, fps=1):
@@ -525,8 +730,9 @@ def evidence_image(video_path, t, destination, temp_frames=None, fps=1):
         image.convert("RGB").save(destination, "JPEG", quality=80)
 
 
-def build_rows(rows, linked, output_dir, video_paths, temp_frames=None, fps=1):
+def build_rows(rows, linked, output_dir, video_paths, temp_frames=None, fps=1, video_obs=None):
     ledger = []
+    playback_cache = {}
     for row in rows:
         session, basis, confidence = linked.get(row["row_id"], (None, "", "none"))
         record = {"row_id": row["row_id"], "video": row["video"], "plaintiff": row,
@@ -536,9 +742,45 @@ def build_rows(rows, linked, output_dir, video_paths, temp_frames=None, fps=1):
                                   "source": "OCR读数/截图" if session else None},
                   "flags": [], "evidence": []}
         if session:
-            result = playback(session["readings"], session["total"])
+            if session["id"] not in playback_cache:
+                readings = session["readings"]
+                evidence = {}
+                if video_obs:
+                    preliminary = playback(readings, session["total"])
+                    event_pairs = {(item["frame_start"], item["frame_end"])
+                                   for item in preliminary["playback_map"]
+                                   if item["event"] in ("seek", "replay")}
+                    for left, right in zip(readings, readings[1:]):
+                        if (left["frame"], right["frame"]) in event_pairs and right["t"] - left["t"] > 1:
+                            evidence[(left["frame"], right["frame"])] = has_playback_evidence(
+                                video_obs[row["video"]], video_paths[row["video"]], left, right)
+                playback_cache[session["id"]] = playback(readings, session["total"], evidence)
+            result = playback_cache[session["id"]]
             record.update({"video_start": session["start"], "video_end": session["end"],
                            "video_duration": session["total"], **result})
+            nearby_obs = [frame for frame in video_obs.get(row["video"], [])
+                          if session["start"] <= frame["t"] <= session["end"]] if video_obs else []
+            candidates = [frame for frame in nearby_obs if frame["reading_candidate"]]
+            failures = sum(not frame["readings"] for frame in candidates)
+            record["reading_parse_failure_ratio"] = round(failures / len(candidates), 3) if candidates else None
+            record["reading_candidate_frames"] = len(candidates)
+            record["reading_failed_frames"] = failures
+            if candidates and failures / len(candidates) > .3:
+                record["flags"].append("读数解析失败超过30%")
+            if result["unsupported_gaps"]:
+                record["flags"].append("跳播前缺少播放证据；未计入时长")
+            direct = next((r["speed_source_frame"] for r in session["readings"]
+                           if r.get("speed") == result["speed"] and r.get("speed_source_frame")), None)
+            slope = result["slope_evidence"]
+            reason_parts = []
+            if direct:
+                reason_parts.append(f"{direct} 的播放器倍速提示或按钮")
+            if slope:
+                reason_parts.append(f"{slope['frame_start']} 至 {slope['frame_end']} 的 {slope['span_seconds']:g} 秒连续读数斜率 {slope['speed']:g}")
+            record["speed_reason"] = (f"依据{'及'.join(reason_parts)}，判定为 {result['speed']:g} 倍。"
+                                      if result["speed"] in (.5, .75) and reason_parts else
+                                      f"依据 {session['readings'][0]['frame']} 至 {session['readings'][-1]['frame']} 的读数估计为 {result['speed']:g} 倍，需人工复核。"
+                                      if result["speed"] in (.5, .75) else None)
             record["observed_bv"] = min(session["bvs"],
                                         key=lambda bv: edit_distance(bv, row["bv"])) if session["bvs"] else None
             observed_title = max(session["titles"],
@@ -669,6 +911,9 @@ def build_rows(rows, linked, output_dir, video_paths, temp_frames=None, fps=1):
                            "pauses": [], "replays": [], "max_position": None, "speed": None,
                            "played_intervals": [], "inferred_segments": [], "screenshot": None,
                            "playback_map": [],
+                           "reading_parse_failure_ratio": None,
+                           "reading_candidate_frames": 0, "reading_failed_frames": 0,
+                           "speed_reason": None, "unsupported_gaps": [], "slope_evidence": None,
                            "views": None, "parts": [], "published": None, "sources": {},
                            "readings": [], "observed_bv": None, "observed_title": None,
                            "observed_uploader": None, "page_types": {}})
@@ -779,6 +1024,8 @@ def quality_audit(ledger, video_obs):
     overlaps = sum(a[0] == b[0] and max(a[1], b[1]) < min(a[2], b[2])
                    for i, a in enumerate(periods) for b in periods[i + 1:])
     return {"truncation_audit_rows": truncations,
+            "truncated_total_readings_adopted": sum(r.get("truncated_total", False)
+                for row in unique.values() for r in row["readings"]),
             "speed_unknown_rows": sum(row["session_id"] is not None and row["speed"] is None
                                       for row in ledger),
             "unlinked_rows_without_speed": sum(row["session_id"] is None and row["speed"] is None
