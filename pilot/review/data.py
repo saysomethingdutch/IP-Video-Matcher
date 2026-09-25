@@ -201,10 +201,13 @@ class ReviewStore:
         ledger = self.rows[rid]
         content = load_json(self.case / "content" / f"{rid}.json") or {}
         semantic = load_json(self.case / "semantic" / f"{rid}.json") or {}
+        visual = load_json(self.case.parent / "vlm" / "full" / rid / "result.json") or {}
         semantic_flags = semantic.get("flags") or []
         if isinstance(semantic_flags, dict):
             semantic_flags = [{"reason": f"{key}：{value}"} for key, value in semantic_flags.items()]
         raw = list(ledger.get("flags") or []) + list(semantic_flags)
+        raw.extend({"level": "yellow", "reason": flag} for flag in visual.get("flags", [])
+                   if isinstance(flag, str) and flag.startswith("画面比例待核"))
         if content.get("verdict") in ("CONTRADICTED", "UNVERIFIED", "CLAIM_UNPARSEABLE"):
             raw.append("字幕集数" + ("冲突" if content["verdict"] == "CONTRADICTED" else "未核实"))
         elif content.get("verdict") == "NARROWER":
