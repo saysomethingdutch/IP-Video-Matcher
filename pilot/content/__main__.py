@@ -39,6 +39,9 @@ def main(argv=None) -> None:
     print(f"{s['rows']} rows, {s['elapsed_s']} s -> {out}")
     print("verdicts: " + ", ".join(f"{k} {v}" for k, v in sorted(s["verdicts"].items())))
     print(f"caption events {s['events']}, source lines {s['source_lines']} ({s['source_share']:.1%})")
+    te = s["title_episode"]
+    print(f"title/logo episode: {te['rows']} rows ({te['agree']} agree, {te['disagree']} disagree with the claim); "
+          f"{te['unverified_rows']}/{te['unverified_total']} UNVERIFIED rows get a reference")
 
 
 if __name__ == "__main__":

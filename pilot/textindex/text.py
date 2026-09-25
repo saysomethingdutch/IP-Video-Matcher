@@ -4,6 +4,8 @@ from __future__ import annotations
 import re
 import unicodedata
 
+from .t2s import T2S
+
 # Han ideographs (incl. ext. A/B-G and U+3007 "〇"), ASCII digits and letters. Everything else is dropped.
 _KEEP = re.compile(r"[0-9a-z〇㐀-䶿一-鿿豈-﫿\U00020000-\U0003134f]+")
 
@@ -11,9 +13,10 @@ _KEEP = re.compile(r"[0-9a-z〇㐀-䶿一-鿿豈-﫿\U00020000-\U0003134f]+")
 def normalize(text: str) -> str:
     """Keep only Han characters, digits and Latin letters; drop punctuation and spaces.
 
-    NFKC folds full-width digits/letters to ASCII; letters are lower-cased.
+    NFKC folds full-width digits/letters to ASCII, traditional characters become simplified
+    (subtitles re-typed by uploaders are often traditional), letters are lower-cased.
     """
-    return "".join(_KEEP.findall(unicodedata.normalize("NFKC", text).lower()))
+    return "".join(_KEEP.findall(unicodedata.normalize("NFKC", text).translate(T2S).lower()))
 
 
 def edit_distance(a: str, b: str) -> int:

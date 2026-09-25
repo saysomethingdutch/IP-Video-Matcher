@@ -4,7 +4,7 @@ from __future__ import annotations
 import re
 from collections import defaultdict
 
-from pilot.textindex.search import Index, SubEntry
+from pilot.textindex.search import Index
 from pilot.textindex.sequence import AMBIGUOUS, LINKED, NO_MATCH, match_sequence
 from pilot.textindex.text import normalize
 
@@ -17,30 +17,7 @@ RECAP_WINDOW = (100.0, 160.0)   # seconds from file start; measured recap spans 
 MIN_LINES = 2                   # an episode is evidenced by >= 2 linked lines, or by one line that is
 LONG_LINE = 6                   # >= 6 characters with confidence >= 0.8
 LONG_CONF = 0.8
-
-
-PAIR_GAP_S = 2.0                # adjacent source lines at most this far apart may be shown as one caption
-PAIR_MIN_CHARS = 5
-
-
-def with_adjacent_pairs(index: Index) -> Index:
-    """The index plus "line + next line" entries of each episode.
-
-    Uploaders who re-subtitle a clip often put two source lines into one caption ("该不是" +
-    "要告自吧" -> "该不是要告自吧"); a pair entry lets that caption match. Pair ids are negative
-    (-(first line id)); OPENING_ENDING only if both lines carry it, place flags are merged.
-    """
-    entries = sorted(index.entries, key=lambda e: (e.episode, e.t_start))
-    pairs = []
-    for a, b in zip(entries, entries[1:]):
-        if a.episode != b.episode or b.t_start - a.t_end > PAIR_GAP_S or len(a.norm + b.norm) < PAIR_MIN_CHARS:
-            continue
-        flags = {f for f in a.flags + b.flags if f in ("RECAP", "BOUNDARY_REGION")}
-        if "OPENING_ENDING" in a.flags and "OPENING_ENDING" in b.flags:
-            flags.add("OPENING_ENDING")
-        pairs.append(SubEntry(-a.id, a.episode, a.t_start, b.t_end, f"{a.text} {b.text}", a.norm + b.norm,
-                              min(a.conf, b.conf), tuple(sorted(flags))))
-    return Index(index.entries + pairs)
+WEAK_SIM, WEAK_CHARS = 0.8, 5   # weak evidence (D-015): one candidate place, sim >= 0.8, >= 5 characters
 
 
 class Episodes:
@@ -52,7 +29,8 @@ class Episodes:
         self.missing = set(range(1, TOTAL_EPISODES + 1)) - self.present
         self.by_norm = defaultdict(list)
         for e in index.entries:
-            self.by_norm[e.norm].append(e)
+            if not e.parts:                     # single lines only; pair entries are for matching
+                self.by_norm[e.norm].append(e)
 
     def recap_origin(self, episode: int, t_source: float, norm: str):
         """D-011: a line in the recap window of episode N+1 belongs to episode N.
@@ -115,11 +93,16 @@ def _resolve_recap_pair(r: dict, episodes: Episodes) -> None:
              recap={"from_episode": copy["episode"], "from_t": copy["t_start"]})
 
 
+def is_lyric(r: dict) -> bool:
+    """Chanted / sung voice-over (textindex LYRIC): shown, never counted as episode evidence."""
+    return "LYRIC" in (r.get("flags") or ())
+
+
 def evidenced_episodes(links: list[dict]) -> list[dict]:
     """Episodes backed by >= 2 linked lines, or by one line with >= 6 characters and conf >= 0.8."""
     by_ep: dict[tuple[int, bool], list[dict]] = defaultdict(list)
     for r in links:
-        if r["status"] == LINKED:
+        if r["status"] == LINKED and not is_lyric(r):
             by_ep[(r["episode"], bool(r.get("suspected")))].append(r)
     out = []
     for (ep, suspected), rs in sorted(by_ep.items()):
@@ -134,17 +117,16 @@ def evidenced_episodes(links: list[dict]) -> list[dict]:
 
 
 def weak_leads(links: list[dict], evidence: list[dict]) -> list[dict]:
-    """Episodes seen below the evidence bar: linked lines that do not reach it, or ambiguous lines whose
-    candidates all lie in one episode. Reported for the reviewer; never used for the verdict."""
+    """Weak evidence (D-015): an undecided line with a single candidate place, similarity >= 0.8 and
+    >= 5 characters. Shown for the reviewer; never counted and never changes the verdict."""
     done = {e["episode"] for e in evidence}
     hits: dict[int, list[str]] = defaultdict(list)
     for r in links:
-        if r["status"] == LINKED and r["episode"] not in done and not r.get("suspected"):
-            hits[r["episode"]].append(f"{r['text']}→{r['source_text']}（{r['sim']}）")
-        elif r["status"] == AMBIGUOUS:
-            eps = {c["episode"] for c in r["candidates"]}
-            if len(eps) == 1 and (ep := eps.pop()) not in done:
-                hits[ep].append(f"{r['text']}→{r['candidates'][0]['text']}（{r['candidates'][0]['sim']}，未定）")
+        if r["status"] != AMBIGUOUS or len(r["candidates"]) != 1 or len(normalize(r["text"])) < WEAK_CHARS:
+            continue
+        c = r["candidates"][0]
+        if c["sim"] >= WEAK_SIM and c["episode"] not in done and "LYRIC" not in c.get("flags", ()):
+            hits[c["episode"]].append(f"{r['text']}→{c['text']}（{c['sim']:.2f}）")
     return [{"episode": ep, "lines": len(v), "examples": v[:3]} for ep, v in sorted(hits.items())]
 
 

@@ -9,6 +9,7 @@ from pilot.textindex.search import Index
 from pilot.textindex.text import normalize
 
 from . import evidence as ev
+from . import titles
 from .extract import HAN, Event, load_ocr, merge_events, row_lines, to_content
 
 MIN_EVENT_CHARS = 2       # a single character carries no evidence
@@ -75,17 +76,20 @@ def process_row(row: dict, frames: dict[int, list[dict]], index: Index, episodes
     if not row.get("video") or row.get("video_start") is None:
         result = ev.UNVERIFIED
         return {**base, "verdict": result, "statement": "未关联到录像会话，无法核验。", "evidenced_episodes": [],
-                "weak_episodes": [], "evidence": [], "events": [], "counts": {}, "dropped": {}}
+                "weak_episodes": [], "title_episode": None, "evidence": [], "events": [], "counts": {},
+                "dropped": {}}
 
     pmap, speed, duration = row.get("playback_map") or [], row.get("speed"), row.get("video_duration")
     rf = row_lines(frames, row)
-    lines = {}
-    for t, ls in rf.lines.items():
+    lines, playing = {}, []
+    for t in rf.player:
         c, _ = to_content(t, pmap, speed)
         if c is not None and duration and c >= duration - 0.5:
-            rf.dropped["视频结束后"] += len(ls)       # end screen / recommendations after the video ended
+            rf.dropped["视频结束后"] += len(rf.lines[t])   # end screen / recommendations after the video ended
             continue
-        lines[t] = ls
+        lines[t] = rf.lines[t]
+        playing.append(t)
+    title_ep = titles.title_episode(frames, playing, row.get("observed_title"), claim)
     events = [e for e in merge_events(lines)
               if len(e.best.norm) >= MIN_EVENT_CHARS and (len(e.lines) > 1 or e.conf >= MIN_SINGLE_CONF)]
 
@@ -110,7 +114,7 @@ def process_row(row: dict, frames: dict[int, list[dict]], index: Index, episodes
                 "status": r["status"]}
         if r["status"] == ev.LINKED:
             item.update(episode=r["episode"], t_source=r["t_source"], source_text=r["source_text"],
-                        sim=r["sim"], conf=r["conf"], suspected=bool(r.get("suspected")))
+                        sim=r["sim"], conf=r["conf"], suspected=bool(r.get("suspected")), lyric=ev.is_lyric(r))
             if r.get("recap"):
                 item["recap"] = r["recap"]
         elif r["status"] == ev.AMBIGUOUS:
@@ -131,24 +135,27 @@ def process_row(row: dict, frames: dict[int, list[dict]], index: Index, episodes
                  "episode": x["episode"], "t_source": x["t_source"], "text": x["text"],
                  "source_text": x["source_text"], "sim": x["sim"], "conf": x["conf"],
                  "suspected": x["suspected"], **({"recap": x["recap"]} if "recap" in x else {})}
-                for x in out_events if x["status"] == ev.LINKED]
+                for x in out_events if x["status"] == ev.LINKED and not x["lyric"]]
     counts = {"events": len(out_events),
-              "source_lines": sum(x["status"] == ev.LINKED for x in out_events),
+              "source_lines": sum(x["status"] == ev.LINKED and not x["lyric"] for x in out_events),
+              "lyric_lines": sum(x["status"] == ev.LINKED and x["lyric"] for x in out_events),
               "non_source_lines": sum(x["status"] == ev.NO_MATCH for x in out_events),
               "ambiguous_lines": sum(x["status"] == ev.AMBIGUOUS for x in out_events),
               "player_frames": len(rf.player)}
     weak = ev.weak_leads(links, found)
-    reason = ev.unverified_reason(out_events, claim, episodes.missing) if result == ev.UNVERIFIED else ""
-    return {**base, "verdict": result, "statement": ev.statement(found, claim_raw, claim, result, weak, reason),
-            "evidenced_episodes": found, "weak_episodes": weak, "evidence": evidence,
-            "events": out_events, "counts": counts, "dropped": dict(rf.dropped)}
+    text = ev.statement(found, claim_raw, claim, result, weak,
+                        ev.unverified_reason(out_events, claim, episodes.missing) if result == ev.UNVERIFIED else "")
+    if result == ev.UNVERIFIED and title_ep:
+        text += "参考：" + titles.describe(title_ep, claim_raw)
+    return {**base, "verdict": result, "statement": text, "evidenced_episodes": found, "weak_episodes": weak,
+            "title_episode": title_ep, "evidence": evidence, "events": out_events, "counts": counts,
+            "dropped": dict(rf.dropped)}
 
 
 def run(case_dir: Path, index_path: Path, ledger: Path | None = None, only: set[str] | None = None,
         log=print) -> list[dict]:
-    base_index = Index.load(index_path)
-    episodes = ev.Episodes(base_index)
-    index = ev.with_adjacent_pairs(base_index)
+    index = Index.load(index_path)          # includes adjacent-line pairs (textindex)
+    episodes = ev.Episodes(index)
     ledger = ledger or case_dir / "ledger.jsonl"
     rows = [json.loads(l) for l in ledger.read_text(encoding="utf-8").splitlines() if l.strip()]
     if only:

@@ -1,8 +1,9 @@
 import unittest
 
 from pilot.content import evidence as ev
+from pilot.content.titles import episode_numbers, title_episode
 from pilot.content.extract import Line, is_player_frame, is_ui, merge_events, row_lines, to_content
-from pilot.textindex.search import Index, SubEntry
+from pilot.textindex.search import Index, SubEntry, adjacent_pairs
 from pilot.textindex.text import normalize
 
 
@@ -60,6 +61,51 @@ def index_of(rows):
     return Index([SubEntry(n + 1, ep, t, t + 2, s, normalize(s), 1.0, ()) for n, (ep, t, s) in enumerate(rows)])
 
 
+class LyricAndWeakTest(unittest.TestCase):
+    def test_lyric_lines_are_not_evidence(self):
+        lyric = [dict(link(9, 266.0, "缘起缘灭", 1), flags=["LYRIC"]), dict(link(9, 280.0, "红尘一梦去无还", 2), flags=["LYRIC"])]
+        self.assertEqual(ev.evidenced_episodes(lyric), [])
+        self.assertEqual([e["episode"] for e in ev.evidenced_episodes(lyric + [link(9, 326.0, "你不是初空", 3),
+                                                                               link(9, 2198.5, "陆长空补上了", 4)])], [9])
+
+    def test_weak_evidence_is_a_single_candidate_line(self):
+        def amb(text, cands):
+            return {"status": ev.AMBIGUOUS, "text": text, "candidates": [
+                {"episode": ep, "t_start": 0.0, "sim": sim, "text": t, "flags": []} for ep, sim, t in cands]}
+        links = [amb("从教场回来", [(7, 0.8, "从校场回来")]),                    # counts
+                 amb("听见没有", [(6, 1.0, "听见没有"), (7, 1.0, "听见没有")]),   # two places
+                 amb("到底她", [(15, 0.8, "到底")])]                              # too short
+        self.assertEqual([(w["episode"], w["lines"]) for w in ev.weak_leads(links, [])], [(7, 1)])
+
+
+class TitleEpisodeTest(unittest.TestCase):
+    def test_parse(self):
+        self.assertEqual(episode_numbers("【七时吉祥】〔泰配〕EP.192/2 泰国"), [19])     # EP.19 + part 2/2
+        self.assertEqual(episode_numbers("【七时吉祥】〔泰配〕EP.12/2"), [1])
+        self.assertEqual(episode_numbers("EP.21 2/2"), [21])
+        self.assertEqual(episode_numbers("Somanunuvusisnun EP4"), [4])
+        self.assertEqual(episode_numbers("七时吉祥 第31集"), [31])
+        self.assertEqual(episode_numbers("38集全"), [])
+        self.assertEqual(episode_numbers("1-38集"), [])
+        self.assertEqual(episode_numbers("EP.302/"), [30])
+
+    def test_player_frames_win_over_the_ledger_title(self):
+        frames = {t: [item("EP.7", 0.8, 0.69), item("seven times", 0.4, 0.74)] for t in range(10)}
+        frames[20] = [item("【七时吉祥】（泰配）EP.28 1/2 泰国小哥reaction", 0.3, 0.7)]   # a detail page
+        te = title_episode(frames, list(range(10)), "【七时吉祥】（泰配）EP.28 1/2 泰国小器reaction..", {7})
+        self.assertEqual((te["episodes"], te["frames"], te["ledger_title"], te["agrees"]), ([7], {7: 10}, 28, True))
+        te = title_episode({}, [], "【七时吉祥】〔泰配〕EP.31 泰国小哥", {30})
+        self.assertEqual((te["episodes"], te["agrees"]), ([31], False))
+        self.assertIsNone(title_episode({}, [], "是谁看了七时吉祥之后其实极香", None))
+
+    def test_main_episode_decides_the_claim_check(self):
+        frames = {t: [item("EP21-2/2 泰国小哥", 0.1, 0.2)] for t in range(12)}
+        frames.update({t: [item("EP.19", 0.8, 0.7)] for t in range(12, 16)})     # the next video, 4 frames
+        frames.update({t: [item("EP.2", 0.8, 0.7)] for t in range(16, 18)})      # 2 frames: spill-over, dropped
+        te = title_episode(frames, list(range(18)), None, {21})
+        self.assertEqual((te["episodes"], te["agrees"]), ([21, 19], True))
+
+
 class RecapTest(unittest.TestCase):
     """D-011: a line in the recap window of episode N+1 is recorded as episode N."""
 
@@ -88,7 +134,8 @@ class RecapTest(unittest.TestCase):
         self.assertEqual((out[0]["status"], out[0]["episode"]), (ev.LINKED, 3))
 
     def test_adjacent_pair_matches_a_merged_caption(self):
-        idx = ev.with_adjacent_pairs(index_of([(16, 863.0, "该不是"), (16, 864.5, "要告自吧"), (16, 900.0, "别的")]))
+        base = index_of([(16, 863.0, "该不是"), (16, 864.5, "要告自吧"), (16, 900.0, "别的")])
+        idx = Index(base.entries + adjacent_pairs(base.entries))
         best = idx.search("该不是要告自吧")[0]
         self.assertEqual((best.entry.episode, best.entry.t_start, best.sim), (16, 863.0, 1.0))
 

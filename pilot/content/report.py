@@ -10,13 +10,22 @@ from collections import Counter
 from pathlib import Path
 
 from . import evidence as ev
+from .titles import describe
 
 CSV_FIELDS = ["row_id", "video", "claim", "claim_status", "verdict", "evidenced_episodes", "weak_episodes",
-              "source_lines", "non_source_lines", "ambiguous_lines", "events", "statement"]
+              "title_episode", "source_lines", "lyric_lines", "non_source_lines", "ambiguous_lines", "events",
+              "statement"]
 
 
 def _eps(items: list[dict]) -> str:
     return "; ".join(f"{e.get('label', f'EP{e['episode']:02d}')}({e['lines']})" for e in items)
+
+
+def _title(te: dict | None) -> str:
+    if not te:
+        return ""
+    parts = [f"{ep}（{'、'.join(f'{k} {v}' for k, v in te['sources'].get(ep, {}).items())}）" for ep in te["episodes"]]
+    return "; ".join(parts) + ("" if te["agrees"] is None else ("；与声称一致" if te["agrees"] else "；与声称不一致"))
 
 
 def write_rows(results: list[dict], out_dir: Path) -> None:
@@ -31,7 +40,9 @@ def write_rows(results: list[dict], out_dir: Path) -> None:
             w.writerow({"row_id": r["row_id"], "video": r["video"], "claim": r["claim"]["raw"],
                         "claim_status": r["claim"]["status"], "verdict": r["verdict"],
                         "evidenced_episodes": _eps(r["evidenced_episodes"]), "weak_episodes": _eps(r["weak_episodes"]),
-                        "source_lines": c.get("source_lines", 0), "non_source_lines": c.get("non_source_lines", 0),
+                        "title_episode": _title(r.get("title_episode")),
+                        "source_lines": c.get("source_lines", 0), "lyric_lines": c.get("lyric_lines", 0),
+                        "non_source_lines": c.get("non_source_lines", 0),
                         "ambiguous_lines": c.get("ambiguous_lines", 0), "events": c.get("events", 0),
                         "statement": r["statement"]})
 
@@ -43,7 +54,14 @@ def summary(results: list[dict], meta: dict) -> dict:
     dropped = Counter()
     for r in results:
         dropped.update(r["dropped"])
+    unverified = [r for r in results if r["verdict"] == ev.UNVERIFIED]
+    titled = [r for r in results if r.get("title_episode")]
+    title = {"rows": len(titled), "unverified_rows": sum(1 for r in unverified if r.get("title_episode")),
+             "unverified_total": len(unverified),
+             "agree": sum(1 for r in titled if r["title_episode"]["agrees"] is True),
+             "disagree": sum(1 for r in titled if r["title_episode"]["agrees"] is False)}
     return {**meta, "rows": len(results), "verdicts": dict(Counter(r["verdict"] for r in results)),
+            "title_episode": title,
             "events": events, "source_lines": source,
             "source_share": round(source / events, 4) if events else 0.0,
             "non_source_lines": sum(r["counts"].get("non_source_lines", 0) for r in results),
@@ -56,7 +74,7 @@ STYLE = """<style>.captions{border-top:1px dashed #c9d3da;margin-top:14px;paddin
 .v-SUPPORTED{background:#2e7d4f}.v-NARROWER{background:#3b83a4}.v-CONTRADICTED{background:#b3432b}.v-CLAIM_UNPARSEABLE{background:#8a6d1d}
 .caplist{list-style:none;padding:0;margin:6px 0;font-size:13px}.caplist li{margin:2px 0;padding:2px 6px;border-left:4px solid #c9d3da}
 .caplist .src{border-color:#2f6fad;background:#eef4fb}.caplist .up{border-color:#d9822b;background:#fdf3e8}
-.caplist .amb{border-color:#9aa5b1;background:#f3f5f7}.caplist summary{cursor:pointer}.caplist .d{color:#627082;padding:2px 0 2px 16px}
+.caplist .amb{border-color:#9aa5b1;background:#f3f5f7}.caplist .lyric{border-color:#8fb3d9;background:#f6f9fc;color:#56708f}.caplist summary{cursor:pointer}.caplist .d{color:#627082;padding:2px 0 2px 16px}
 .legend span{margin-right:12px}</style>"""
 
 
@@ -71,11 +89,12 @@ def block(r: dict, ledger_name: str) -> str:
     for x in r["events"]:
         where = f"录像 {_t(x['rec_start'])}–{_t(x['rec_end'])} s · 被诉视频 {'约' if x['content_estimated'] else ''}{_t(x['content_start'])} s"
         if x["status"] == ev.LINKED:
-            cls = "src"
+            cls = "src lyric" if x.get("lyric") else "src"
             src_t = _t(x["t_source"]) + " s" if x["t_source"] is not None else "（缺集，无原剧秒）"
             label = f"EP{x['episode']:02d}{'（疑似）' if x.get('suspected') else ''}"
             detail = (f"{where} · 原剧 {label} {src_t} · 原剧字幕“{x['source_text']}” · 相似度 {x['sim']:.2f} · 置信度 {x['conf']:.2f}"
-                      + (f" · 前情命中 EP{x['recap']['from_episode']:02d} {_t(x['recap']['from_t'])} s，按 D-011 记为 {label}" if x.get("recap") else ""))
+                      + (f" · 前情命中 EP{x['recap']['from_episode']:02d} {_t(x['recap']['from_t'])} s，按 D-011 记为 {label}" if x.get("recap") else "")
+                      + (" · 歌词，不计入集数证据" if x.get("lyric") else ""))
         elif x["status"] == ev.AMBIGUOUS:
             cls = "amb"
             cands = "；".join(f"EP{k['episode']:02d} {_t(k['t_start'])} s（{k['sim']:.2f}）" for k in x.get("candidates", [])[:5])
@@ -87,11 +106,16 @@ def block(r: dict, ledger_name: str) -> str:
         items.append(f'<li class="{cls}"><details><summary>{html.escape(x["text"])}</summary>'
                      f'<div class="d">{html.escape(detail)}</div></details></li>')
     listing = f'<details><summary>逐句（{c.get("events", 0)} 条，点开看录像秒和原剧秒）</summary><ol class="caplist">{"".join(items)}</ol></details>' if items else ""
+    te = r.get("title_episode")
+    weak = "、".join(f"EP{w['episode']:02d}（{w['lines']} 句：{'；'.join(w['examples'])}）" for w in r.get("weak_episodes", []))
     return (f'<section class="captions"><h3>字幕与集数 <span class="verdict v-{r["verdict"]}">{r["verdict"]}</span></h3>'
             f'<p>{html.escape(r["statement"])}</p>'
             f'<p class="muted">原告声称 {html.escape(r["claim"]["raw"] or "（空）")} · 有证据的集数 {html.escape(eps)} · '
-            f'原剧台词 {c.get("source_lines", 0)} 句 · 非原剧文字 {c.get("non_source_lines", 0)} 句 · 待定 {c.get("ambiguous_lines", 0)} 句'
-            f' · 台账 {html.escape(ledger_name)}</p>{listing}</section>')
+            f'原剧台词 {c.get("source_lines", 0)} 句 · 歌词 {c.get("lyric_lines", 0)} 句 · 非原剧文字 {c.get("non_source_lines", 0)} 句'
+            f' · 待定 {c.get("ambiguous_lines", 0)} 句 · 台账 {html.escape(ledger_name)}</p>'
+            + (f'<p class="muted">弱证据（不计入）：{html.escape(weak)}</p>' if weak else "")
+            + (f'<p class="muted">标题/台标集数（TITLE_EPISODE，与台词证据分开，不改变结论）：{html.escape(describe(te, r["claim"]["raw"]))}</p>' if te else "")
+            + f'{listing}</section>')
 
 
 def write_pages(results: list[dict], case_dir: Path, out_dir: Path, ledger_name: str) -> list[str]:

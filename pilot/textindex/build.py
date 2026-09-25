@@ -11,7 +11,7 @@ from .merge import MERGE_VERSION, merge_frames
 
 
 def build(episodes_dir: Path, work_dir: Path, bin_dir: Path, boundaries_path: Path | None,
-          workers: int = 4, force: bool = False, log=print) -> dict:
+          workers: int = 4, force: bool = False, log=print, lyrics_path: Path | None = None) -> dict:
     t0 = time.monotonic()
     found = ocr.find_episodes(episodes_dir)
     if not found:
@@ -53,12 +53,15 @@ def build(episodes_dir: Path, work_dir: Path, bin_dir: Path, boundaries_path: Pa
         log(f"EP{ep:02d}: {len(entries)} entries")
 
     # 3) flags depend on all episodes, so they are recomputed every time (cheap)
-    store.recompute_flags(con)
+    lyrics_path = lyrics_path or store.LYRICS_DIR / f"{work_dir.name}.json"
+    lyric_ranges = store.load_lyric_ranges(lyrics_path)
+    store.recompute_flags(con, lyric_ranges)
     stats = store.compute_stats(con)
     stats = {
         "work_id": work_dir.name,
         "generated_at": datetime.now().isoformat(timespec="seconds"),
-        "params": {**ocr.ocr_params(), "merge_version": MERGE_VERSION, "ocr_workers": workers},
+        "params": {**ocr.ocr_params(), "merge_version": MERGE_VERSION, "ocr_workers": workers,
+                   "lyric_ranges": lyric_ranges},
         "last_build": {
             "wall_s": round(time.monotonic() - t0, 1),
             "ocr_wall_s": round(t_ocr, 1),
