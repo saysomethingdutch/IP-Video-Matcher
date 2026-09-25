@@ -68,13 +68,15 @@ def read_ocr_flags(case: Path, video: str) -> dict[int, dict]:
     return flags
 
 
-def candidates(row: dict, flags: dict[int, dict]) -> list[tuple[int, bool]]:
-    seeks = [float(event["at"]) for event in row.get("seeks", []) + row.get("replays", [])]
+def candidates(row: dict, flags: dict[int, dict]) -> list[tuple[float, bool]]:
+    seeks = [float(event["at"]) for key in ("seeks", "replays")
+             for event in (row.get(key) if isinstance(row.get(key), list) else [])]
     pauses = [(float(p["start"]), float(p["end"])) for p in row.get("pauses", [])]
     menus = {t for t, flag in flags.items() if flag["menu"]}
     plays = [seg for seg in row.get("playback_map", []) if seg.get("event") == "play"]
     if not plays:
         raise ValueError("台账无已播放区间")
+    needed = 8 if isinstance(row.get("capture_seconds"), (int, float)) and row["capture_seconds"] > 300 else 4
     for margin in (1.5, 0.2):
         found = {}
         for seg in plays:
@@ -88,7 +90,28 @@ def candidates(row: dict, flags: dict[int, dict]) -> list[tuple[int, bool]]:
                     continue
                 found[t] = flags.get(t, {}).get("detail_ui", False)
         clean = [(t, False) for t, ui in sorted(found.items()) if not ui]
-        needed = 8 if isinstance(row.get("capture_seconds"), (int, float)) and row["capture_seconds"] > 300 else 4
+        if len(clean) >= needed:
+            return clean
+        all_playable = [(t, ui) for t, ui in sorted(found.items())]
+        if len(all_playable) >= needed:
+            return all_playable
+    # Very short confirmed playback can still supply four distinct frames at
+    # subsecond positions without borrowing frames from an unplayed interval.
+    for margin in (0.2, 0.05):
+        found = {}
+        for seg in plays:
+            start, end = float(seg["video_start"]), float(seg["video_end"])
+            count = max(0, math.floor((end - start - 2 * margin) / 0.2) + 1)
+            for index in range(count):
+                t = round(start + margin + index * 0.2, 2)
+                if any(abs(t - seek) <= 2 for seek in seeks):
+                    continue
+                if any(a - 1 <= t <= b + 1 for a, b in pauses):
+                    continue
+                if any(abs(t - menu) <= 2 for menu in menus):
+                    continue
+                found[t] = flags.get(round(t), {}).get("detail_ui", False)
+        clean = [(t, False) for t, ui in sorted(found.items()) if not ui]
         if len(clean) >= needed:
             return clean
         all_playable = [(t, ui) for t, ui in sorted(found.items())]
@@ -97,7 +120,7 @@ def candidates(row: dict, flags: dict[int, dict]) -> list[tuple[int, bool]]:
     raise ValueError(f"播放区间中少于 {needed} 个避开跳转和倍速菜单的关键帧")
 
 
-def spread(items: list[tuple[int, bool]], count: int) -> list[tuple[int, bool]]:
+def spread(items: list[tuple[float, bool]], count: int) -> list[tuple[float, bool]]:
     if len(items) < count:
         raise ValueError(f"need {count} distinct frames; found {len(items)}")
     # Choose from cumulative playable seconds so separated playback intervals
@@ -105,7 +128,7 @@ def spread(items: list[tuple[int, bool]], count: int) -> list[tuple[int, bool]]:
     return [items[round((i + .5) * len(items) / count - .5)] for i in range(count)]
 
 
-def frame_times(row: dict, flags: dict[int, dict]) -> list[tuple[int, bool]]:
+def frame_times(row: dict, flags: dict[int, dict]) -> list[tuple[float, bool]]:
     items = candidates(row, flags)
     long_video = isinstance(row.get("capture_seconds"), (int, float)) and row["capture_seconds"] > 300
     if not long_video:
@@ -114,7 +137,7 @@ def frame_times(row: dict, flags: dict[int, dict]) -> list[tuple[int, bool]]:
     return spread(items[:midpoint], 4) + spread(items[midpoint:], 4)
 
 
-def video_frame(video_path: Path, second: int) -> Image.Image:
+def video_frame(video_path: Path, second: float) -> Image.Image:
     with tempfile.NamedTemporaryFile(suffix=".jpg", delete=False) as handle:
         temp = Path(handle.name)
     try:
@@ -188,7 +211,10 @@ def process(row: dict, case: Path, video_dir: Path, flags: dict[int, dict]) -> d
         result["collage_path"] = str(paths[0].resolve())
         result["collages"] = [str(path.resolve()) for path in paths]
         result["ui_status"] = "含详情页小窗帧" if any(ui for _, ui in selected) else "已播放且避开菜单"
-        geo = geometry([(tile, False) for tile in tiles])
+        span = selected[-1][0] - selected[0][0]
+        geo = (geometry([(tile, False) for tile in tiles]) if span >= 3 else
+               {"ratio": "不确定", "layout": "不确定", "raw_ratio": None,
+                "method": "short_playback_under_three_seconds"})
         result["geometry"] = geo
         result["geometry_ratio"] = geo["ratio"]
         descriptions = []
@@ -213,6 +239,8 @@ def process(row: dict, case: Path, video_dir: Path, flags: dict[int, dict]) -> d
         warnings = ratio_flags + (["描述自相矛盾：" + ",".join(contradictions)] if contradictions else [])
         if any(ui for _, ui in selected):
             warnings.append("部分关键帧取自详情页播放器小窗")
+        if span < 3:
+            warnings.append("已播放画面跨度不足 3 秒，几何比例不确定")
         result["flags"] = warnings
         for field in FIELDS:
             result[field] = json.dumps(mapped[field], ensure_ascii=False) if isinstance(mapped[field], list) else mapped[field]
