@@ -30,6 +30,42 @@ def _csv(path, rows, columns):
         writer.writerows(rows)
 
 
+def write_r2_changes(output, ledger):
+    baseline = output / "ledger_r1_baseline.jsonl"
+    if not baseline.exists():
+        return 0
+    previous = {str(row["row_id"]): row for row in
+                (json.loads(line) for line in baseline.read_text().splitlines())}
+    changes = []
+    for row in ledger:
+        old = previous.get(str(row["row_id"]))
+        if not old:
+            continue
+        before, after = old.get("capture_seconds"), row.get("capture_seconds")
+        if not isinstance(after, (float, int)) or (isinstance(before, (float, int))
+                                                   and abs(after - before) <= 10):
+            continue
+        reasons = []
+        if any(reading.get("truncated_total") for reading in row["readings"]):
+            reasons.append("采用截断总长读数")
+        if old.get("speed") != row.get("speed"):
+            reasons.append("倍速复核")
+        if old.get("session_id") != row.get("session_id"):
+            reasons.append("会话关联或边界更新")
+        if old.get("seeks") != row.get("seeks"):
+            reasons.append("跳播前播放区间重算")
+        if row.get("unsupported_gaps"):
+            reasons.append("缺播放证据区间不计时")
+        changes.append({"总编号": row["row_id"], "录像": row["video"],
+                        "R1取证时长(秒)": before if isinstance(before, (float, int)) else "未知",
+                        "R2取证时长(秒)": after,
+                        "变化(秒)": round(after - before, 1) if isinstance(before, (float, int)) else "新增",
+                        "原因": "；".join(reasons) or "有效读数及连续播放区间重算"})
+    _csv(output / "r2_changes.csv", changes,
+         ["总编号", "录像", "R1取证时长(秒)", "R2取证时长(秒)", "变化(秒)", "原因"])
+    return len(changes)
+
+
 def write_outputs(output, ledger, unmatched, videos, durations, elapsed, frames, case_id, fps, audit=None):
     audit = audit or {}
     output.mkdir(parents=True, exist_ok=True)
@@ -51,6 +87,8 @@ def write_outputs(output, ledger, unmatched, videos, durations, elapsed, frames,
                      "跳播区间": ("未知" if "无播放器读数，需复核" in item["flags"] else
                                   "; ".join(f"{_clock(s['from'])}→{_clock(s['to'])}" for s in item["seeks"])),
                      "最大播放位置": _clock(item["max_position"]), "倍速": item["speed"] if item["speed"] is not None else "未知",
+                     "倍速依据": item.get("speed_reason") or "",
+                     "读数解析失败占比": item.get("reading_parse_failure_ratio") if item.get("reading_parse_failure_ratio") is not None else "未知",
                      "播放量": item["views"] or "", "分P/合集": "; ".join(item["parts"]),
                      "发布日期": item["published"] or "", "截图": item["screenshot"]["path"] if item["screenshot"] else "",
                      "关联依据": item["association"]["basis"], "置信度": item["association"]["confidence"],
@@ -111,6 +149,7 @@ def write_page(path, video, rows, duration, fps, audit=None):
             ("取证时长", "未知" if row["capture_seconds"] is None else _clock(row["capture_seconds"])),
             ("完整播放", "未知" if row["complete"] is None else "是" if row["complete"] else "否"),
             ("倍速", str(row["speed"] if row["speed"] is not None else "未知")),
+            ("读数解析失败占比", str(row.get("reading_parse_failure_ratio") if row.get("reading_parse_failure_ratio") is not None else "未知")),
             ("最大播放位置", _clock(row["max_position"])),
             ("关联", f"{escape(row['association']['basis'])} / {row['association']['confidence']}"),
             ("播放量", escape(str(row["views"] or "—"))),
@@ -126,7 +165,7 @@ def write_page(path, video, rows, duration, fps, audit=None):
         flags = "; ".join(row["flags"]) or "无"
         source_frames = {s["frame"]: s.get("evidence_frame") for s in row.get("sources", {}).get("capture_seconds", [])}
         reading_table = "".join(_reading_row(r, source_frames) for r in row.get("readings", []))
-        cards.append(f'<article id="r{ident}"><h2>#{ident} {title}</h2><p class="muted">BV {escape(row["plaintiff"]["bv"])} · 会话 {escape(str(row["session_id"] or "—"))} · 同BV行 {escape(", ".join(row["duplicate_bv_rows"])) or "—"}（{escape(row["same_session_status"])}）</p><div class="grid">{grid}</div><p><b>跳播</b> {escape(seeks)}　<b>问题</b> <span class="flag">{escape(flags)}</span></p><div class="images">{images}</div><details><summary>完整读数表（{len(row.get("readings", []))} 条）</summary><div class="readings"><table><tr><th>录像时间</th><th>播放器读数</th><th>倍速</th><th>帧</th><th>证据图</th></tr>{reading_table}</table></div></details></article>')
+        cards.append(f'<article id="r{ident}"><h2>#{ident} {title}</h2><p class="muted">BV {escape(row["plaintiff"]["bv"])} · 会话 {escape(str(row["session_id"] or "—"))} · 同BV行 {escape(", ".join(row["duplicate_bv_rows"])) or "—"}（{escape(row["same_session_status"])}）</p><div class="grid">{grid}</div><p><b>跳播</b> {escape(seeks)}　<b>问题</b> <span class="flag">{escape(flags)}</span></p><p>{escape(row.get("speed_reason") or "")}</p><div class="images">{images}</div><details><summary>完整读数表（{len(row.get("readings", []))} 条）</summary><div class="readings"><table><tr><th>录像时间</th><th>播放器读数</th><th>倍速</th><th>帧</th><th>证据图</th></tr>{reading_table}</table></div></details></article>')
     audit_line = (f'截断审计 {audit.get("truncation_audit_rows", "—")} 行 · '
                   f'倍速未知 {audit.get("speed_unknown_rows", "—")} 行（另有未关联 '
                   f'{audit.get("unlinked_rows_without_speed", "—")} 行） · '
