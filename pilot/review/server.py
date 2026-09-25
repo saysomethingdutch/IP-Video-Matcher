@@ -74,7 +74,9 @@ def serve(case: Path, port: int = 8765):
                 if rid not in store.rows:
                     return self.send_error(404)
                 folder = store.case.parent / "vlm" / "full" / rid
-                return self.send_json([f"/vlm/{rid}/{p.name}" for p in sorted(folder.iterdir()) if p.suffix.lower() in (".jpg", ".jpeg", ".png", ".webp")] if folder.is_dir() else [])
+                return self.send_json([f"/vlm/{rid}/{p.name}" for p in sorted(folder.iterdir())
+                                       if p.name.startswith("collage_") and p.suffix.lower() in (".jpg", ".jpeg", ".png", ".webp")]
+                                      if folder.is_dir() else [])
             self.send_error(404)
 
         def do_POST(self):
