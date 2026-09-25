@@ -75,6 +75,11 @@ class FieldTest(unittest.TestCase):
         ab, flags = F.size_column(digest(visual={**vis, "rights_ratio_model": "约1"}))
         self.assertEqual(flags[0]["level"], "yellow")
         self.assertEqual(F.size_column(digest())[0]["value"], "未识别")
+        ab, flags = F.size_column(digest(visual={**vis, "rights_ratio_geometry": "不确定", "rights_ratio_model": "不确定"}))
+        self.assertEqual((ab["value"], flags[0]["level"]), ("未识别", "yellow"))
+        unsure = {**vis, "uploader_on_camera": "不确定", "layout": "全屏"}
+        z, flags = F.non_rights_column(digest(visual=unsure))
+        self.assertEqual((z["value"], flags[0]["level"]), ("未识别", "yellow"))   # not a plain "否"
 
 
 class MusicTest(unittest.TestCase):

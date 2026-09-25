@@ -135,9 +135,12 @@ def non_rights_column(d: dict) -> tuple[dict, list]:
         items.append(f"背景音乐（B站识别到{d['music_counted']}首，曲名未读到）")
     if d["music"]["value"] or d.get("music_counted"):
         basis.append(d["music"]["source"])
+    unsure = [name for name, key in (("真人出镜", "uploader_on_camera"), ("其他作品", "other_works"))
+              if vis and vis.get(key) == "不确定"]
+    flags = [flag("yellow", f"非权利作品：画面模型对{'、'.join(unsure)}判断不确定")] if unsure else []
     if items:
-        return col("是，存在" + "、".join(dict.fromkeys(items)), "画面事实/音乐标签", "；".join(basis)), []
-    return col("否" if vis else "未识别", "画面事实", "；".join(basis) or "无画面事实"), []
+        return col("是，存在" + "、".join(dict.fromkeys(items)), "画面事实/音乐标签", "；".join(basis)), flags
+    return col("否" if vis and not unsure else "未识别", "画面事实", "；".join(basis) or "无画面事实"), flags
 
 
 def occlusion_column(d: dict) -> tuple[dict, list]:
@@ -165,7 +168,11 @@ def size_column(d: dict) -> tuple[dict, list]:
     if not vis:
         return col("未识别", "画面事实", "无画面事实"), []
     geo, model = vis["rights_ratio_geometry"], vis["rights_ratio_model"]
-    ratio = geo or model
+    known = [r for r in (geo, model) if r and r != "不确定"]
+    if not known:
+        return (col("未识别", "画面事实（几何法+模型）", f"{vis['source']}；几何 {geo or '无'}，模型 {model or '无'}"),
+                [flag("yellow", "画面大小：几何法和模型都不确定")])
+    ratio = known[0]
     flags = [] if not geo or not model or geo == model else [flag("yellow", f"画面比例：几何法 {geo}，模型 {model}，不一致")]
     value = "否" if ratio in ("约1", "1", "全屏") else f"是，画面缩小为{ratio}"
     return col(value, "画面事实（几何法+模型）", f"{vis['source']}；几何 {geo}，模型 {model}"), flags
