@@ -118,7 +118,7 @@ def video_frame(video_path: Path, second: int) -> Image.Image:
     with tempfile.NamedTemporaryFile(suffix=".jpg", delete=False) as handle:
         temp = Path(handle.name)
     try:
-        subprocess.run(["ffmpeg", "-hide_banner", "-loglevel", "error", "-y", "-ss", str(second),
+        subprocess.run(["ffmpeg", "-nostdin", "-hide_banner", "-loglevel", "error", "-y", "-ss", str(second),
                         "-i", str(video_path), "-frames:v", "1", "-q:v", "2", str(temp)],
                        check=True, timeout=90)
         with Image.open(temp) as frame:
@@ -285,8 +285,14 @@ def run_all(case: Path, selected: set[str] | None = None):
             continue
         existing = OUTPUT / "full" / rid / "result.json"
         if existing.exists():
-            print(f"skip {rid}: existing result", flush=True)
-            continue
+            try:
+                previous = json.loads(existing.read_text(encoding="utf-8"))
+            except (OSError, ValueError):
+                previous = {}
+            if previous.get("status") == "ok":
+                print(f"skip {rid}: existing result", flush=True)
+                continue
+            print(f"retry {rid}: previous result was not successful", flush=True)
         try:
             if row["video"] not in flags_by_video:
                 flags_by_video[row["video"]] = read_ocr_flags(case, row["video"])
