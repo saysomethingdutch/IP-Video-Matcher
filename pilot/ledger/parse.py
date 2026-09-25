@@ -6,7 +6,8 @@ import re
 
 BASE58 = set("123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz")
 READING = re.compile(r"(?<!\d)(\d{1,3})[:;](\d{2})\s*[/7]\s*(\d{1,3})[:;](\d{2})(?!\d)")
-SPEED = re.compile(r"(?<!\d)(0[.]5|0[.]75|1[.]0|1[.]25|1[.]5|2[.]0)\s*[Xx倍](?!\w)")
+TRUNCATED_READING = re.compile(r"(\d{1,3})[:;](\d{2})\s*[/7|]\s*(\d{1,2})\s*[:;]?")
+SPEED = re.compile(r"(?<!\d)(0[.]5|0[.]75|1[.]0|1[.]25|1[.]5|2[.]0)\s*[Xx×倍](?!\w)")
 BV = re.compile(r"(?<![A-Za-z0-9])[B8][Vv][1Il][A-Za-z0-9]{9}(?![A-Za-z0-9])")
 CLOCK = re.compile(r"(?:(上午|下午)\s*)?([01]?\d|2[0-3])[:;]([0-5]\d)")
 PART = re.compile(r"(?:合集\s*\d+\s*/\s*\d+|\bP\s*\d+\b|(?<!\d)\d{1,2}-\d{1,2}(?!\d))", re.I)
@@ -16,7 +17,7 @@ VIEWS = re.compile(r"(?:播放(?:量)?\s*[:：]?\s*([\d.]+\s*[万亿]?)|([\d.]+\
 
 def parse_reading(text, candidate_totals=None, current_total=None):
     if candidate_totals is not None:
-        normalized = text.translate(str.maketrans("①②③④⑤⑥⑦⑧⑨Ｏｏ／｜；．·－", "123456789Oo/|;.·-"))
+        normalized = text.translate(str.maketrans("①②③④⑤⑥⑦⑧⑨Ｏｏ／｜；．·－", "123456789Oo/|;.·-")).replace("：", ":")
         normalized = re.sub(r"(?<=\d)[Oo](?=\d|[:;.·\-/| 7])|(?<=[/:;.·\- 7])[Oo](?=\d)", "0", normalized)
         normalized = re.sub(r"^四(?=\d)", "", normalized)
         if re.search(r"[\u4e00-\u9fff]", normalized):
@@ -61,6 +62,17 @@ def parse_reading(text, candidate_totals=None, current_total=None):
                         score -= abs(observed_total - total)
                         possibilities.append((score, -abs(observed_total - total), pos, observed_total))
         if not possibilities:
+            partial = TRUNCATED_READING.fullmatch(normalized.strip())
+            if partial:
+                minute, second, total_minute = map(int, partial.groups())
+                position = minute * 60 + second
+                matching = {total for total in expected if total // 60 == total_minute}
+                if second < 60 and (len(matching) == 1 or
+                                    (current_total is not None and round(current_total) in matching)):
+                    total = round(current_total) if current_total is not None and round(current_total) in matching else matching.pop()
+                    if position <= total + 5:
+                        return {"position": position, "total": total, "raw": text,
+                                "truncated_total": True}
             return None
         _, _, position, total = max(possibilities)
         return {"position": position, "total": total, "raw": text}
@@ -130,8 +142,23 @@ def uploader_score(text, uploader):
 
 def parse_items(items, candidate_totals=None):
     strings = [item["text"].strip() for item in items if item.get("text")]
-    readings = [r for text in strings if (r := parse_reading(text, candidate_totals))]
-    speeds = [float(m.group(1)) for text in strings for m in SPEED.finditer(text)]
+    joined = []
+    for left in items:
+        if not re.search(r"\d{1,3}[:;]\d{2}\s*[/7|]\s*\d", left.get("text", "")):
+            continue
+        for right in items:
+            gap = right.get("x", -1) - left.get("x", 0) - left.get("w", 0)
+            if right is not left and 0 <= gap <= .025 and abs(right.get("y", -1) - left.get("y", 0)) <= .018 \
+                    and re.fullmatch(r"[:;：]?\d{1,2}", right.get("text", "").strip()):
+                joined.append(left["text"].strip() + right["text"].strip())
+    reading_raw_candidates = list(dict.fromkeys(text for text in joined + strings
+        if re.search(r"\d{1,3}[:;]\d{2}\s*[/7|]\s*\d", text)))
+    parsed = [r for text in joined + strings if (r := parse_reading(text, candidate_totals))]
+    if any(not r.get("truncated_total") for r in parsed):
+        parsed = [r for r in parsed if not r.get("truncated_total")]
+    readings = list({(r["position"], r["total"]): r for r in parsed}.values())
+    speed_hits = [(float(m.group(1)), item) for item in items for m in SPEED.finditer(item.get("text", ""))]
+    speeds = [speed for speed, _ in speed_hits]
     bvs = [value for text in strings if (value := normalize_bv(text))]
     clocks = [parse_clock(item["text"]) for item in items
               if item.get("y", 1) < 0.25 and parse_clock(item.get("text", "")) is not None]
@@ -146,7 +173,19 @@ def parse_items(items, candidate_totals=None):
             numbers = re.findall(r"\d+(?:\.\d+)?\s*[万亿]?", prefix)
             if numbers:
                 views.append(numbers[-1].strip())
-    speed = speeds[0] if len(set(speeds)) == 1 else None  # Ignore an open speed menu.
+    speed_menu = len(set(speeds)) >= 3
+    selected = speed_hits[0] if len(set(speeds)) == 1 else None
+    speed = selected[0] if selected and not speed_menu else None
+    speed_cue = None
+    if selected and not speed_menu:
+        box = selected[1]
+        x, y = box.get("x", -1), box.get("y", -1)
+        if .38 <= x <= .62 and .32 <= y <= .65:
+            speed_cue = "central_confirmation"
+        elif x >= .70 and y >= .74:
+            speed_cue = "player_button"
+    if speed_cue is None:
+        speed = None
     if readings:
         reading_boxes = [item for item in items if parse_reading(item.get("text", ""), candidate_totals)]
         page = "竖屏详情页" if any(box.get("y", 1) < .42 for box in reading_boxes) else "横屏播放器"
@@ -156,5 +195,9 @@ def parse_items(items, candidate_totals=None):
         page = "竖屏详情页"
     else:
         page = "其他"
-    return {"readings": readings, "speed": speed, "bvs": bvs, "clock": clocks[0] if clocks else None,
-            "parts": parts, "dates": dates, "views": views, "page": page, "texts": strings}
+    reading_candidate = bool(reading_raw_candidates)
+    return {"readings": readings, "speed": speed, "speed_cue": speed_cue,
+            "speed_menu": speed_menu, "bvs": bvs, "clock": clocks[0] if clocks else None,
+            "parts": parts, "dates": dates, "views": views, "page": page, "texts": strings,
+            "reading_candidate": reading_candidate,
+            "reading_raw_candidates": reading_raw_candidates}
