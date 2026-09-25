@@ -63,7 +63,7 @@ def serve(case: Path, port: int = 8765):
                     return self.send_error(403)
                 return self.send_file(asset)
             if path.startswith("/vlm/"):
-                root = (store.case.parent / "vlm" / "full").resolve()
+                root = (store.case.parent / "vlm").resolve()
                 asset = (root / path.removeprefix("/vlm/")).resolve()
                 if not asset.is_relative_to(root) or asset.suffix.lower() not in (".jpg", ".jpeg", ".png", ".webp"):
                     return self.send_error(403)
@@ -73,8 +73,12 @@ def serve(case: Path, port: int = 8765):
                 rid = match.group(1)
                 if rid not in store.rows:
                     return self.send_error(404)
-                folder = store.case.parent / "vlm" / "full" / rid
-                return self.send_json([f"/vlm/{rid}/{p.name}" for p in sorted(folder.iterdir())
+                relative = Path("r3") / rid
+                folder = store.case.parent / "vlm" / relative
+                if not folder.is_dir():
+                    relative = Path("full") / rid
+                    folder = store.case.parent / "vlm" / relative
+                return self.send_json([f"/vlm/{relative}/{p.name}" for p in sorted(folder.iterdir())
                                        if p.name.startswith("collage_") and p.suffix.lower() in (".jpg", ".jpeg", ".png", ".webp")]
                                       if folder.is_dir() else [])
             self.send_error(404)

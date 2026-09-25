@@ -201,13 +201,20 @@ class ReviewStore:
         ledger = self.rows[rid]
         content = load_json(self.case / "content" / f"{rid}.json") or {}
         semantic = load_json(self.case / "semantic" / f"{rid}.json") or {}
-        visual = load_json(self.case.parent / "vlm" / "full" / rid / "result.json") or {}
+        vlm = self.case.parent / "vlm"
+        visual = (load_json(vlm / "r3" / rid / "consensus.json")
+                  or load_json(vlm / "r3" / rid / "local.json")
+                  or load_json(vlm / "full" / rid / "result.json") or {})
         semantic_flags = semantic.get("flags") or []
         if isinstance(semantic_flags, dict):
             semantic_flags = [{"reason": f"{key}：{value}"} for key, value in semantic_flags.items()]
         raw = list(ledger.get("flags") or []) + list(semantic_flags)
         raw.extend({"level": "yellow", "reason": flag} for flag in visual.get("flags", [])
-                   if isinstance(flag, str) and flag.startswith("画面比例待核"))
+                   if isinstance(flag, str) and
+                   (flag.startswith("画面比例待核") or flag.startswith("画面布局与几何待核")
+                    or flag.startswith("布局／比例待核") or flag.startswith("云端判断失败")
+                    or flag.startswith("uploader_on_camera 待核") or flag.startswith("other_works 待核")
+                    or flag.startswith("遮挡物待核")))
         if content.get("verdict") in ("CONTRADICTED", "UNVERIFIED", "CLAIM_UNPARSEABLE"):
             raw.append("字幕集数" + ("冲突" if content["verdict"] == "CONTRADICTED" else "未核实"))
         elif content.get("verdict") == "NARROWER":
@@ -217,10 +224,17 @@ class ReviewStore:
         elif int(rid) > 1127:
             raw.append("无 ASR（D-020 中止）")
         result = []
+        positions = {}
         for flag in raw:
             reason = str(flag.get("reason") or flag.get("message") or flag) if isinstance(flag, dict) else str(flag)
             level = str(flag.get("level") or flag.get("severity") or "").lower() if isinstance(flag, dict) else ""
-            result.append({"level": "red" if level in ("red", "error", "high") or (not level and any(word in reason for word in RED_WORDS)) else "yellow", "reason": reason})
+            level = "red" if level in ("red", "error", "high") or (not level and any(word in reason for word in RED_WORDS)) else "yellow"
+            if reason in positions:
+                if level == "red":
+                    result[positions[reason]]["level"] = "red"
+                continue
+            positions[reason] = len(result)
+            result.append({"level": level, "reason": reason})
         return result
 
     def summary(self, rid: str) -> dict:
