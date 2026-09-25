@@ -76,12 +76,16 @@ def fmt_seconds(value) -> str:
     if value is None or value == "":
         return ""
     try:
-        seconds = int(round(float(value)))
+        if isinstance(value, str) and re.fullmatch(r"\d{1,3}:\d{1,2}(?::\d{1,2})?", value.strip()):
+            parts = [int(part) for part in value.strip().split(":")]
+            seconds = parts[0] * 60 + parts[1] if len(parts) == 2 else parts[0] * 3600 + parts[1] * 60 + parts[2]
+        else:
+            seconds = int(round(float(value)))
     except (TypeError, ValueError):
         return str(value)
     hours, rem = divmod(seconds, 3600)
     minutes, sec = divmod(rem, 60)
-    return f"{hours:02}:{minutes:02}:{sec:02}" if hours else f"{minutes:02}:{sec:02}"
+    return f"{hours:02}:{minutes:02}:{sec:02}"
 
 
 def load_json(path: Path):
@@ -188,6 +192,8 @@ class ReviewStore:
             if modified:
                 value, origin, provisional = edit, "所有者修改", False
                 basis = "所有者修改；修改前依据：" + basis
+            if index in (21, 24, 25):
+                value = fmt_seconds(value)
             fields.append({"index": index, "column": col_name(index), "name": self.headers[index - 1], "value": str(value) if value is not None else "", "source": origin, "basis": basis, "provisional": provisional, "modified": modified, "editable": index in OUTPUT_COLS})
         return fields
 
@@ -235,7 +241,7 @@ class ReviewStore:
         original = next((f["value"] for f in self._machine_fields(rid) if f["index"] == 32), "")
         match = REPEAT.search(original)
         repeat_main = match.group(1) if match else None
-        return {**self.summary(rid), "fields": self._machine_fields(rid), "flags": self._flags(rid), "evidence": evidence, "playback_map": ledger.get("playback_map") or [], "video_duration": ledger.get("video_duration"), "content": content, "asr": asr, "semantic": semantic, "claim": {"episode": ledger["plaintiff"].get("part_claimed"), "views": ledger["plaintiff"].get("views_claimed"), "video_type": ledger["plaintiff"].get("video_type")}, "repeat_main": repeat_main if repeat_main in self.rows else None}
+        return {**self.summary(rid), "fields": self._machine_fields(rid), "flags": self._flags(rid), "evidence": evidence, "playback_map": ledger.get("playback_map") or [], "video_duration": ledger.get("video_duration"), "content": content, "asr": asr, "semantic": semantic, "claim": {"bv": ledger["plaintiff"].get("bv") or ledger.get("observed_bv"), "episode": ledger["plaintiff"].get("part_claimed"), "views": ledger["plaintiff"].get("views_claimed"), "video_type": ledger["plaintiff"].get("video_type")}, "repeat_main": repeat_main if repeat_main in self.rows else None}
 
     def decide(self, rid: str, action: str, edits: dict | None = None) -> dict:
         if rid not in self.rows or action not in ("approve", "modify_approve", "hold"):
@@ -245,7 +251,8 @@ class ReviewStore:
             raise ValueError("only output columns may be edited")
         with self.lock:
             current = {str(f["index"]): f["value"] for f in self._machine_fields(rid)}
-            changed = {str(k): str(v) for k, v in edits.items() if str(v) != current[str(k)]}
+            normalized = {str(k): (fmt_seconds(v) if int(k) in (21, 24, 25) else str(v)) for k, v in edits.items()}
+            changed = {k: v for k, v in normalized.items() if v != current[k]}
             if action == "modify_approve" and not (changed or self.decisions[rid]["modified"]):
                 raise ValueError("no modified field")
             now = datetime.now(timezone.utc).isoformat()
