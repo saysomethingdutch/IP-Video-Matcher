@@ -172,9 +172,11 @@ def _features(d: dict, cls: dict) -> dict:
 
 def run(case_dir: Path, vlm_dir: Path, table: Table | None, rules: dict, backend: str = "local",
         only: set[str] | None = None, log=print, reuse_dir: Path | None = None, save_dir: Path | None = None,
-        workers: int = 1, visual_files: str = "full") -> list[dict]:
+        workers: int = 1, visual_files: str = "full", fields_only: bool = False) -> list[dict]:
     """Rows are saved to save_dir as they finish, so an interrupted run resumes with reuse_dir=save_dir.
-    Digests are built in order; the model calls of several rows may run at once (cloud backends)."""
+    Digests are built in order; the model calls of several rows may run at once (cloud backends).
+    fields_only: keep every saved classification even when its facts changed (no model call); the columns
+    are recomputed from the new facts and such rows get a yellow flag (e.g. new picture facts, D-030 ④)."""
     rows = {r["row_id"]: r for r in map(json.loads, (case_dir / "ledger.jsonl").read_text(encoding="utf-8").splitlines())}
     visual, visual_sources = load_visual(vlm_dir, visual_files)
     repeats = repeated_captures(rows)
@@ -202,9 +204,13 @@ def run(case_dir: Path, vlm_dir: Path, table: Table | None, rules: dict, backend
                  [s.get("text", "") for s in (asr or {}).get("segments", [])]
         row["_repeats"] = repeats
         saved = _load(reuse_dir / f"{rid}.json") if reuse_dir else None
-        reuse = saved if saved and saved.get("classification") and "classification_flags" in saved \
-            and all(c.get("valid_json") for c in saved.get("calls") or []) \
-            and facts_text(saved["digest"]) == facts_text(d) else None   # redo failed calls and rows whose facts changed
+        usable = saved and saved.get("classification") and "classification_flags" in saved
+        same = usable and facts_text(saved["digest"]) == facts_text(d)
+        reuse = saved if usable and (fields_only or same and all(c.get("valid_json") for c in saved.get("calls") or [])) \
+            else None                                          # redo failed calls and rows whose facts changed
+        if reuse and not same:
+            reuse = {**reuse, "classification_flags": [f for f in reuse["classification_flags"] if not f["reason"].startswith("事实已更新")]
+                     + [{"level": "yellow", "reason": "事实已更新（画面等），性质沿用上次判断，未重判"}]}
         jobs.append((row, d, corpus, reuse))
 
     def one(job) -> dict:

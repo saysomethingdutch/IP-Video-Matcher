@@ -27,6 +27,8 @@ def main(argv=None) -> None:
     r.add_argument("--rows", help="comma-separated row ids")
     r.add_argument("--out", type=Path)
     r.add_argument("--workers", type=int, default=1, help="rows classified at once (cloud backends only)")
+    r.add_argument("--fields-only", action="store_true",
+                   help="with --reuse: keep every saved classification, recompute the columns only (no model call)")
     r.add_argument("--visual", default="full", choices=["r1", "full"],
                    help="r1 = the 19 WO-004a-R1 rows only; full = predictions_full.csv wins over r1")
     r.add_argument("--reuse", action="store_true", help="reuse saved classifications in the output dir; rows whose model call failed are classified again")
@@ -60,7 +62,7 @@ def main(argv=None) -> None:
     out = a.out or a.case_dir / "semantic"
     workers = a.workers if a.backend != "local" else 1
     results = run(a.case_dir, a.vlm, table, rules, a.backend, only, reuse_dir=out if a.reuse else None, save_dir=out,
-                  workers=workers, visual_files=a.visual)
+                  workers=workers, visual_files=a.visual, fields_only=a.fields_only)
     warnings = consistency(results)
     write_rows(results, out, table)
     write_consistency(warnings, out)
