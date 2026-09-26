@@ -11,6 +11,12 @@ from xml.etree import ElementTree as ET
 def duration_seconds(value, *, qsjx=False):
     if value is None or value == "":
         return None
+    if isinstance(value, datetime):
+        # Excel durations above 24 encoded minutes become a dated value.
+        days = (value.date() - datetime(1899, 12, 31).date()).days
+        if qsjx:
+            return days * 1440 + value.hour * 60 + value.minute + value.second / 60
+        return days * 86400 + value.hour * 3600 + value.minute * 60 + value.second
     if isinstance(value, time):
         if qsjx:  # Excel stored m:ss as time(h=m, m=s).
             return value.hour * 60 + value.minute + value.second / 60
@@ -66,13 +72,21 @@ def read_configured(path: Path, spec: dict, videos: set[str]) -> list[dict]:
     workbook = load_workbook(path, read_only=True, data_only=True)
     try:
         sheet = workbook[spec["sheet"]]
-        iterator = sheet.iter_rows(values_only=True)
-        headers = [str(value) if value is not None else "" for value in next(iterator)]
+        headers = [str(value) if value is not None else "" for value in
+                   next(sheet.iter_rows(min_row=1, max_row=1, values_only=True))]
         columns = spec["columns"]
         required = ("row_id", "video", "bv", "title", "uploader", "duration")
         missing = [key for key in required if not columns.get(key) or columns[key] not in headers]
         if missing:
             raise ValueError(f"workbook columns absent: {missing}")
+        used_headers = [name for name in columns.values() if name]
+        absent = [name for name in used_headers if name not in headers]
+        if absent:
+            raise ValueError(f"workbook columns absent: {absent}")
+        # Read row values only through the last configured input field. In particular,
+        # held-out human output columns must never enter the ledger pipeline.
+        input_last_column = max(headers.index(name) + 1 for name in used_headers)
+        iterator = sheet.iter_rows(min_row=2, max_col=input_last_column, values_only=True)
         allowed = spec["row_ids"]
         ids = (set(map(str, allowed)) if isinstance(allowed, list)
                else {str(n) for n in range(int(allowed["first"]), int(allowed["last"]) + 1)})
