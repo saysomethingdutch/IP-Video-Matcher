@@ -160,12 +160,13 @@ def _visual(config: CaseConfig, rows: list[str], force: bool = False):
                 (folder / name).unlink(missing_ok=True)
     selected = set(rows)
     r3.prepare(config.case_dir, selected)
-    r3.local(config.case_dir, selected)
     if config.raw["models"]["visual"]["allow_image_upload"]:
         r3.cloud(config.case_dir, selected)
         if _row_files(config.vlm_dir / "r3", config.row_ids, "/glm-5.3-flash.json") and \
            _row_files(config.vlm_dir / "r3", config.row_ids, "/deepseek-flash.json"):
             r3.finalize(config.case_dir)
+    else:
+        r3.local(config.case_dir, selected)
 
 
 def _classification(config: CaseConfig, rows: list[str], force: bool = False):
@@ -224,7 +225,7 @@ def run(config: CaseConfig, from_step: str | None = None, requested_rows: str | 
     manifest_path = config.case_dir / "integration_manifest.json"
     manifest = json.loads(manifest_path.read_text()) if manifest_path.exists() else {}
     report = {"case_id": config.case_id, "selected_rows": rows, "steps": {}, "failed_rows": [],
-              "yellow_flags": 0, "red_flags": 0, "cloud_cost_usd": None}
+              "yellow_flags": 0, "red_flags": 0, "red_flag_rows": [], "cloud_cost_usd": None}
     force_from = STEPS.index(from_step) if from_step else len(STEPS)
     for i, step in enumerate(STEPS):
         start = time.monotonic()
@@ -264,7 +265,27 @@ def run(config: CaseConfig, from_step: str | None = None, requested_rows: str | 
     summaries = [store.summary(rid) for rid in rows]
     report["yellow_flags"] = sum(item["yellow"] for item in summaries)
     report["red_flags"] = sum(item["red"] for item in summaries)
-    report["failed_rows"] = [item["row_id"] for item in summaries if item["red"]]
+    report["red_flag_rows"] = [item["row_id"] for item in summaries if item["red"]]
+    failures = set()
+    for rid in rows:
+        if config.raw["models"]["speech"]["enabled"]:
+            path = config.case_dir / "asr" / f"{rid}.json"
+            if path.exists() and json.loads(path.read_text(encoding="utf-8")).get("status") == "ERROR":
+                failures.add(rid)
+        if config.raw["models"]["visual"]["allow_image_upload"]:
+            for model in ("glm-5.3-flash", "deepseek-flash"):
+                path = config.vlm_dir / "r3" / rid / f"{model}.json"
+                if path.exists() and json.loads(path.read_text(encoding="utf-8")).get("status") != "ok":
+                    failures.add(rid)
+        path = config.case_dir / "semantic" / f"{rid}.json"
+        if path.exists():
+            item = json.loads(path.read_text(encoding="utf-8"))
+            if any(call.get("error") or not call.get("valid_json", True) for call in item.get("calls") or []):
+                failures.add(rid)
+            opinion = item.get("opinion") or {}
+            if opinion.get("kind") == "draft" and not (opinion.get("validation") or {}).get("ok", True):
+                failures.add(rid)
+    report["failed_rows"] = sorted(failures, key=int)
     costs = {}
     cloud_csv = config.vlm_dir / "predictions_cloud_full.csv"
     if cloud_csv.exists():
