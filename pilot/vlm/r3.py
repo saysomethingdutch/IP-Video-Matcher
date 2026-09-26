@@ -473,8 +473,10 @@ def finalize(case: Path):
             if set(json.loads(a["overlays"])) == set(json.loads(b["overlays"])):
                 item["overlays"] = a["overlays"]
             else:
+                # Section 2 requires yellow flags for layout, presence, and
+                # other works. Overlay differences go to disagreements.csv;
+                # retain only mutually observed overlays in the adopted value.
                 item["overlays"] = json.dumps(sorted(set(json.loads(a["overlays"])) & set(json.loads(b["overlays"]))), ensure_ascii=False)
-                flags.append(f"遮挡物待核：GLM {a['overlays']}，DeepSeek {b['overlays']}")
             item["other_works_desc"] = a["other_works_desc"] if item["other_works"] == "是" else ""
             item["form_guess"] = a["form_guess"] if a["form_guess"] == b["form_guess"] else "不确定"
             item["evidence_frames"] = a["evidence_frames"]
@@ -492,6 +494,7 @@ def finalize(case: Path):
     modes = Counter(json.loads((R3 / r["row_id"] / "meta.json").read_text(encoding="utf-8"))["page_mode"] for r in rows(case))
     summary = {"rows": len(consensus), "page_modes": dict(modes),
                "yellow_rows": sum(bool(r["flags"]) for r in consensus),
+               "yellow_played_rows": sum(bool(r["flags"]) and r["row_id"] not in NO_PLAY for r in consensus),
                "yellow_layout_rows": sum(any(f.startswith("布局／比例待核") for f in r["flags"]) for r in consensus),
                "disagreement_items": len(disagreements), "disagreement_rows": len({d["row_id"] for d in disagreements}),
                "ab_no_examples": {rid: next(r for r in consensus if r["row_id"] == rid)["rights_content_ratio"] == "约1"
