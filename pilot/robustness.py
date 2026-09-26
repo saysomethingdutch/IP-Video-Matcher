@@ -64,11 +64,23 @@ def run_deepseek_opinions(config: CaseConfig) -> dict:
         return rid, opinion_for(rows[rid], config.case_dir, ep_secs, system, "deepseek", saved,
                                 bool(source["enabled"]), context)
 
+    results = []
     with ThreadPoolExecutor(max_workers=4) as executor:
         for rid, opinion in executor.map(one, config.row_ids):
             (out / f"{rid}.json").write_text(json.dumps(opinion, ensure_ascii=False, indent=1), encoding="utf-8")
+            results.append(opinion)
             print(f"{config.case_id} {rid} {opinion['kind']} {'reused' if opinion.get('reused') else 'written'}", flush=True)
-    return {"case_id": config.case_id, "rows": len(config.row_ids), "output": str(out)}
+    calls = [call for opinion in results for call in opinion.get("calls") or []]
+    summary = {"case_id": config.case_id, "rows": len(results),
+               "drafts": sum(opinion.get("kind") == "draft" for opinion in results),
+               "drafts_valid": sum(opinion.get("kind") == "draft" and
+                                   (opinion.get("validation") or {}).get("ok") for opinion in results),
+               "calls": len(calls), "usd_estimate": round(sum(call.get("usd") or 0 for call in calls), 4),
+               "tokens": {key: sum((call.get("usage") or {}).get(key) or 0 for call in calls)
+                          for key in ("prompt", "completion", "reasoning", "cached")},
+               "output": str(out)}
+    (out.parent / "deepseek_summary.json").write_text(json.dumps(summary, ensure_ascii=False, indent=1), encoding="utf-8")
+    return summary
 
 
 def _sha(path: Path) -> str:
