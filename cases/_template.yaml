@@ -60,6 +60,7 @@ client:
     conclusion: 请填写客户要求的固定结论句。
     characters: {hard_min: 150, target_min: 200, target_max: 300, hard_max: 330}
     prompt_rules: /path/to/opinion-prompt.txt  # Client-specific drafting instructions; required for a new case.
+    validation_profile: generic  # generic or qsjx; qsjx adds the approved client-specific checks.
   style_examples:
     workbook: /path/to/examples.xlsx  # Or null if no client examples were provided.
     requirements: null  # Optional client Word file containing example opinions.

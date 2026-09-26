@@ -86,8 +86,10 @@ def facts(r: dict, case_dir: Path) -> dict:
                                         if not up and not foreign else None) if n) or None}
 
 
-def assemble(purpose: str, prop: str, substitution: str) -> str:
-    return f"{PURPOSE}{purpose.strip()}\n{PROPORTION}{prop}\n{SUBSTITUTION}{substitution.strip()}\n{CONCLUSION}"
+def assemble(purpose: str, prop: str, substitution: str, opinion_format: dict | None = None) -> str:
+    headings = opinion_format["headings"] if opinion_format else (PURPOSE, PROPORTION, SUBSTITUTION)
+    conclusion = opinion_format["conclusion"] if opinion_format else CONCLUSION
+    return f"{headings[0]}{purpose.strip()}\n{headings[1]}{prop}\n{headings[2]}{substitution.strip()}\n{conclusion}"
 
 
 def inputs_hash(system: str, f: dict, prop: str) -> str:
@@ -101,22 +103,23 @@ def context(f: dict, prop: dict, data: dict) -> dict:
             "nature": f.get("nature_raw"), "title_only": f.get("title_only")}
 
 
-def revalidate(r: dict, case_dir: Path, ep_secs: dict) -> dict | None:
+def revalidate(r: dict, case_dir: Path, ep_secs: dict, source_enabled: bool = True,
+               client_context: dict | None = None) -> dict | None:
     """Check a saved draft again with the current checks (no model call); None when there is nothing to check."""
     op = r.get("opinion") or {}
     seg = op.get("segments")
     if op.get("kind") != "draft" or not seg:
         return None
-    f, prop = facts(r, case_dir), proportion(r["digest"], ep_secs)
+    f, prop = facts(r, case_dir), proportion(r["digest"], ep_secs, source_enabled)
     data = {"purpose": seg["purpose"], "substitution": seg["substitution"], "evidence": op.get("evidence")}
-    errors = validate(op["text"], data, context(f, prop, data))
+    errors = validate(op["text"], data, {**context(f, prop, data), **(client_context or {})})
     flags = [x for x in op.get("flags", []) if not x["reason"].startswith("意见未通过校验")]
     if errors:
         flags.append({"level": "red", "reason": "意见未通过校验：" + "；".join(errors)[:300]})
     return {**op, "flags": flags, "validation": {**op["validation"], "ok": not errors, "errors": errors, "revalidated": True}}
 
 
-def draft(r: dict, f: dict, prop: dict, system: str, backend: str) -> dict:
+def draft(r: dict, f: dict, prop: dict, system: str, backend: str, client_context: dict | None = None) -> dict:
     """Model draft, checked; one retry with the error list; a draft that still fails is kept and flagged red."""
     calls, previous, errors, text, data = [], None, [], "", {}
     for attempt in range(2):
@@ -130,8 +133,9 @@ def draft(r: dict, f: dict, prop: dict, system: str, backend: str) -> dict:
             errors = [f"模型没有给出有效 JSON（{reply.error}）"]
             continue
         data = reply.data
-        text = assemble(str(data.get("purpose", "")), prop["text"], str(data.get("substitution", "")))
-        ctx = context(f, prop, data)
+        text = assemble(str(data.get("purpose", "")), prop["text"], str(data.get("substitution", "")),
+                        (client_context or {}).get("opinion_format"))
+        ctx = {**context(f, prop, data), **(client_context or {})}
         errors = validate(text, {"purpose": str(data.get("purpose", "")), "substitution": str(data.get("substitution", ""))}, ctx)
         previous = data
         if not errors:
@@ -139,7 +143,8 @@ def draft(r: dict, f: dict, prop: dict, system: str, backend: str) -> dict:
     return {"text": text, "data": data, "errors": errors, "calls": calls}
 
 
-def opinion_for(r: dict, case_dir: Path, ep_secs: dict, system: str, backend: str, saved: dict | None) -> dict:
+def opinion_for(r: dict, case_dir: Path, ep_secs: dict, system: str, backend: str, saved: dict | None,
+                source_enabled: bool = True, client_context: dict | None = None) -> dict:
     kind = route(r)
     if kind == "repeat":
         return {"kind": kind, "text": str(r["fields"]["AF"]["value"]), "flags": [], "validation": {"ok": True, "errors": []}}
@@ -150,7 +155,7 @@ def opinion_for(r: dict, case_dir: Path, ep_secs: dict, system: str, backend: st
                 "flags": [{"level": "red", "reason": "疑似故意跳播：不起草；候选文字取自客户要求原文，请所有者决定"}],
                 "validation": {"ok": True, "errors": []}}
     f = facts(r, case_dir)
-    prop = proportion(r["digest"], ep_secs)
+    prop = proportion(r["digest"], ep_secs, source_enabled)
     key = inputs_hash(system, f, prop["text"])
     if saved and saved.get("inputs_hash") == key and saved.get("kind") == "draft":
         return {**saved, "reused": True}
@@ -164,7 +169,7 @@ def opinion_for(r: dict, case_dir: Path, ep_secs: dict, system: str, backend: st
     if not prop["text"]:
         return {"kind": "draft", "text": "", "flags": flags, "inputs_hash": key,
                 "validation": {"ok": False, "errors": ["比例段缺集数，未起草"]}}
-    out = draft(r, f, prop, system, backend)
+    out = draft(r, f, prop, system, backend, client_context)
     ok = not out["errors"]
     if not ok:
         flags.append({"level": "red", "reason": "意见未通过校验：" + "；".join(out["errors"])[:300]})
@@ -174,7 +179,8 @@ def opinion_for(r: dict, case_dir: Path, ep_secs: dict, system: str, backend: st
     usage = {k: sum((c["usage"] or {}).get(k) or 0 for c in out["calls"]) for k in ("prompt", "completion", "reasoning", "cached")}
     return {"kind": "draft", "text": out["text"],
             "segments": {"purpose": data.get("purpose", ""), "proportion": prop["text"],
-                         "substitution": data.get("substitution", ""), "conclusion": CONCLUSION},
+                         "substitution": data.get("substitution", ""),
+                         "conclusion": (client_context or {}).get("opinion_format", {}).get("conclusion", CONCLUSION)},
             "bold": [b for b in str(data.get("purpose", "")).split("**")[1::2]],
             "evidence": data.get("evidence") or [], "proportion_basis": prop["basis"],
             "validation": {"ok": ok, "errors": out["errors"], "attempts": len(out["calls"])},
@@ -197,13 +203,36 @@ def merge(r: dict, op: dict) -> None:
 
 def run(case_dir: Path, table: Table, backend: str = "deepseek", only: set[str] | None = None, workers: int = 4,
         reuse: bool = False, episodes_dir: Path | None = None, corrections_path: Path | None = None, log=print,
-        recheck: bool = False) -> dict:
+        recheck: bool = False, case_config=None) -> dict:
     sem = case_dir / "semantic"
-    rows = {p.stem: json.loads(p.read_text(encoding="utf-8")) for p in sorted(sem.glob("1*.json"))}
-    episodes_dir = episodes_dir or case_dir.resolve().parents[2] / "real_test"
-    ep_secs = episode_seconds(episodes_dir, sem / "episode_seconds.json")
-    samples = client_examples() + table_samples(table) + corrections(corrections_path or case_dir / "corrections.jsonl")
-    system = P.system_prompt(samples)
+    valid_rows = set(case_config.row_ids) if case_config else None
+    rows = {p.stem: json.loads(p.read_text(encoding="utf-8")) for p in sorted(sem.glob("*.json"))
+            if p.stem.isdecimal() and (valid_rows is None or p.stem in valid_rows)}
+    if case_config:
+        source = case_config.raw["source"]
+        source_enabled = bool(source["enabled"])
+        episodes_dir = case_config.path_of(source.get("episode_dir")) if source_enabled else None
+        ep_secs = (episode_seconds(episodes_dir, sem / "episode_seconds.json", source["episode_pattern"])
+                   if source_enabled else {})
+        client = case_config.raw["client"]
+        opinion_format = client["opinion_format"]
+        client_context = {"work_title": client["work_title"], "opinion_format": opinion_format}
+        style = client["style_examples"]
+        requirements = case_config.path_of(style.get("requirements"))
+        excluded = set(map(int, case_config.row_ids)) if style.get("exclude_current_rows", True) else set()
+        samples = (client_examples(requirements, opinion_format["headings"], opinion_format["conclusion"])
+                   + table_samples(table, style.get("table_rows") or {}, excluded,
+                                   opinion_format["headings"], opinion_format["conclusion"])
+                   + corrections(corrections_path or case_dir / "corrections.jsonl"))
+        rules_path = case_config.path_of(opinion_format.get("prompt_rules"))
+        rules = rules_path.read_text(encoding="utf-8") if rules_path else None
+    else:
+        source_enabled, client_context = True, None
+        episodes_dir = episodes_dir or case_dir.resolve().parents[2] / "real_test"
+        ep_secs = episode_seconds(episodes_dir, sem / "episode_seconds.json")
+        samples = client_examples() + table_samples(table) + corrections(corrections_path or case_dir / "corrections.jsonl")
+        rules = None
+    system = P.system_prompt(samples, rules)
     todo = [rid for rid in rows if not only or rid in only]
     todo.sort(key=lambda rid: (rows[rid]["digest"]["uploader"]["value"] or "", rid))      # same uploader together
     t0 = time.monotonic()
@@ -213,11 +242,11 @@ def run(case_dir: Path, table: Table, backend: str = "deepseek", only: set[str] 
 
     def one(rid: str) -> tuple[str, dict]:
         if recheck:
-            return rid, revalidate(rows[rid], case_dir, ep_secs) or rows[rid].get("opinion")
+            return rid, revalidate(rows[rid], case_dir, ep_secs, source_enabled, client_context) or rows[rid].get("opinion")
         kept = store / f"{rid}.json"
         saved = (rows[rid].get("opinion") or (json.loads(kept.read_text(encoding="utf-8")) if kept.exists() else None)) \
             if reuse else None
-        return rid, opinion_for(rows[rid], case_dir, ep_secs, system, backend, saved)
+        return rid, opinion_for(rows[rid], case_dir, ep_secs, system, backend, saved, source_enabled, client_context)
 
     with ThreadPoolExecutor(max_workers=max(1, workers)) as ex:
         for rid, op in ex.map(one, todo):

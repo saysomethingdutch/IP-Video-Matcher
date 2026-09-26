@@ -199,21 +199,13 @@ def _classification(config: CaseConfig, rows: list[str], force: bool = False):
 
 
 def _opinion(config: CaseConfig, rows: list[str], force: bool = False):
-    from .opinion.__main__ import main as opinion_main
+    from .opinion.case_runner import run_case
     model = config.raw["models"].get("opinion", config.raw["models"]["text"])
     backend = {"deepseek-flash": "deepseek", "glm-5.3-flash": "zhipu", "local": "local"}[model]
     key = {"deepseek": "DEEPSEEK_API_KEY", "zhipu": "ZHIPU_API_KEY"}.get(backend)
     if key and not os.environ.get(key):
         raise RuntimeError(f"{key} is absent; launch the command with zsh -lic")
-    args = ["run", str(config.case_dir), "--table", str(config.path_of(config.raw["workbook"]["path"])),
-            "--backend", backend, "--rows", ",".join(rows)]
-    if not force:
-        args.append("--reuse")
-    if backend != "local":
-        args.append("--no-local")
-    if config.raw["source"]["enabled"]:
-        args.extend(["--episodes", str(config.path_of(config.raw["source"]["episode_dir"]))])
-    opinion_main(args)
+    return run_case(config, rows, force=force)
 
 
 def _review(config: CaseConfig):

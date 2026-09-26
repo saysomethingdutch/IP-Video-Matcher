@@ -65,18 +65,24 @@ def validate(text: str, parts: dict, ctx: dict) -> list[str]:
     picture = "；".join(str(v) for v in ctx["picture"].values())
     title = ctx["title"]
     body = plain(text)
+    fmt = ctx.get("opinion_format") or {}
+    headings = fmt.get("headings") or (PURPOSE, PROPORTION, SUBSTITUTION)
+    conclusion = fmt.get("conclusion", CONCLUSION)
+    limits = fmt.get("characters") or {}
+    minimum, maximum = limits.get("hard_min", MIN_CHARS), limits.get("hard_max", MAX_CHARS)
+    qsjx_checks = fmt.get("validation_profile", "qsjx") == "qsjx"
 
     # 1 structure and length
-    positions = [body.find(label) for label in (PURPOSE, PROPORTION, SUBSTITUTION)]
+    positions = [body.find(label) for label in headings]
     if -1 in positions or positions != sorted(positions) or positions[0] != 0:
-        errors.append("结构：三段提示语【使用的性质和目的】【使用的比例】【对原作品的替代可能性】要按顺序出现")
-    if not body.rstrip().endswith(CONCLUSION):
-        errors.append(f"结构：最后一句必须是“{CONCLUSION}”")
+        errors.append("结构：配置的三段提示语要按顺序出现")
+    if not body.rstrip().endswith(conclusion):
+        errors.append(f"结构：最后一句必须是“{conclusion}”")
     n = char_count(text)
-    if not MIN_CHARS <= n <= MAX_CHARS:
-        errors.append(f"字数：全文 {n} 字，要求 {MIN_CHARS}–{MAX_CHARS} 字（220–300 字为宜）")
+    if not minimum <= n <= maximum:
+        errors.append(f"字数：全文 {n} 字，要求 {minimum}–{maximum} 字")
     purpose = plain(parts.get("purpose", ""))
-    if not TRANSFORM_END.search(purpose.strip()):
+    if qsjx_checks and not TRANSFORM_END.search(purpose.strip()):
         errors.append("第一段结尾要写“具有转换性”或“具有一定的转化性使用特征”")
 
     # 2 numbers: only the ones in the RowDigest or the proportion paragraph
@@ -93,7 +99,7 @@ def validate(text: str, parts: dict, ctx: dict) -> list[str]:
     # 3 quotation marks: verbatim, and few (常见错误 10: 引用一大堆不特别的话)
     up_norm = normalize(up)
     quoted = [q for q in (next(g for g in m.groups() if g) for m in QUOTE.finditer(body))
-              if not any(q in p or p in q for p in CLIENT_PHRASES)]
+              if not any(q in p or p in q for p in (CLIENT_PHRASES if qsjx_checks else ()))]
     for q in quoted:
         if not normalize(q) or normalize(q) not in up_norm:
             errors.append(f"引号：“{q}”没有逐字出现在 UP 主文字里（意见尽量概括，少引用）")
@@ -104,14 +110,14 @@ def validate(text: str, parts: dict, ctx: dict) -> list[str]:
     known = normalize(picture + up)
     for m in TITLE.finditer(body):
         name = m.group(1)
-        if name != WORK and normalize(name) not in known:
+        if name != ctx.get("work_title", WORK) and normalize(name) not in known:
             errors.append(f"作品名：《{name}》在画面事实和 UP 主文字里都找不到")
 
     # 5 common errors from the client
-    for rx, why in BANNED:
+    for rx, why in (BANNED if qsjx_checks else ()):
         if rx.search(body):
             errors.append(f"禁用语：{why}")
-    if "一口气看完" in body and "一口气看完" not in title:
+    if qsjx_checks and "一口气看完" in body and "一口气看完" not in title:
         errors.append("禁用语：标题里没有“一口气看完”，不能这样定性（常见错误 5）")
 
     # 6 a concrete point: >= 4 consecutive characters shared with the uploader's text or the picture facts;
@@ -125,11 +131,11 @@ def validate(text: str, parts: dict, ctx: dict) -> list[str]:
     # 7 bold: one or two, only in the first paragraph
     bolds = BOLD.findall(text)
     first = text.split(PROPORTION)[0]
-    if not 1 <= len(bolds) <= 2:
+    if qsjx_checks and not 1 <= len(bolds) <= 2:
         errors.append(f"加粗：要有 1–2 处 **…**，现在 {len(bolds)} 处")
-    elif len(BOLD.findall(first)) != len(bolds):
+    elif qsjx_checks and len(BOLD.findall(first)) != len(bolds):
         errors.append("加粗：只能在第一段")
-    if text.count("**") % 2:
+    if qsjx_checks and text.count("**") % 2:
         errors.append("加粗：** 没有成对")
 
     # picture wording comes from the Z / AA / AB columns
@@ -143,9 +149,9 @@ def validate(text: str, parts: dict, ctx: dict) -> list[str]:
     # the type named in the text agrees with the classification (not changed here, §9), and is one type
     named = {t for t, rx in TYPE_WORDS.items() if rx.search(model_text)}
     nature = ctx.get("nature")
-    if nature in TYPE_WORDS and named - {nature}:
+    if qsjx_checks and nature in TYPE_WORDS and named - {nature}:
         errors.append(f"类型：意见里写成了{'、'.join(sorted(named - {nature}))}，分类结果是{nature}，要按分类结果写")
-    elif nature not in TYPE_WORDS and len(named) > 1:
+    elif qsjx_checks and nature not in TYPE_WORDS and len(named) > 1:
         errors.append(f"类型：两段写的类型不一致（{'、'.join(sorted(named))}），全文只能认定一种")
 
     # evidence quotes are verbatim

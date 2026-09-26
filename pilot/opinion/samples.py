@@ -25,7 +25,9 @@ LABELS = {"purpose": r"【使用(?:的)?性质和目的】", "proportion": r"【
 
 def paragraphs(text: str, headings: list[str] | None = None, conclusion: str | None = None) -> dict[str, str]:
     """The three labelled paragraphs of an opinion, without their labels (missing ones are absent)."""
-    labels = {key: re.escape(label) for key, label in zip(("purpose", "proportion", "substitution"), headings)} if headings else LABELS
+    labels = ({key: rf"(?:{re.escape(label)}|{LABELS[key]})"
+               for key, label in zip(("purpose", "proportion", "substitution"), headings)}
+              if headings else LABELS)
     marks = sorted((m.start(), m.end(), key) for key, rx in labels.items() for m in re.finditer(rx, text))
     out = {}
     for i, (_, end, key) in enumerate(marks):
