@@ -36,7 +36,8 @@ def test_review_and_export_respect_case_column_mapping(tmp_path):
                      "output_columns": mapping},
         "evidence": {"videos": {"V1": {}}, "video_dir": str(tmp_path), "screenshot_dir": str(tmp_path)},
         "source": {"enabled": False},
-        "client": {"rules": str(tmp_path / "rules.yaml"), "opinion_format": {
+        "client": {"rules": str(tmp_path / "rules.yaml"), "work_title": "Test Work",
+                   "style_examples": {}, "opinion_format": {
             "headings": ["Purpose", "Proportion", "Substitution"], "conclusion": "End.",
             "prompt_rules": str(rules)}},
         "models": {"visual": {"allow_image_upload": False}, "text": "local", "speech": {"enabled": False}},
