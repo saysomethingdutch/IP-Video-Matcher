@@ -43,16 +43,24 @@ def _fingerprint(config: CaseConfig, step: str, rows: list[str]) -> str:
         "review": [config.case_dir / "ledger.jsonl", config.case_dir / "content", config.case_dir / "semantic",
                    config.vlm_dir / "predictions_consensus_r3.csv"],
     }[step]
-    sections = {
-        "ledger": ("workbook", "evidence", "ledger"), "captions": ("source",),
-        "speech": ("models",), "visual": ("models", "evidence"),
-        "classification": ("client", "models"), "opinion": ("client", "models", "source"),
-        "review": ("workbook", "output"),
+    # Fingerprint only settings the stage actually reads. Changing the opinion model
+    # must not invalidate classification or redo the cloud visual pass.
+    settings = {
+        "ledger": {"workbook": raw["workbook"], "evidence": raw["evidence"], "ledger": raw["ledger"]},
+        "captions": {"source": raw["source"]},
+        "speech": {"speech": raw["models"]["speech"]},
+        "visual": {"visual": raw["models"]["visual"], "evidence": raw["evidence"]},
+        "classification": {"rules": raw["client"]["rules"], "text": raw["models"]["text"],
+                           "cloud_visual": raw["models"]["visual"]["allow_image_upload"],
+                           "workbook": raw["workbook"]},
+        "opinion": {"client": raw["client"], "backend": raw["models"].get("opinion", raw["models"]["text"]),
+                    "source": raw["source"], "workbook": raw["workbook"]},
+        "review": {"workbook": raw["workbook"], "output": raw["output"]},
     }[step]
     module_dir = {"ledger": "ledger", "captions": "content", "speech": "asr", "visual": "vlm",
                   "classification": "semantic", "opinion": "opinion", "review": "review"}[step]
     # Per-row outputs can be numerous and contain timestamps; only the selected row inputs affect a partial run.
-    data = [config.config_digest(*sections), rows, [_stamp(p) for p in inputs if p is not None],
+    data = [settings, rows, [_stamp(p) for p in inputs if p is not None],
             [_stamp(p) for p in sorted((REPO / "pilot" / module_dir).glob("*.py"))]]
     return hashlib.sha256(json.dumps(data, ensure_ascii=False, sort_keys=True).encode()).hexdigest()
 
