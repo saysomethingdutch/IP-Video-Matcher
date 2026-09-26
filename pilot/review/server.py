@@ -14,8 +14,8 @@ from .export import export_case
 STATIC = Path(__file__).parent / "static"
 
 
-def serve(case: Path, port: int = 8765):
-    store = ReviewStore(case)
+def serve(case: Path, port: int = 8765, config=None):
+    store = ReviewStore(case, config=config)
 
     class Handler(BaseHTTPRequestHandler):
         def log_message(self, format, *args):

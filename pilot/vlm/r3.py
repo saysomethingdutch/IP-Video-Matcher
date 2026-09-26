@@ -27,6 +27,21 @@ from .r1 import COLUMNS_R1, ask_visual, detect_description_conflicts, map_descri
 OUTPUT = Path("workspace/pilot/vlm")
 R3 = OUTPUT / "r3"
 NO_PLAY = {"1115", "1133", "1194", "1197"}
+CASE_ROWS: set[str] | None = None
+VIDEO_DIR: Path | None = None
+
+
+def configure(config):
+    """Set case-owned paths and rows; R3 inference and consensus rules remain unchanged."""
+    global OUTPUT, R3, NO_PLAY, CASE_ROWS, VIDEO_DIR, MODEL
+    OUTPUT = config.vlm_dir
+    R3 = OUTPUT / "r3"
+    CASE_ROWS = set(config.row_ids)
+    VIDEO_DIR = config.path_of(config.raw["evidence"]["video_dir"])
+    NO_PLAY = set(config.raw.get("visual", {}).get("no_play_rows", []))
+    MODEL = config.raw["models"]["visual"]["local_fallback"]
+    if set(config.raw["models"]["visual"]["cloud"]) != set(CLOUDS):
+        raise ValueError("R3 currently requires glm-5.3-flash and deepseek-flash")
 CLOUDS = {
     "glm-5.3-flash": ("ZHIPU_API_KEY", "https://open.bigmodel.cn/api/paas/v4/chat/completions"),
     "deepseek-flash": ("DEEPSEEK_API_KEY", "https://api.deepseek.com/chat/completions"),
@@ -47,12 +62,18 @@ PROMPT = ("这是一部被诉视频在播放器画布内的四帧，编号 1–4
 
 def rows(case: Path) -> list[dict]:
     result = [json.loads(line) for line in (case / "ledger.jsonl").read_text(encoding="utf-8").splitlines()]
-    if len(result) != 169 or {r["row_id"] for r in result} != {str(n) for n in range(1051, 1220)}:
+    if CASE_ROWS is not None and {r["row_id"] for r in result} != CASE_ROWS:
+        raise ValueError("ledger rows differ from case config")
+    if CASE_ROWS is None and (len(result) != 169 or {r["row_id"] for r in result} != {str(n) for n in range(1051, 1220)}):
         raise ValueError("expected ledger rows 1051–1219")
     return result
 
 
 def video_dir() -> Path:
+    if VIDEO_DIR is not None:
+        if not VIDEO_DIR.is_dir():
+            raise FileNotFoundError(VIDEO_DIR)
+        return VIDEO_DIR
     if not Path("/Volumes/Element").is_dir():
         raise FileNotFoundError("/Volumes/Element is not mounted")
     config = json.loads(Path("pilot/cases/qsjx_e18.yaml").read_text(encoding="utf-8"))
@@ -114,7 +135,7 @@ def prepare_one(row: dict, case: Path, videos: Path,
         if Path(prior.get("collage_path", "")).is_file() and (
                 prior.get("page_mode") != "landscape" or prior.get("canvas_version") == 2):
             return prior
-    if row["row_id"] in NO_PLAY:
+    if row["row_id"] in NO_PLAY or not any(s.get("event") == "play" for s in row.get("playback_map", [])):
         meta = _screenshot_collage(row, target)
         atomic_json(existing, meta)
         return meta
@@ -498,7 +519,7 @@ def finalize(case: Path):
                "yellow_layout_rows": sum(any(f.startswith("布局／比例待核") for f in r["flags"]) for r in consensus),
                "disagreement_items": len(disagreements), "disagreement_rows": len({d["row_id"] for d in disagreements}),
                "ab_no_examples": {rid: next(r for r in consensus if r["row_id"] == rid)["rights_content_ratio"] == "约1"
-                                  for rid in ("1127", "1175")}}
+                                  for rid in ("1127", "1175") if any(r["row_id"] == rid for r in consensus)}}
     atomic_json(OUTPUT / "summary_r3.json", summary)
     print(json.dumps(summary, ensure_ascii=False), flush=True)
 

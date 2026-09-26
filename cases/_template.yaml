@@ -1,0 +1,86 @@
+# Copy this file to cases/<case>.yaml. Paths may be absolute or relative to the repository root.
+schema_version: 1
+case_id: example_case  # Unique output/cache name; use letters, digits and underscores.
+
+workbook:
+  path: /path/to/comparison.xlsx  # Read-only input workbook.
+  sheet: 比对表  # Exact Excel worksheet name.
+  row_ids: {first: 1, last: 10}  # Inclusive IDs to process; may instead use an explicit list.
+  columns:  # Header names in the source sheet; null for an absent optional field.
+    row_id: 总编号
+    video: 录像名称
+    bv: BV号
+    title: 视频标题
+    uploader: 上传者
+    duration: 时长
+    views_claimed: 播放量
+    part_claimed: null  # Set a header when episode claims exist.
+    video_type: 视频类型
+    capture_date: null
+  capture_date: null  # Optional YYYY-MM-DD filter for one notarial batch.
+  duration_encoding: hms  # hms or excel_mss (legacy Excel m:ss stored as h:m).
+  bv_column: L  # Physical column letter used to find the same BV in other batches.
+  output_columns:  # Logical U–AJ fields mapped to physical workbook letters.
+    U: U
+    V: V
+    W: W
+    X: X
+    Y: Y
+    Z: Z
+    AA: AA
+    AB: AB
+    AC: AC
+    AD: AD
+    AE: AE
+    AF: AF
+    AG: AG
+    AH: AH
+    AI: AI
+    AJ: AJ
+
+evidence:
+  video_dir: /path/to/recordings  # Camera recordings, unchanged originals.
+  screenshot_dir: /path/to/screenshots  # Evidence screenshots; can be empty.
+  download_dir: /path/to/downloads  # Downloaded evidence files; can be empty.
+  videos:
+    MVI_0001: {}  # Key is the ledger video ID; file defaults to <key>.MP4.
+
+source:
+  enabled: false  # true only when episode claims / precise source-use ratios need an original index.
+  episode_dir: null  # Directory of source episodes; required when enabled.
+  index_name: example_case
+  boundaries: null  # Optional source head/tail boundary JSON.
+
+client:
+  rules: /path/to/client-rules.yaml  # Four-grid and wording rules; never edit another case's rules.
+  opinion_format:
+    headings: [【使用的性质和目的】, 【使用的比例】, 【对原作品的替代可能性】]
+    conclusion: 请填写客户要求的固定结论句。
+    characters: {target_min: 200, target_max: 300, hard_max: 380}
+  style_examples:
+    workbook: /path/to/examples.xlsx  # Or null if no client examples were provided.
+    exclude_current_rows: true
+
+models:
+  visual:
+    protocol: player_canvas_r3  # Replace with a new module when evidence geometry differs.
+    cloud: [glm-5.3-flash, deepseek-flash]  # Two providers must agree before adopting a fact.
+    local_fallback: qwen3-vl:8b-instruct-q4_K_M
+    allow_image_upload: false  # Explicit owner consent is required before sending canvases.
+  text: deepseek-flash  # Or local when cloud text is not authorized.
+  speech:
+    enabled: false  # true to transcribe played recording audio with whisper.cpp.
+    model: models/whisper/ggml-large-v3.bin
+
+output:
+  dir: workspace/pilot/example_case  # Case data; sibling vlm/ and textindex/ caches.
+  export_name: example-case-machine-filled  # Output filename prefix, without date/extension.
+
+ledger:
+  fps: 1  # 1 or 2 recording frames per second.
+  probe_full_and_crop: false  # Diagnostic full-frame OCR pass.
+  repair_nearby_identity: false  # Enable only if this evidence needs the WO-001 R2 repair.
+  repair_truncated_readings: false
+
+cache:
+  adopt_existing: false  # true only when verified old outputs predate integration manifests.

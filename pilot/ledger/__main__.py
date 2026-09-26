@@ -12,13 +12,16 @@ from .pipeline import (assign_screenshots, build_rows, build_sessions, compile_o
                        quality_audit, resolve_nearby_identity_readings,
                        resolve_truncated_readings, screenshot_ocr, video_duration)
 from .report import write_outputs, write_r2_changes
-from .workbook import read_qsjx, read_zhuyu
+from .workbook import read_configured, read_qsjx, read_zhuyu
 
 
 def run_case(config_path, only_videos=None):
     config = json.loads(Path(config_path).read_text())  # JSON syntax is valid YAML.
     case = config["case"]
-    rows = read_qsjx(Path(config["workbook"])) if case == "qsjx" else read_zhuyu(Path(config["workbook"]))
+    if config.get("workbook_spec"):
+        rows = read_configured(Path(config["workbook"]), config["workbook_spec"], set(config["videos"]))
+    else:
+        rows = read_qsjx(Path(config["workbook"])) if case == "qsjx" else read_zhuyu(Path(config["workbook"]))
     names = [name for name in config["videos"] if not only_videos or name in only_videos]
     rows = [row for row in rows if row["video"] in names]
     if not rows:
@@ -32,12 +35,13 @@ def run_case(config_path, only_videos=None):
     for force_full in modes:
         mode = "full" if force_full else "crop" if len(modes) == 2 else ""
         case_id = config["case_id"] + ("_" + mode if mode else "")
-        output = Path("workspace/pilot") / case_id
+        output_base = Path(config.get("output_dir", Path("workspace/pilot") / config["case_id"]))
+        output = output_base.with_name(case_id) if mode else output_base
         output.mkdir(parents=True, exist_ok=True)
         previous_summary = json.loads((output / "run_summary.json").read_text()) if (output / "run_summary.json").exists() else None
         started = time.monotonic()
         screens = screenshot_ocr(sorted(Path(config["screenshot_dir"]).glob("*")), case,
-                                 Path("workspace/pilot") / config["case_id"] / "screenshot_cache")
+                                 output_base / "screenshot_cache")
         video_paths = {name: Path(config["video_dir"]) / config["videos"][name].get("file", name + ".MP4")
                        for name in names}
         obs_by_video = {}
@@ -51,18 +55,18 @@ def run_case(config_path, only_videos=None):
                                     Path(directory), force_full=force_full)
                 frame_count += len(records)
                 obs = observations(records, {row["duration"] for row in rows if row["video"] == name})
-                if case == "qsjx":
+                if config.get("repair_nearby_identity", case == "qsjx"):
                     resolve_nearby_identity_readings(obs, [row for row in rows if row["video"] == name])
                 obs_by_video[name] = obs
                 sessions.extend(build_sessions(obs, fps, name))
             print(f"{case_id}: {name} {len(records)} frames, {sum(s['video']==name for s in sessions)} sessions", flush=True)
         mapped, offsets = assign_screenshots(screens, obs_by_video)
         from .pipeline import add_screenshots
-        for _ in range(2 if case == "qsjx" else 1):
+        for _ in range(2 if config.get("repair_truncated_readings", case == "qsjx") else 1):
             for name, shots in mapped.items():
                 add_screenshots([s for s in sessions if s["video"] == name], shots)
             linked, unmatched = match_sessions(sessions, rows)
-            if case != "qsjx":
+            if not config.get("repair_truncated_readings", case == "qsjx"):
                 break
             adopted = sum(resolve_truncated_readings(obs_by_video[name],
                 [row for row in rows if row["video"] == name], linked) for name in names)
@@ -78,7 +82,7 @@ def run_case(config_path, only_videos=None):
         audit = quality_audit(ledger, obs_by_video)
         summary = write_outputs(output, ledger, unmatched, names, durations,
                                 time.monotonic() - started, frame_count, case_id, fps, audit)
-        if case == "qsjx" and not only_videos:
+        if config.get("repair_truncated_readings", case == "qsjx") and not only_videos:
             summary["r2_changed_rows_gt10_seconds"] = write_r2_changes(output, ledger)
         summary["screenshots_ocr"] = len(screens)
         summary["screenshots_aligned"] = sum(len(v) for v in mapped.values())

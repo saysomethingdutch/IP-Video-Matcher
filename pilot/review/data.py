@@ -27,7 +27,8 @@ def col_name(n: int) -> str:
     return out
 
 
-def read_source(path: Path) -> tuple[list[str], dict[int, list[str]]]:
+def read_source(path: Path, sheet_name: str = "比对表", source_rows: set[int] | None = None,
+                max_column: int = 36) -> tuple[list[str], dict[int, list[str]]]:
     """Read the existing workbook without a third-party dependency."""
     ns = {"m": MAIN, "r": R}
     with zipfile.ZipFile(path) as book:
@@ -37,7 +38,7 @@ def read_source(path: Path) -> tuple[list[str], dict[int, list[str]]]:
             shared = ["".join(t.text or "" for t in si.findall(".//m:t", ns)) for si in root.findall("m:si", ns)]
         workbook = ET.fromstring(book.read("xl/workbook.xml"))
         rels = ET.fromstring(book.read("xl/_rels/workbook.xml.rels"))
-        sheet = next(s for s in workbook.findall("m:sheets/m:sheet", ns) if s.get("name") == "比对表")
+        sheet = next(s for s in workbook.findall("m:sheets/m:sheet", ns) if s.get("name") == sheet_name)
         rel_id = sheet.get(f"{{{R}}}id")
         target = next(x.get("Target") for x in rels.findall(f"{{{PKG}}}Relationship") if x.get("Id") == rel_id)
         target = target.lstrip("/") if target.startswith("/") else "xl/" + target
@@ -45,9 +46,9 @@ def read_source(path: Path) -> tuple[list[str], dict[int, list[str]]]:
         rows = {}
         for row in root.findall("m:sheetData/m:row", ns):
             number = int(row.get("r"))
-            if number not in (1, *range(1052, 1221)):
+            if source_rows is not None and number not in source_rows and number != 1:
                 continue
-            vals = [""] * 36
+            vals = [""] * max_column
             for cell in row.findall("m:c", ns):
                 letters = re.match(r"[A-Z]+", cell.get("r", ""))
                 if not letters:
@@ -55,7 +56,7 @@ def read_source(path: Path) -> tuple[list[str], dict[int, list[str]]]:
                 col = 0
                 for char in letters.group():
                     col = col * 26 + ord(char) - 64
-                if not 1 <= col <= 36:
+                if not 1 <= col <= max_column:
                     continue
                 kind = cell.get("t")
                 v = cell.find("m:v", ns)
@@ -93,13 +94,20 @@ def load_json(path: Path):
 
 
 class ReviewStore:
-    def __init__(self, case: Path):
+    def __init__(self, case: Path, config=None):
         self.case = Path(case).resolve()
         self.rows = {x["row_id"]: x for x in (json.loads(line) for line in (self.case / "ledger.jsonl").read_text(encoding="utf-8").splitlines())}
-        if len(self.rows) != 169 or set(self.rows) != {str(n) for n in range(1051, 1220)}:
-            raise ValueError("WO-005 requires ledger rows 1051–1219 exactly")
-        self.source_path = Path(next(iter(self.rows.values()))["plaintiff"]["source_workbook"])
-        self.headers, self.source_rows = read_source(self.source_path)
+        self.row_ids = config.row_ids if config else [str(n) for n in range(1051, 1220)]
+        if set(self.rows) != set(self.row_ids):
+            raise ValueError("ledger rows differ from configured case rows")
+        self.sheet_name = config.raw["workbook"]["sheet"] if config else "比对表"
+        self.output_columns = tuple(config.output_indices) if config else OUTPUT_COLS
+        self.logical_by_index = {physical: logical for logical, physical in zip(OUTPUT_COLS, self.output_columns)}
+        self.export_name = config.raw["output"].get("export_name") if config else "七时吉祥-比对总表-机器填写"
+        self.source_path = config.path_of(config.raw["workbook"]["path"]) if config else Path(next(iter(self.rows.values()))["plaintiff"]["source_workbook"])
+        source_rows = {int(row["plaintiff"]["source_row"]) for row in self.rows.values()}
+        self.headers, self.source_rows = read_source(self.source_path, self.sheet_name, source_rows,
+                                                    max(36, *self.output_columns))
         self.decisions_path = self.case / "review" / "decisions.jsonl"
         self.lock = threading.RLock()
         self.decisions: dict[str, dict] = {rid: {"status": "待核", "edits": {}, "modified": []} for rid in self.rows}
@@ -142,40 +150,41 @@ class ReviewStore:
         content = load_json(self.case / "content" / f"{rid}.json") or {}
         semantic = load_json(self.case / "semantic" / f"{rid}.json") or {}
         fields = []
-        for index in range(1, 37):
+        for index in range(1, len(self.headers) + 1):
+            logical = self.logical_by_index.get(index)
             value = source[index - 1]
             origin = "原告表格" if index <= 20 else ("原表已有值" if value else "暂无机器数据")
             basis = origin
             provisional = False
-            if index > 20 and not value:
-                if index == 21 and ledger.get("video_duration") is not None:
+            if logical is not None and not value:
+                if logical == 21 and ledger.get("video_duration") is not None:
                     value, origin = fmt_seconds(ledger["video_duration"]), "台账：视频时长"
-                elif index == 24 and ledger.get("capture_seconds") is not None:
+                elif logical == 24 and ledger.get("capture_seconds") is not None:
                     value, origin = fmt_seconds(ledger["capture_seconds"]), "台账：取证播放时长"
-                elif index == 29 and ledger.get("complete") is not None:
+                elif logical == 29 and ledger.get("complete") is not None:
                     complete = ledger["complete"]
                     value, origin = (("是" if complete else "否") if isinstance(complete, bool) else str(complete)), "台账：完整播放判断"
-                elif index == 30 and ledger.get("views") not in (None, ""):
+                elif logical == 30 and ledger.get("views") not in (None, ""):
                     observed = str(ledger["views"])
                     claimed = str(ledger["plaintiff"].get("views_claimed") or "")
                     value = "是" if observed == claimed else f"否，录像显示 {observed}"
                     origin = "台账：录像播放量与原告表格"
-                elif index == 31 and content.get("verdict"):
+                elif logical == 31 and content.get("verdict"):
                     verdicts = {"CONTRADICTED": "否", "NARROWER": "声称范围较宽", "UNVERIFIED": "无法核实", "CLAIM_UNPARSEABLE": "声称无法解析"}
                     value, origin = verdicts.get(content["verdict"], "无法核实"), "字幕模块：集数核验（基于 R1 台账）"
                     basis = content.get("statement") or origin
                 if value:
                     provisional = True
-                    if index != 31:
-                        source_key = {21: "video_duration", 24: "capture_seconds", 29: "complete", 30: "views"}.get(index)
+                    if logical != 31:
+                        source_key = {21: "video_duration", 24: "capture_seconds", 29: "complete", 30: "views"}.get(logical)
                         evidence = (ledger.get("sources") or {}).get(source_key, []) if source_key else []
                         frames = [f"{x.get('video', '')} {x.get('frame') or x.get('evidence_frame') or ''}（录像 {x.get('t', '—')} 秒）" for x in evidence if isinstance(x, dict)]
                         basis = origin + ("；" + "、".join(dict.fromkeys(frames[:2] + frames[-2:])) if frames else "")
-            if index > 20:
+            if logical is not None:
                 semantic_fields = semantic.get("fields") or semantic.get("columns") or {}
                 found = None
                 if isinstance(semantic_fields, dict):
-                    found = semantic_fields.get(str(index)) or semantic_fields.get(col_name(index)) or semantic_fields.get(self.headers[index - 1])
+                    found = semantic_fields.get(str(logical)) or semantic_fields.get(col_name(logical)) or semantic_fields.get(self.headers[index - 1])
                 if found is None:
                     found = self.semantic_csv.get(rid, {}).get(self.headers[index - 1])
                     if found not in (None, ""):
@@ -192,9 +201,9 @@ class ReviewStore:
             if modified:
                 value, origin, provisional = edit, "所有者修改", False
                 basis = "所有者修改；修改前依据：" + basis
-            if index in (21, 24, 25):
+            if logical in (21, 24, 25):
                 value = fmt_seconds(value)
-            fields.append({"index": index, "column": col_name(index), "name": self.headers[index - 1], "value": str(value) if value is not None else "", "source": origin, "basis": basis, "provisional": provisional, "modified": modified, "editable": index in OUTPUT_COLS})
+            fields.append({"index": index, "column": col_name(index), "name": self.headers[index - 1], "value": str(value) if value is not None else "", "source": origin, "basis": basis, "provisional": provisional, "modified": modified, "editable": index in self.output_columns})
         return fields
 
     def _flags(self, rid: str) -> list[dict]:
@@ -219,10 +228,11 @@ class ReviewStore:
             raw.append("字幕集数" + ("冲突" if content["verdict"] == "CONTRADICTED" else "未核实"))
         elif content.get("verdict") == "NARROWER":
             raw.append("字幕核验范围比原告声称更窄")
-        if rid == "1115":
+        asr = load_json(self.case / "asr" / f"{rid}.json")
+        if not asr:
+            raw.append("无 ASR")
+        elif asr.get("status") == "NO_PLAYBACK":
             raw.append("ASR 无播放片段")
-        elif int(rid) > 1127:
-            raw.append("无 ASR（D-020 中止）")
         result = []
         positions = {}
         for flag in raw:
@@ -243,32 +253,34 @@ class ReviewStore:
         return {"row_id": rid, "video": ledger["video"], "uploader": ledger["plaintiff"].get("uploader") or "未知 UP 主", "title": ledger["plaintiff"].get("title") or "", "status": self.decisions[rid]["status"], "yellow": sum(x["level"] == "yellow" for x in flags), "red": sum(x["level"] == "red" for x in flags)}
 
     def all_summaries(self) -> list[dict]:
-        return [self.summary(str(i)) for i in range(1051, 1220)]
+        return [self.summary(rid) for rid in self.row_ids]
 
     def detail(self, rid: str) -> dict:
         if rid not in self.rows:
             raise KeyError(rid)
         ledger = self.rows[rid]
         content = load_json(self.case / "content" / f"{rid}.json")
-        asr = load_json(self.case / "asr" / f"{rid}.json") if int(rid) <= 1127 else None
+        asr = load_json(self.case / "asr" / f"{rid}.json")
         semantic = load_json(self.case / "semantic" / f"{rid}.json")
         evidence = list(ledger.get("evidence") or [])
         if (ledger.get("screenshot") or {}).get("evidence_frame"):
             evidence.append({"label": "截图", "path": ledger["screenshot"]["evidence_frame"], "t": None})
-        original = next((f["value"] for f in self._machine_fields(rid) if f["index"] == 32), "")
+        opinion_index = self.output_columns[11]
+        original = next((f["value"] for f in self._machine_fields(rid) if f["index"] == opinion_index), "")
         match = REPEAT.search(original)
         repeat_main = match.group(1) if match else None
-        return {**self.summary(rid), "fields": self._machine_fields(rid), "flags": self._flags(rid), "evidence": evidence, "playback_map": ledger.get("playback_map") or [], "video_duration": ledger.get("video_duration"), "content": content, "asr": asr, "semantic": semantic, "claim": {"bv": ledger["plaintiff"].get("bv") or ledger.get("observed_bv"), "episode": ledger["plaintiff"].get("part_claimed"), "views": ledger["plaintiff"].get("views_claimed"), "video_type": ledger["plaintiff"].get("video_type")}, "repeat_main": repeat_main if repeat_main in self.rows else None}
+        return {**self.summary(rid), "fields": self._machine_fields(rid), "output_indices": self.output_columns,
+                "flags": self._flags(rid), "evidence": evidence, "playback_map": ledger.get("playback_map") or [], "video_duration": ledger.get("video_duration"), "content": content, "asr": asr, "semantic": semantic, "claim": {"bv": ledger["plaintiff"].get("bv") or ledger.get("observed_bv"), "episode": ledger["plaintiff"].get("part_claimed"), "views": ledger["plaintiff"].get("views_claimed"), "video_type": ledger["plaintiff"].get("video_type")}, "repeat_main": repeat_main if repeat_main in self.rows else None}
 
     def decide(self, rid: str, action: str, edits: dict | None = None) -> dict:
         if rid not in self.rows or action not in ("approve", "modify_approve", "hold"):
             raise ValueError("invalid row or action")
         edits = edits or {}
-        if any(int(k) not in OUTPUT_COLS for k in edits):
+        if any(int(k) not in self.output_columns for k in edits):
             raise ValueError("only output columns may be edited")
         with self.lock:
             current = {str(f["index"]): f["value"] for f in self._machine_fields(rid)}
-            normalized = {str(k): (fmt_seconds(v) if int(k) in (21, 24, 25) else str(v)) for k, v in edits.items()}
+            normalized = {str(k): (fmt_seconds(v) if self.logical_by_index.get(int(k)) in (21, 24, 25) else str(v)) for k, v in edits.items()}
             changed = {k: v for k, v in normalized.items() if v != current[k]}
             if action == "modify_approve" and not (changed or self.decisions[rid]["modified"]):
                 raise ValueError("no modified field")
@@ -283,13 +295,13 @@ class ReviewStore:
     def batch_approve(self, uploader: str) -> dict:
         approved, excluded, dependent = [], [], []
         candidates = [rid for rid in self.rows if self.summary(rid)["uploader"] == uploader and self.decisions[rid]["status"] == "待核"]
-        candidates.sort(key=lambda rid: bool(REPEAT.search(self._machine_fields(rid)[31]["value"])))
+        candidates.sort(key=lambda rid: bool(REPEAT.search(self._machine_fields(rid)[self.output_columns[11]-1]["value"])))
         for rid in candidates:
             summary = self.summary(rid)
             if summary["red"]:
                 excluded.append(rid)
                 continue
-            repeat = REPEAT.search(self._machine_fields(rid)[31]["value"])
+            repeat = REPEAT.search(self._machine_fields(rid)[self.output_columns[11]-1]["value"])
             if repeat and (repeat.group(1) not in self.rows or self.decisions[repeat.group(1)]["status"] not in ("已通过", "已修改")):
                 dependent.append(rid)
                 continue

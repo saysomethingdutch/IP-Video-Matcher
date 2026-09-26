@@ -25,6 +25,17 @@ OUTPUT = CASE / "asr"
 MODEL = Path("workspace/pilot").resolve().parents[1] / "models/whisper/ggml-large-v3.bin"
 INDEX = Path("workspace/pilot/textindex/qsjx/index.sqlite")
 CONFIG = Path("pilot/cases/qsjx_e18.yaml")
+CASE_CONFIG = None
+
+
+def configure(config):
+    """Select paths for a case without changing transcription behavior."""
+    global CASE, OUTPUT, MODEL, INDEX, CASE_CONFIG
+    CASE_CONFIG = config
+    CASE = config.case_dir
+    OUTPUT = CASE / "asr"
+    MODEL = config.path_of(config.raw["models"]["speech"]["model"])
+    INDEX = config.index_dir / "index.sqlite"
 HALLUCINATION_RESIDUE = re.compile(r"请不吝.{0,8}点赞.{0,8}订阅.{0,8}转发.{0,8}打赏|点赞订阅转发打赏")
 LANGUAGE_LINE = re.compile(r"auto-detected language:\s*([a-z-]+)\s*\(p\s*=\s*([0-9.]+)\)")
 SUBTITLE_EXCLUDE = ("发个友善", "弹幕", "关注", "选集", "点赞", "投币", "收藏", "分享", "UP主")
@@ -342,15 +353,18 @@ def write_summaries(rows):
 
 
 def run(only_rows=None, force=False):
-    config = json.loads(CONFIG.read_text())
+    config = ({"video_dir": str(CASE_CONFIG.path_of(CASE_CONFIG.raw["evidence"]["video_dir"])),
+               "videos": CASE_CONFIG.raw["evidence"]["videos"]} if CASE_CONFIG else json.loads(CONFIG.read_text()))
     rows = [json.loads(line) for line in (CASE / "ledger.jsonl").read_text().splitlines()]
-    if len(rows) != 169:
+    if CASE_CONFIG and {r["row_id"] for r in rows} != set(CASE_CONFIG.row_ids):
+        raise ValueError("ledger rows differ from case config")
+    if not CASE_CONFIG and len(rows) != 169:
         raise ValueError(f"expected 169 ledger rows, got {len(rows)}")
-    if not Path("/Volumes/Element").is_mount():
-        raise FileNotFoundError("external disk /Volumes/Element is not mounted")
-    if not MODEL.exists() or not INDEX.exists() or not shutil.which("whisper-cli"):
+    if not Path(config["video_dir"]).is_dir():
+        raise FileNotFoundError(config["video_dir"])
+    if not MODEL.exists() or (not INDEX.exists() and not CASE_CONFIG) or not shutil.which("whisper-cli"):
         raise FileNotFoundError("local whisper.cpp model, index, or executable missing")
-    index = Index.load(INDEX)
+    index = Index.load(INDEX) if INDEX.exists() else Index([])
     OUTPUT.mkdir(parents=True, exist_ok=True)
     ocr_cache = {}
     for row in rows:

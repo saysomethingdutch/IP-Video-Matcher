@@ -59,6 +59,63 @@ def read_qsjx(path: Path):
     return rows
 
 
+def read_configured(path: Path, spec: dict, videos: set[str]) -> list[dict]:
+    """Read one batch using worksheet headers and row IDs supplied by the case."""
+    from openpyxl import load_workbook
+
+    workbook = load_workbook(path, read_only=True, data_only=True)
+    try:
+        sheet = workbook[spec["sheet"]]
+        iterator = sheet.iter_rows(values_only=True)
+        headers = [str(value) if value is not None else "" for value in next(iterator)]
+        columns = spec["columns"]
+        required = ("row_id", "video", "bv", "title", "uploader", "duration")
+        missing = [key for key in required if not columns.get(key) or columns[key] not in headers]
+        if missing:
+            raise ValueError(f"workbook columns absent: {missing}")
+        allowed = spec["row_ids"]
+        ids = (set(map(str, allowed)) if isinstance(allowed, list)
+               else {str(n) for n in range(int(allowed["first"]), int(allowed["last"]) + 1)})
+        result = []
+        for excel_row, values in enumerate(iterator, 2):
+            record = dict(zip(headers, values))
+            rid = str(record.get(columns["row_id"]) or "").removesuffix(".0")
+            if rid not in ids:
+                continue
+            raw_video = str(record.get(columns["video"]) or "")
+            video = Path(raw_video).stem
+            if video not in videos:
+                continue
+            date_key = columns.get("capture_date")
+            if spec.get("capture_date") and date_key:
+                date = record.get(date_key)
+                actual = date.date().isoformat() if isinstance(date, datetime) else str(date or "")[:10]
+                if actual != str(spec["capture_date"]):
+                    continue
+
+            def field(key: str) -> str:
+                heading = columns.get(key)
+                value = record.get(heading) if heading else None
+                return str(value or "")
+
+            result.append({
+                "row_id": rid, "video": video, "bv": field("bv"), "title": field("title"),
+                "uploader": field("uploader"),
+                "duration": duration_seconds(record.get(columns["duration"]),
+                                             qsjx=spec.get("duration_encoding") == "excel_mss"),
+                "views_claimed": field("views_claimed"), "part_claimed": field("part_claimed"),
+                "video_type": field("video_type"), "source_workbook": str(path),
+                "source_sheet": spec["sheet"], "source_row": excel_row,
+            })
+        found = {r["row_id"] for r in result}
+        if found != ids or len(result) != len(ids):
+            raise ValueError(f"workbook batch mismatch: expected {len(ids)} rows, found {len(result)}; "
+                             f"missing {sorted(ids - found)}")
+        return result
+    finally:
+        workbook.close()
+
+
 NS = "{http://schemas.openxmlformats.org/spreadsheetml/2006/main}"
 REL = "{http://schemas.openxmlformats.org/officeDocument/2006/relationships}"
 

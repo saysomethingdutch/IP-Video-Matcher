@@ -93,7 +93,7 @@ def export_case(store: ReviewStore):
     export_dir = store.case / "export"
     export_dir.mkdir(parents=True, exist_ok=True)
     stamp = datetime.now(ZoneInfo("Asia/Shanghai")).strftime("%Y%m%d")
-    dest = export_dir / f"七时吉祥-比对总表-机器填写-{stamp}.xlsx"
+    dest = export_dir / f"{store.export_name}-{stamp}.xlsx"
     if dest.resolve() == store.source_path.resolve():
         raise ValueError("refusing to modify source workbook")
     tmp = export_dir / (dest.name + ".tmp")
@@ -102,7 +102,7 @@ def export_case(store: ReviewStore):
         rels = etree.fromstring(source.read("xl/_rels/workbook.xml.rels"))
         content_types = etree.fromstring(source.read("[Content_Types].xml"))
         sheets = workbook.find(f"{{{MAIN}}}sheets")
-        source_sheet = next(x for x in sheets if x.get("name") == "比对表")
+        source_sheet = next(x for x in sheets if x.get("name") == store.sheet_name)
         rel_id = source_sheet.get(f"{{{R}}}id")
         target = next(x.get("Target") for x in rels if x.get("Id") == rel_id)
         sheet_path = target.lstrip("/") if target.startswith("/") else "xl/" + target
@@ -134,13 +134,13 @@ def export_case(store: ReviewStore):
             return yellow_styles[old_style]
 
         provenance = [["总编号", "比对表单元格", "字段", "取值", "来源", "经所有者修改", "核对状态"]]
-        for rid in (str(n) for n in range(1051, 1220)):
+        for rid in store.row_ids:
             detail = store.detail(rid)
             excel_row = int(store.rows[rid]["plaintiff"]["source_row"])
             row = rows[excel_row]
             held = detail["status"] == "待定"
             original = store.source_rows[excel_row]
-            for col in OUTPUT_COLS:
+            for col in store.output_columns:
                 field = detail["fields"][col - 1]
                 value = "待定" if held else field["value"]
                 coordinate = f"{col_name(col)}{excel_row}"

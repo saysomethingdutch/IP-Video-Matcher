@@ -152,9 +152,9 @@ def process_row(row: dict, frames: dict[int, list[dict]], index: Index, episodes
             "dropped": dict(rf.dropped)}
 
 
-def run(case_dir: Path, index_path: Path, ledger: Path | None = None, only: set[str] | None = None,
+def run(case_dir: Path, index_path: Path | None, ledger: Path | None = None, only: set[str] | None = None,
         log=print) -> list[dict]:
-    index = Index.load(index_path)          # includes adjacent-line pairs (textindex)
+    index = Index.load(index_path) if index_path else Index([])  # no source index: captions still extracted
     episodes = ev.Episodes(index)
     ledger = ledger or case_dir / "ledger.jsonl"
     rows = [json.loads(l) for l in ledger.read_text(encoding="utf-8").splitlines() if l.strip()]

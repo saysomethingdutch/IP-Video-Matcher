@@ -19,6 +19,7 @@ def main(argv=None) -> None:
     r.add_argument("case_dir", type=Path, help="e.g. workspace/pilot/qsjx_e18 (ledger.jsonl + ocr_cache/)")
     r.add_argument("--ledger", type=Path, help="ledger JSONL (default: <case_dir>/ledger.jsonl)")
     r.add_argument("--index", type=Path, default=REPO / "workspace/pilot/textindex/qsjx/index.sqlite")
+    r.add_argument("--no-source", action="store_true", help="extract captions without an original-episode index")
     r.add_argument("--rows", help="comma-separated row ids (default: all)")
     r.add_argument("--out", type=Path, help="output dir (default: <case_dir>/content)")
     a = ap.parse_args(argv)
@@ -28,12 +29,12 @@ def main(argv=None) -> None:
     out = a.out or a.case_dir / "content"
     only = set(a.rows.split(",")) if a.rows else None
     try:
-        results = run(a.case_dir, a.index, ledger, only)
+        results = run(a.case_dir, None if a.no_source else a.index, ledger, only)
     except FileNotFoundError as exc:
         raise SystemExit(str(exc))
     write_rows(results, out)
     pages = write_pages(results, a.case_dir, out, ledger.name)
-    s = summary(results, {"ledger": str(ledger), "index": str(a.index), "pages": pages,
+    s = summary(results, {"ledger": str(ledger), "index": str(a.index) if not a.no_source else None, "pages": pages,
                           "elapsed_s": round(time.monotonic() - t0, 1)})
     (out / "run_summary.json").write_text(json.dumps(s, ensure_ascii=False, indent=1), encoding="utf-8")
     print(f"{s['rows']} rows, {s['elapsed_s']} s -> {out}")
