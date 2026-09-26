@@ -39,7 +39,7 @@ def _fingerprint(config: CaseConfig, step: str, rows: list[str]) -> str:
                   config.path_of((raw["models"].get("audio") or {}).get("model"))],
         "visual": [config.case_dir / "ledger.jsonl", config.case_dir / "ocr_cache",
                    config.path_of(raw["evidence"]["video_dir"])],
-        "classification": [config.case_dir / "ledger.jsonl", config.case_dir / "content",
+        "classification": [config.case_dir / "ledger.jsonl", config.case_dir / "content", config.case_dir / "audio",
                            config.vlm_dir / "predictions_consensus_r3.csv", config.path_of(raw["client"]["rules"])],
         "opinion": [config.case_dir / "semantic", config.path_of(raw["client"]["style_examples"].get("workbook"))],
         "review": [config.case_dir / "ledger.jsonl", config.case_dir / "content", config.case_dir / "semantic",

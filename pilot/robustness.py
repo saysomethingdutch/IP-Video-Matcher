@@ -128,6 +128,8 @@ def _paths(config: CaseConfig) -> dict[str, Path]:
     paths = {"ledger": case / "ledger.jsonl"}
     for rid in config.row_ids:
         paths[f"content/{rid}"] = case / "content" / f"{rid}.json"
+        if (config.raw["models"].get("audio") or {}).get("enabled"):
+            paths[f"audio/{rid}"] = case / "audio" / f"{rid}.json"
         paths[f"visual/{rid}"] = config.vlm_dir / "r3" / rid / "consensus.json"
         paths[f"semantic/{rid}"] = case / "semantic" / f"{rid}.json"
         paths[f"deepseek/{rid}"] = case / "robustness" / "deepseek" / f"{rid}.json"
@@ -135,6 +137,10 @@ def _paths(config: CaseConfig) -> dict[str, Path]:
     if missing:
         raise RuntimeError(f"machine outputs incomplete ({len(missing)} missing): {missing[:8]}")
     for rid in config.row_ids:
+        if (config.raw["models"].get("audio") or {}).get("enabled"):
+            audio = json.loads(paths[f"audio/{rid}"].read_text(encoding="utf-8"))
+            if audio.get("status") not in ("ok", "skipped", "whisper_thai"):
+                raise RuntimeError(f"audio facts failed: {rid}: {audio.get('error')}")
         visual = json.loads(paths[f"visual/{rid}"].read_text(encoding="utf-8"))
         if visual.get("status") not in ("ok", "skipped"):
             raise RuntimeError(f"visual facts failed: {rid}: {visual.get('error')}")
