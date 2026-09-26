@@ -2,6 +2,7 @@ cache:
   adopt_existing: true
 case_id: qsjx_4086
 client:
+  story_edit_policy: strict  # D-041：字幕讲剧情、几乎没有观点判剧情解说；lenient = 有配乐/主题化剪辑时按混剪类（标黄）
   opinion_format:
     characters:
       hard_max: 330

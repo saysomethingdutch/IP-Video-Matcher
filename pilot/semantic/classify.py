@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from pilot.textindex.text import normalize
 
+from .audio import describe as describe_audio
 from .llm import ask
 
 NATURES = ["观点评析", "混剪", "夹叙夹议解说", "剧情解说", "reaction", "原片搬运", "其他", "不确定"]
@@ -18,8 +19,8 @@ MIN_TAGGED = 5            # fewer tagged lines than this: the comment share is n
 FORBIDDEN = ("合理使用", "辩护", "被告", "本案")   # never in a prompt (WO-004b §3.3)
 
 DEFINITIONS = """性质定义（只能选一个）：
-- reaction：UP主观看原剧并实时反应、点评，通常能看到UP主本人或听到其实时评论。
-- 混剪：剪辑原剧片段，配音乐、字幕或特效来表达某个主题（人物向、CP向、恶搞向），基本没有讲解。
+- reaction：UP主观看原剧并实时反应、点评，通常能看到UP主本人或听到其实时评论；没有出镜、但有持续的UP主口播点评，也可以是 reaction。
+- 混剪：剪辑原剧片段，配音乐、字幕或特效来表达某个主题（人物向、CP向、恶搞向），基本没有讲解；疑似UP主配乐是再创作的证据之一。
 - 剧情解说：主要是复述、讲解剧情，几乎没有个人观点。
 - 夹叙夹议解说：叙述剧情和个人观点、评论大约各占一半。
 - 观点评析：以UP主的观点、分析、评论为主，剧情只是素材（子类：深度解读、拉片解读、细节分析、人物小传、服化道盘点、文化科普、恶搞讽刺）。
@@ -54,6 +55,8 @@ def facts_text(d: dict, vision_note: str = "", with_image: bool = False) -> str:
         parts.append(f"【外文字幕】{extra['foreign_captions']} 条（原剧的外语配音版字幕）")
     if extra.get("foreign_speech_segments"):
         parts.append(f"【外语语音】{extra['foreign_speech_segments']} 段（语言：{extra['foreign_speech_language']}，未转成文字）")
+    if d.get("audio"):                                # only with WO-008 sound facts, so older digests read the same
+        parts.append(f"【声音】{describe_audio(d['audio'])}")
     if d["music"]["value"]:
         parts.append(f"【背景音乐】{'、'.join(d['music']['value'])}")
     elif d.get("music_counted"):
@@ -116,6 +119,27 @@ def comment_share(tags: dict[int, str]) -> float | None:
     return round(comment / (story + comment), 3)
 
 
+def commentary_nature(model_nature: str | None, tags: dict, rules: dict) -> tuple[str, float | None, list[dict]]:
+    """(nature, comment share, flags) for a row the model called a commentary type; thresholds in the rules
+    file (团队口径 D-041): few opinions -> 剧情解说, some opinions -> 夹叙夹议, the rest undecided."""
+    c = rules["commentary"]
+    story = sum(1 for t in tags.values() if t == "叙述剧情")
+    comment = sum(1 for t in tags.values() if t == "评论观点")
+    if story + comment < c.get("min_tagged", MIN_TAGGED):
+        return "不确定", None, [{"level": "yellow", "reason": "解说类：可判断的UP主文字太少，评论占比无法计算"}]
+    share = round(comment / (story + comment), 3)
+    if comment >= c["mixed_min_comments"] and share >= c["mixed_min_share"]:
+        if model_nature == "观点评析" and share >= c["opinion_min_share"]:
+            return "观点评析", share, []
+        if share < c["mixed_confident_share"]:
+            return "夹叙夹议解说", share, [{"level": "yellow", "reason": f"观点偏少，按团队口径判夹叙夹议（观点 {comment} 句，占比 {share:.2f}）"}]
+        return "夹叙夹议解说", share, []
+    if comment <= c["plot_max_comments"] and share < c["plot_max_share"]:
+        return "剧情解说", share, []
+    return "不确定", share, [{"level": "yellow",
+                               "reason": f"解说类：观点 {comment} 句、占比 {share:.2f}，不在团队口径的两档里，交所有者判断"}]
+
+
 def classify(d: dict, backend: str, rules: dict, images=(), vision_note: str = "", corpus: list[str] = ()) -> dict:
     """{"nature", "subtype", "recreation", "model_nature", "comment_share", "tags", "evidence", "flags", "calls"}."""
     flags, calls = [], []
@@ -150,19 +174,10 @@ def classify(d: dict, backend: str, rules: dict, images=(), vision_note: str = "
                     tags[i] = item["tag"]
     share = comment_share(tags)
 
-    # commentary types are separated by rule on the comment share (§3.3)
-    c = rules["commentary"]
+    # commentary types are separated by rule on the comment tags (§3.3; 团队口径 D-041)
     if nature in COMMENTARY:
-        if share is None:
-            flags.append({"level": "yellow", "reason": "解说类：可判断的UP主文字太少，评论占比无法计算"})
-            nature = "不确定"
-        elif share >= c["mixed_min"]:
-            nature = "观点评析" if model_nature == "观点评析" else "夹叙夹议解说"
-        elif share < c["plot_max"]:
-            nature = "剧情解说"
-        else:
-            flags.append({"level": "yellow", "reason": f"解说类：评论占比 {share:.2f}，介于 {c['plot_max']}–{c['mixed_min']}，交所有者判断"})
-            nature = "不确定"
+        nature, share, extra = commentary_nature(model_nature, tags, rules)
+        flags += extra
 
     evidence, bad = verify_quotes(data.get("evidence"), list(corpus) + [l["text"] for l in lines])
     if bad:

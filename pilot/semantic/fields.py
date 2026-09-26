@@ -45,22 +45,27 @@ def _number(text) -> float | None:
     return None if not m else float(m.group(1)) * (10000 if m.group(2) else 1)
 
 
-def parts_columns(d: dict, page_types: dict) -> tuple[dict, dict]:
-    """V (合集/分P) and W (共几个/几P，取证了第几个/P); 要求 L49-64."""
-    title = d["title"]["value"] or ""
-    found = [(int(a), int(b)) for a, b in PART_RE.findall(title) if 1 <= int(a) <= int(b) <= 20 and int(b) > 1]
-    if found:
-        n, m = found[-1]
-        basis = f"原告标题末尾的分P标记“{n}/{m}”" + ("；同 BV 在本批另有行 " + "、".join(d["ledger"]["duplicate_bv_rows"])
-                                               if d["ledger"]["duplicate_bv_rows"] else "")
-        return col("分P", "原告标题", basis), col(f"共{m}P，取证了第{n}P", "原告标题", basis)
-    for p in d["ledger"]["parts"]["value"]:
-        m = COLLECTION_RE.search(str(p))
+def parts_columns(d: dict, page_types: dict, part: dict | None = None) -> tuple[dict, dict]:
+    """V (合集/分P) and W (共几个/几P，取证了第几个/P); 要求 L49-64. `part` comes from parts.analyse (WO-004b-R2),
+    which also sees the other rows of the same BV; without it the row's own title and ledger are used."""
+    from .parts import parse_part
+    if part is None:
+        p = parse_part(d["title"]["value"], d["ledger"]["parts"]["value"])
+        part = {"part": p, "total": p["m"] if p else None, "flags": [],
+                "group": [d.get("row_id")] + list(d["ledger"]["duplicate_bv_rows"])}
+    p, others = part["part"], [g for g in part["group"] if g and g != d.get("row_id")]
+    same = ("；同 BV 在本批另有行 " + "、".join(others)) if others else ""
+    if p:
+        basis = f"{p['source']}：第{p['n']}P" + (f"，共{part['total']}P" if part["total"] else "") + same
+        w = f"共{part['total']}P，取证了第{p['n']}P" if part["total"] else f"取证了第{p['n']}P，总P数未识别"
+        return col("分P", "原告标题/台账", basis), col(w, "原告标题/台账", basis)
+    for x in d["ledger"]["parts"]["value"]:
+        m = COLLECTION_RE.search(str(x))
         if m:
-            basis = f"台账读到“{p}”"
+            basis = f"台账读到“{x}”"
             return col("合集", "台账 parts", basis), col(f"共{m.group(2)}个，取证了第{m.group(1)}个", "台账 parts", basis)
-    if d["ledger"]["duplicate_bv_rows"]:
-        basis = "同 BV 在本批另有行 " + "、".join(d["ledger"]["duplicate_bv_rows"]) + "，总P数未识别"
+    if others and not part.get("same_video"):
+        basis = "同 BV 在本批另有行 " + "、".join(others) + "，本行分P未识别"
         return col("分P", "台账 同BV行", basis), col("未识别", "台账 同BV行", basis)
     if page_types.get("竖屏详情页"):
         basis = "取证了竖屏详情页，未读到合集/分P标签（推定）"

@@ -54,6 +54,7 @@ source:
   boundaries: null  # Optional source head/tail boundary JSON.
 
 client:
+  story_edit_policy: strict  # D-041：字幕讲剧情、几乎没有观点判剧情解说；lenient = 有配乐/主题化剪辑时按混剪类（标黄）
   work_title: 作品名  # Used by opinion prompts and title checks.
   rules: /path/to/client-rules.yaml  # Four-grid and wording rules; never edit another case's rules.
   opinion_format:
