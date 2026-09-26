@@ -108,10 +108,11 @@ def _image_b64(path: Path) -> str:
 
 def ask(backend_name: str, prompt: str, images: list[Path] = (), json_mode: bool = True,
         timeout: float = 300.0, retries: int = 1, max_tokens: int | None = None,
-        required: tuple[str, ...] = ()) -> Reply:
+        required: tuple[str, ...] = (), system: str | None = None, temperature: float = 0.0) -> Reply:
     """max_tokens caps a local reply: qwen3:4b in JSON mode sometimes loops until the timeout, so a capped
     reply that does not parse is retried once without JSON mode. Cloud replies are not capped (their
-    thinking tokens count against the cap)."""
+    thinking tokens count against the cap). A system prompt goes first, so a provider that caches prompt
+    prefixes (DeepSeek) reuses it across rows; cached input tokens are counted in usage["cached"]."""
     b = BACKENDS[backend_name]
     key = os.environ.get(b.key_env) if b.key_env else None
     fallback = ""
@@ -126,8 +127,9 @@ def ask(backend_name: str, prompt: str, images: list[Path] = (), json_mode: bool
         msg = {"role": "user", "content": prompt}
         if images:
             msg["images"] = [_image_b64(p) for p in images]
-        payload = {"model": b.model, "messages": [msg], "stream": False,
-                   "options": {"temperature": 0, "num_ctx": 8192}}
+        messages = ([{"role": "system", "content": system}] if system else []) + [msg]
+        payload = {"model": b.model, "messages": messages, "stream": False,
+                   "options": {"temperature": temperature, "num_ctx": 8192}}
         if max_tokens:
             payload["options"]["num_predict"] = max_tokens
         if json_mode and not images:
@@ -140,8 +142,9 @@ def ask(backend_name: str, prompt: str, images: list[Path] = (), json_mode: bool
                 url["detail"] = b.image_detail
             content.append({"type": "image_url", "image_url": url})
         content.append({"type": "text", "text": prompt})
-        payload = {"model": b.model, "messages": [{"role": "user", "content": content}], "temperature": 0}
-    reply.usage = {"prompt": 0, "completion": 0, "reasoning": 0}
+        messages = ([{"role": "system", "content": system}] if system else []) + [{"role": "user", "content": content}]
+        payload = {"model": b.model, "messages": messages, "temperature": temperature}
+    reply.usage = {"prompt": 0, "completion": 0, "reasoning": 0, "cached": 0}
     if b.key_env:
         retries = max(retries, 2)                  # cloud: proxy and rate-limit errors are usually transient
     for attempt in range(retries + 1):             # a retried call is billed twice: time and tokens add up
@@ -166,7 +169,8 @@ def ask(backend_name: str, prompt: str, images: list[Path] = (), json_mode: bool
                 u = data.get("usage") or {}
                 details = u.get("completion_tokens_details") or {}
                 usage = {"prompt": u.get("prompt_tokens"), "completion": u.get("completion_tokens"),
-                         "reasoning": details.get("reasoning_tokens", 0)}
+                         "reasoning": details.get("reasoning_tokens", 0),
+                         "cached": u.get("prompt_cache_hit_tokens") or (u.get("prompt_tokens_details") or {}).get("cached_tokens", 0)}
             reply.usage = {k: reply.usage[k] + (usage.get(k) or 0) for k in reply.usage}
             reply.data = extract_json(reply.text, required)
         reply.seconds = round(reply.seconds + time.monotonic() - t0, 2)
