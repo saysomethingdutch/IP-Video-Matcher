@@ -290,23 +290,24 @@ def run(config: CaseConfig, from_step: str | None = None, requested_rows: str | 
     cloud_csv = config.vlm_dir / "predictions_cloud_full.csv"
     if cloud_csv.exists():
         with cloud_csv.open(encoding="utf-8-sig", newline="") as handle:
-            costs["visual_usd"] = round(sum(float(r.get("cost_usd") or 0) for r in csv.DictReader(handle)), 4)
+            costs["visual_usd"] = round(sum(float(r.get("cost_usd") or 0) for r in csv.DictReader(handle)
+                                            if r.get("row_id") in rows), 4)
     calls = []
+    opinion_cost = 0.0
     for rid in rows:
         path = config.case_dir / "semantic" / f"{rid}.json"
         if path.exists():
-            calls.extend(json.loads(path.read_text(encoding="utf-8")).get("calls") or [])
+            item = json.loads(path.read_text(encoding="utf-8"))
+            calls.extend(item.get("calls") or [])
+            opinion_cost += float((item.get("opinion") or {}).get("usd") or 0)
     deepseek = [c for c in calls if c.get("backend") == "deepseek"]
     if deepseek:
         prompt = sum((c.get("usage") or {}).get("prompt") or 0 for c in deepseek)
         completion = sum((c.get("usage") or {}).get("completion") or 0 for c in deepseek)
         # Cache-miss peak-hour tariff from semantic.compare; actual billed amount may be lower.
         costs["classification_upper_usd"] = round((prompt * .30 + completion * 1.20) / 1e6, 4)
-    opinion_summary = config.case_dir / "semantic" / "opinion_summary.json"
-    if opinion_summary.exists():
-        value = json.loads(opinion_summary.read_text(encoding="utf-8")).get("usd")
-        if value is not None:
-            costs["opinion_usd"] = float(value)
+    if opinion_cost:
+        costs["opinion_usd"] = round(opinion_cost, 4)
     if costs:
         costs["known_or_upper_total_usd"] = round(sum(costs.values()), 4)
         report["cloud_cost_usd"] = costs
