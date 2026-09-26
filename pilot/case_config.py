@@ -46,6 +46,11 @@ class CaseConfig:
             raise ValueError("source.enabled requires source.episode_dir")
         if not self.raw["client"].get("rules") or not self.raw["client"].get("opinion_format"):
             raise ValueError("client.rules and client.opinion_format are required")
+        opinion = self.raw["client"]["opinion_format"]
+        if len(opinion.get("headings") or []) != 3 or not opinion.get("conclusion"):
+            raise ValueError("opinion_format needs three headings and a conclusion")
+        if self.case_id != "qsjx_e18" and not opinion.get("prompt_rules"):
+            raise ValueError("new cases need client.opinion_format.prompt_rules")
         if not self.raw["evidence"].get("videos"):
             raise ValueError("evidence.videos must list the recording files")
         ledger = self.raw.get("ledger") or {}

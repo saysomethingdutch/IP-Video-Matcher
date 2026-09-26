@@ -26,6 +26,8 @@ def test_review_and_export_respect_case_column_mapping(tmp_path):
                for i, letter in enumerate(LOGICAL_OUTPUTS)}
     output = tmp_path / "case"
     config_path = tmp_path / "case.yaml"
+    rules = tmp_path / "opinion.txt"
+    rules.write_text("Write from the facts only.")
     config_path.write_text(yaml.safe_dump({
         "schema_version": 1, "case_id": "test_case",
         "workbook": {"path": str(source), "sheet": "Case Sheet", "row_ids": [17],
@@ -33,7 +35,9 @@ def test_review_and_export_respect_case_column_mapping(tmp_path):
                      "output_columns": mapping},
         "evidence": {"videos": {"V1": {}}, "video_dir": str(tmp_path), "screenshot_dir": str(tmp_path)},
         "source": {"enabled": False},
-        "client": {"rules": str(tmp_path / "rules.yaml"), "opinion_format": {"headings": []}},
+        "client": {"rules": str(tmp_path / "rules.yaml"), "opinion_format": {
+            "headings": ["Purpose", "Proportion", "Substitution"], "conclusion": "End.",
+            "prompt_rules": str(rules)}},
         "models": {"visual": {"allow_image_upload": False}, "text": "local", "speech": {"enabled": False}},
         "output": {"dir": str(output), "export_name": "result"}, "ledger": {"case": "custom", "screenshot_time_pattern": r"(\d\d)(\d\d)(\d\d)"}
     }), encoding="utf-8")
