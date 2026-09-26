@@ -29,10 +29,10 @@ RULES = """你为短视频比对表起草"比对意见"里的两段：【使用�
 {"purpose": "第一段正文，不含提示语", "substitution": "第二段正文，不含提示语", "evidence": [{"point": "具体点", "quote": "原样摘抄"}]}"""
 
 
-def system_prompt(samples: list[dict]) -> str:
+def system_prompt(samples: list[dict], rules: str | None = None) -> str:
     shown = "\n\n".join(f"【样例 {i}：{s['type']}，{s['source']}】\n第一段：{s['purpose']}\n第二段：{s['substitution']}"
                         for i, s in enumerate(samples, 1))
-    return (RULES + "\n\n风格样例（只学文风和结构，不学结论；样例里的剧情、人物和数字与要写的视频无关）：\n\n" + shown)
+    return ((RULES if rules is None else rules) + "\n\n风格样例（只学文风和结构，不学结论；样例里的剧情、人物和数字与要写的视频无关）：\n\n" + shown)
 
 
 def fit(lines: list[str], limit: int) -> list[str]:
