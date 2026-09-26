@@ -64,8 +64,8 @@ client:
   rules: pilot/semantic/rules_qsjx.yaml
   opinion_format:
     headings: [【使用的性质和目的】, 【使用的比例】, 【对原作品的替代可能性】]
-    conclusion: 因此该视频构成"介绍、评论、说明"目的的合理使用。
-    characters: {target_min: 200, target_max: 300, hard_max: 380}
+    conclusion: 因此该视频构成“介绍、评论、说明”目的的合理使用。
+    characters: {target_min: 220, target_max: 300, hard_max: 330}
   style_examples:
     workbook: /Volumes/Element/ip-video-matching-repo_de_material/七时吉祥/七时吉祥-比对总表 - 副本.xlsx
     requirements: /Volumes/Element/ip-video-matching-repo_de_material/七时吉祥/七时吉祥比对要求.docx

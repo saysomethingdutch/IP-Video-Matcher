@@ -6,9 +6,9 @@
 2. 已授权的七时吉祥配置是 `cases/qsjx.yaml`。完整运行：
 
    ```bash
-   zsh -lic 'python -m pilot run cases/qsjx.yaml'
+   zsh -lic 'python3 -m pilot run cases/qsjx.yaml'
    ```
 
-   从分类开始重跑：`zsh -lic 'python -m pilot run cases/qsjx.yaml --from classification'`。仅处理两行：`zsh -lic 'python -m pilot run cases/qsjx.yaml --rows 1051,1098'`。从仓库根目录执行后两条命令。可用步骤名：`ledger`、`captions`、`speech`、`visual`、`classification`、`opinion`、`review`。未变化的输入沿用缓存；`--from` 强制重跑该步及后续步骤。`--rows` 保留整批台账，仅重算指定行。
+   本机登录 shell 有 `python3`，没有裸 `python` 命令；已激活 `.venv` 的环境可把 `python3` 换成 `python`。从分类开始重跑：`zsh -lic 'python3 -m pilot run cases/qsjx.yaml --from classification'`。仅处理两行：`zsh -lic 'python3 -m pilot run cases/qsjx.yaml --rows 1051,1098'`。从仓库根目录执行后两条命令。可用步骤名：`ledger`、`captions`、`speech`、`visual`、`classification`、`opinion`、`review`。未变化的输入沿用缓存；`--from` 强制重跑该步及后续步骤。`--rows` 保留整批台账，仅重算指定行。
 3. 运行结束看终端摘要及 `workspace/pilot/<案件>/integration_summary.json`。红黄旗标仍需人工核验；语音可在配置中关闭。云端图片上传仅受 `models.visual.allow_image_upload` 控制；未授权时设为 `false`。模型密钥从登录 shell 环境继承，配置文件不放密钥。
-4. 打开核对页：`python -m pilot review cases/qsjx.yaml`，浏览器访问 `http://127.0.0.1:8765/`。逐行核对、修改并批准。核对页只监听本机回环地址。导出：`python -m pilot export cases/qsjx.yaml`。结果和修改记录位于配置指定输出目录的 `export/`；原表不变。
+4. 打开核对页：`python3 -m pilot review cases/qsjx.yaml`，浏览器访问 `http://127.0.0.1:8765/`。逐行核对、修改并批准。核对页只监听本机回环地址。导出：`python3 -m pilot export cases/qsjx.yaml`。结果和修改记录位于配置指定输出目录的 `export/`；原表不变。
