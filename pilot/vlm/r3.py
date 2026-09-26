@@ -539,7 +539,8 @@ def finalize(case: Path):
     modes = Counter(json.loads((R3 / r["row_id"] / "meta.json").read_text(encoding="utf-8"))["page_mode"] for r in rows(case))
     summary = {"rows": len(consensus), "page_modes": dict(modes),
                "yellow_rows": sum(bool(r["flags"]) for r in consensus),
-               "yellow_played_rows": sum(bool(r["flags"]) and r["row_id"] not in NO_PLAY for r in consensus),
+               "yellow_played_rows": sum(bool(r["flags"]) and r["status"] == "ok" and
+                                         r["row_id"] not in NO_PLAY for r in consensus),
                "yellow_layout_rows": sum(any(f.startswith("布局／比例待核") for f in r["flags"]) for r in consensus),
                "disagreement_items": len(disagreements), "disagreement_rows": len({d["row_id"] for d in disagreements}),
                "ab_no_examples": {rid: next(r for r in consensus if r["row_id"] == rid)["rights_content_ratio"] == "约1"
