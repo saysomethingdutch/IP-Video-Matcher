@@ -39,7 +39,8 @@ def facts_text(d: dict, vision_note: str = "", with_image: bool = False) -> str:
     parts = [f"【视频标题】{d['title']['value']}"]
     if vis:
         parts.append(f"【画面事实】布局：{vis['layout']}；UP主真人出镜：{vis['uploader_on_camera']}；"
-                     f"画面上的附加元素：{'、'.join(vis['overlays']) or '无'}；原剧画面约占：{vis['rights_ratio_geometry'] or vis['rights_ratio_model']}")
+                     f"画面上的附加元素：{'、'.join(vis['overlays']) or '无'}；原剧画面约占："
+                     f"{vis['rights_ratio_model'] if vis.get('consensus') else vis['rights_ratio_geometry'] or vis['rights_ratio_model']}")
     elif vision_note:
         parts.append(f"【画面事实】{vision_note}")
     elif with_image:                        # one call: the model looks at the collage itself

@@ -80,7 +80,10 @@ def facts(r: dict, case_dir: Path) -> dict:
             "short": isinstance(video, (int, float)) and video < SHORT_SECONDS,
             "picture": {c: str(r["fields"][c]["value"]) for c in PICTURE},
             "picture_named": {name: str(r["fields"][c]["value"]) for c, name in PICTURE.items()},
-            "up_texts": up, "up_cut": len(up) < len(up_all), "foreign": foreign, "foreign_language": lang, "note": note}
+            "up_texts": up, "up_cut": len(up) < len(up_all), "foreign": foreign, "foreign_language": lang,
+            "title_only": not up and not foreign,
+            "note": "".join(n for n in (note, "没有UP主文字和外语语音：第一段以标题和画面为依据，只概括主题，不要编造情节。"
+                                        if not up and not foreign else None) if n) or None}
 
 
 def assemble(purpose: str, prop: str, substitution: str) -> str:
@@ -95,7 +98,7 @@ def inputs_hash(system: str, f: dict, prop: str) -> str:
 def context(f: dict, prop: dict, data: dict) -> dict:
     return {"title": f["title"], "up_texts": f["up_texts"], "foreign": f["foreign"], "picture": f["picture"],
             "picture_named": f.get("picture_named"), "proportion": prop["text"], "evidence": data.get("evidence"),
-            "nature": f.get("nature_raw")}
+            "nature": f.get("nature_raw"), "title_only": f.get("title_only")}
 
 
 def revalidate(r: dict, case_dir: Path, ep_secs: dict) -> dict | None:
@@ -156,6 +159,8 @@ def opinion_for(r: dict, case_dir: Path, ep_secs: dict, system: str, backend: st
         flags.append({"level": "yellow", "reason": "分类为不确定：意见照常起草，请核对性质"})
     if f["foreign"]:
         flags.append({"level": "yellow", "reason": "外语转写，请核对大意"})
+    if f["title_only"]:
+        flags.append({"level": "yellow", "reason": "依据只有标题和画面，请核对"})
     if not prop["text"]:
         return {"kind": "draft", "text": "", "flags": flags, "inputs_hash": key,
                 "validation": {"ok": False, "errors": ["比例段缺集数，未起草"]}}

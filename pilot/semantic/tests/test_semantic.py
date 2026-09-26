@@ -77,6 +77,10 @@ class FieldTest(unittest.TestCase):
         self.assertEqual(F.size_column(digest())[0]["value"], "未识别")
         ab, flags = F.size_column(digest(visual={**vis, "rights_ratio_geometry": "不确定", "rights_ratio_model": "不确定"}))
         self.assertEqual((ab["value"], flags[0]["level"]), ("未识别", "yellow"))
+        settled = {**vis, "consensus": True, "rights_ratio_geometry": "约1", "rights_ratio_model": "约1/4"}
+        self.assertEqual(F.size_column(digest(visual=settled))[0]["value"], "是，画面缩小为约1/4")   # R3: settled value wins
+        ab, flags = F.size_column(digest(visual={**settled, "rights_ratio_model": "不确定"}))
+        self.assertEqual((ab["value"], flags[0]["reason"]), ("未识别", "画面大小：三方定值为不确定"))
         unsure = {**vis, "uploader_on_camera": "不确定", "layout": "全屏"}
         z, flags = F.non_rights_column(digest(visual=unsure))
         self.assertEqual((z["value"], flags[0]["level"]), ("未识别", "yellow"))   # not a plain "否"

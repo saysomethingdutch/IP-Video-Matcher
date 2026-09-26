@@ -13,7 +13,7 @@ from pilot.textindex.text import normalize
 
 PURPOSE, PROPORTION, SUBSTITUTION = "【使用的性质和目的】", "【使用的比例】", "【对原作品的替代可能性】"
 CONCLUSION = "因此该视频构成“介绍、评论、说明”目的的合理使用。"
-MIN_CHARS, MAX_CHARS = 150, 380
+MIN_CHARS, MAX_CHARS = 150, 330          # R1 §2: aim at 220–300, never above 330
 MAX_QUOTES = 2
 WORK = "七时吉祥"
 CLIENT_PHRASES = ("介绍、评论、说明", "嗑CP", "获得陪伴感", "学习解读视角", "反应+评论", "适当引用")   # 客户示例用语
@@ -74,7 +74,7 @@ def validate(text: str, parts: dict, ctx: dict) -> list[str]:
         errors.append(f"结构：最后一句必须是“{CONCLUSION}”")
     n = char_count(text)
     if not MIN_CHARS <= n <= MAX_CHARS:
-        errors.append(f"字数：全文 {n} 字，要求 {MIN_CHARS}–{MAX_CHARS} 字（200–300 字为宜）")
+        errors.append(f"字数：全文 {n} 字，要求 {MIN_CHARS}–{MAX_CHARS} 字（220–300 字为宜）")
     purpose = plain(parts.get("purpose", ""))
     if not TRANSFORM_END.search(purpose.strip()):
         errors.append("第一段结尾要写“具有转换性”或“具有一定的转化性使用特征”")
@@ -114,8 +114,11 @@ def validate(text: str, parts: dict, ctx: dict) -> list[str]:
     if "一口气看完" in body and "一口气看完" not in title:
         errors.append("禁用语：标题里没有“一口气看完”，不能这样定性（常见错误 5）")
 
-    # 6 a concrete point: >= 4 consecutive characters shared with the uploader's text or the picture facts
-    p_norm, src, t_norm = normalize(purpose), normalize(up + picture), normalize(title)
+    # 6 a concrete point: >= 4 consecutive characters shared with the uploader's text or the picture facts;
+    #   a row with nothing but its title may lean on the title (R1 §2, flagged yellow by the pipeline)
+    title_only = ctx.get("title_only")
+    p_norm, src = normalize(purpose), normalize(up + picture + (title if title_only else ""))
+    t_norm = "" if title_only else normalize(title)
     if not any(p_norm[i:i + 4] in src and p_norm[i:i + 4] not in t_norm for i in range(len(p_norm) - 3)):
         errors.append("具体性：第一段没有写出这条视频特有的内容（与 UP 主文字或画面事实没有 4 字以上的重合），是套话")
 
@@ -147,7 +150,7 @@ def validate(text: str, parts: dict, ctx: dict) -> list[str]:
 
     # evidence quotes are verbatim
     shown = "；".join(f"{k}：{v}" for k, v in (ctx.get("picture_named") or {}).items())   # the line as the prompt shows it
-    corpus = normalize(up + "\n".join(ctx.get("foreign", [])) + picture + shown)
+    corpus = normalize(up + "\n".join(ctx.get("foreign", [])) + picture + shown + (title if title_only else ""))
     quotes = [e for e in ctx.get("evidence") or [] if isinstance(e, dict) and str(e.get("quote") or "").strip()]
     bad = [e["quote"] for e in quotes if normalize(str(e["quote"])) not in corpus]
     if not quotes:

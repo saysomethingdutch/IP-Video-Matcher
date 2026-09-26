@@ -29,8 +29,9 @@ def main(argv=None) -> None:
     r.add_argument("--workers", type=int, default=1, help="rows classified at once (cloud backends only)")
     r.add_argument("--fields-only", action="store_true",
                    help="with --reuse: keep every saved classification, recompute the columns only (no model call)")
-    r.add_argument("--visual", default="full", choices=["r1", "full"],
-                   help="r1 = the 19 WO-004a-R1 rows only; full = predictions_full.csv wins over r1")
+    r.add_argument("--visual", default="full", choices=["r1", "full", "consensus"],
+                   help="r1 = the 19 WO-004a-R1 rows only; full = predictions_full.csv wins over r1; "
+                        "consensus = predictions_consensus_r3.csv (WO-004a-R3)")
     r.add_argument("--reuse", action="store_true", help="reuse saved classifications in the output dir; rows whose model call failed are classified again")
     r.add_argument("--no-local", action="store_true", help="never call the local Ollama, not even as a fallback (D-026)")
     c = sub.add_parser("compare", help="§3.4b cloud vs local comparison")

@@ -23,19 +23,25 @@ class ProportionTest(unittest.TestCase):
 
     def test_single_episode_with_evidence(self):
         p = proportion(digest(evidence=[2]), EPS)
-        self.assertEqual(p["text"], "对应剧集为第2集，长约41分钟，被诉视频引用原作品的画面仅2分6秒，占原作品比例较少，为5.12%，足以构成适当引用。")
+        self.assertEqual(p["text"], "对应剧集为第2集，约长41分钟，被诉视频引用原作品的画面仅2分6秒，占原作品比例较少，为5.12%，足以构成适当引用。")
         self.assertEqual(p["flags"], [])
 
-    def test_over_ten_percent_has_no_number(self):
+    def test_over_ten_percent_uses_the_short_template(self):
         p = proportion(digest(evidence=[1], video=600), EPS)
-        self.assertIn("占原作品比例较少，足以", p["text"])
-        self.assertNotIn("%", p["text"])
+        self.assertEqual(p["text"], "对应剧集为第1集，约长40分钟，占原作品比例较少，足以构成适当引用。")
 
-    def test_claim_and_missing_episode(self):
-        p = proportion(digest(claim="3-4", te={"episodes": [7]}), EPS)
-        self.assertTrue(p["text"].startswith("对应剧集为第3、4集，每集平均长约"))
+    def test_title_episode_before_the_claim(self):
+        p = proportion(digest(claim="3-4", te={"episodes": [2]}), EPS)
+        self.assertTrue(p["text"].startswith("对应剧集为第2集，约长41分钟，被诉视频引用原作品的画面仅2分6秒"))
+        self.assertIn("标题/台标", p["flags"][0]["reason"])
+
+    def test_claim_only_has_no_percentage(self):
+        p = proportion(digest(claim="3-4"), EPS)
+        self.assertTrue(p["text"].startswith("对应剧集为原告主张的第3、4集，每集平均长约"))
+        self.assertTrue(p["text"].endswith("分钟，占原作品比例较少，足以构成适当引用。"))
+        self.assertNotIn("%", p["text"])
         reasons = " ".join(f["reason"] for f in p["flags"])
-        self.assertIn("原告声称（标题/台标为第7集）", reasons)
+        self.assertIn("原告主张，未核实，不算百分比", reasons)
         self.assertIn("第4集本地缺片", reasons)
 
     def test_unknown_duration(self):
@@ -95,6 +101,14 @@ class ValidateTest(unittest.TestCase):
         self.assertTrue(any(e.startswith("类型") for e in validate(*opinion(mixed), {**CTX, "nature": "观点评析"})))
         self.assertFalse(any(e.startswith("类型") for e in validate(*opinion(mixed), {**CTX, "nature": "夹叙夹议解说"})))
 
+    def test_title_only_rows_may_lean_on_the_title(self):
+        purpose = "该视频为人物向混剪，围绕标题中陆长空历劫归来的主题，**集中呈现二人的追忆情感**，具有转换性。"
+        ctx = {**CTX, "title": "仙君历劫归来，世间再无陆长空", "up_texts": [], "picture": {"Z": "否", "AA": "否", "AB": "否"},
+               "evidence": [{"quote": "世间再无陆长空"}]}
+        self.assertTrue(any(e.startswith("具体性") for e in validate(*opinion(purpose), ctx)))
+        errors = validate(*opinion(purpose), {**ctx, "title_only": True})
+        self.assertFalse(any(e.startswith(("具体性", "证据")) for e in errors), errors)
+
     def test_evidence_must_be_verbatim(self):
         errors = validate(*opinion(), {**CTX, "evidence": [{"quote": "编出来的话"}]})
         self.assertTrue(any(e.startswith("证据") for e in errors))
@@ -132,6 +146,19 @@ class RouteTest(unittest.TestCase):
             out = PL.draft({}, f, {"text": PROP}, "system", "deepseek")
         self.assertEqual((out["errors"], len(out["calls"])), ([], 2))
         self.assertTrue(prompts[1].startswith("重试：") and "具体性" in prompts[1] and "加粗" in prompts[1])
+
+
+class AbTest(unittest.TestCase):
+    def test_sample_is_stratified_and_fixed(self):
+        from pilot.opinion.ab import sample
+        natures = ["reaction"] * 8 + ["混剪"] * 8 + ["观点评析"] * 4 + ["夹叙夹议解说"] * 4 + ["不确定"] * 8 + ["reaction"]
+        rows = {str(1000 + i): {"classification": {"nature": n}, "flags": [], "opinion": {"text": "x"},
+                                "fields": {"AG": {"value": "是"}}} for i, n in enumerate(natures)}
+        picked = sample(rows)
+        self.assertEqual(len(picked), 20)
+        self.assertEqual(picked, sample(rows))
+        kinds = [rows[p]["classification"]["nature"] for p in picked]
+        self.assertEqual((kinds.count("reaction"), kinds.count("混剪"), kinds.count("不确定")), (5, 5, 5))
 
 
 if __name__ == "__main__":

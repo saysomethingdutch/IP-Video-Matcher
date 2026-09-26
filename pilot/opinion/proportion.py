@@ -1,9 +1,10 @@
 """【使用的比例】 written by code from the RowDigest (WO-004c §3.1); the model never writes a number here.
 
-Episodes: content's lyric-free dialogue evidence; without it the plaintiff's claim (yellow), then the
-title/logo episode (yellow). Episode length: the local copies real_test/qsjx_epNN.ts measured with
-ffprobe; an episode missing locally counts as the mean of the local ones ("每集平均长约X分钟").
-Quoted footage: the video duration (v1, as the human samples do).
+Episodes: content's lyric-free dialogue evidence; without it the title/logo episode (yellow); then the
+plaintiff's claim, written as "原告主张的第X集" and never turned into a percentage (WO-004c-R1 §2: an
+unchecked episode must not look exact). Episode length: the local copies real_test/qsjx_epNN.ts measured
+with ffprobe; an episode missing locally counts as the mean of the local ones ("每集平均长约X分钟").
+Quoted footage: the video duration. Above 10% the short template is used (R1 §3, like human sample 851).
 """
 from __future__ import annotations
 
@@ -49,13 +50,12 @@ def corresponding_episodes(d: dict) -> tuple[list[int], str, list[dict]]:
     loose = sorted({e["episode"] for e in ev})
     if loose:
         return loose, "疑似台词证据", [flag("yellow", "比例段：集数只有疑似证据（前情回顾），请核对")]
-    claim = parse_claim(d["plaintiff"]["part_claimed"])
     te = d["episodes"].get("title_episode")
-    if claim:
-        hint = f"（标题/台标为第{te['episodes'][0]}集）" if te and te.get("episodes") and te["episodes"][0] not in claim else ""
-        return sorted(claim), "原告声称", [flag("yellow", "比例段：没有台词证据，集数取原告声称" + hint)]
     if te and te.get("episodes"):
-        return [te["episodes"][0]], "标题/台标", [flag("yellow", "比例段：没有台词证据、原告声称无法解析，集数取标题/台标")]
+        return [te["episodes"][0]], "标题/台标", [flag("yellow", "比例段：没有台词证据，集数取标题/台标")]
+    claim = parse_claim(d["plaintiff"]["part_claimed"])
+    if claim:
+        return sorted(claim), "原告主张", [flag("yellow", "比例段：集数只有原告主张，未核实，不算百分比")]
     return [], "无", [flag("red", "比例段：对应集数无法确定")]
 
 
@@ -88,27 +88,25 @@ def proportion(d: dict, ep_secs: dict[int, float]) -> dict:
     missing = [e for e in eps if e not in ep_secs]
     total = sum(ep_secs.get(e, avg_local) for e in eps)
     minutes = round(total / len(eps) / 60)
-    label = episode_label(eps)
+    label = ("原告主张的" if source == "原告主张" else "") + episode_label(eps)
     if missing:
         length = f"每集平均长约{minutes}分钟"
         flags.append(flag("yellow", f"比例段：第{'、'.join(map(str, missing))}集本地缺片，按本地各集平均时长计"))
     else:
-        length = f"长约{minutes}分钟" if len(eps) == 1 else f"每集长约{minutes}分钟"
+        length = f"约长{minutes}分钟" if len(eps) == 1 else f"每集长约{minutes}分钟"
     numbers = set(eps) | {minutes}
     video = d["ledger"]["video_duration"]["value"]
     basis = {"episodes": eps, "source": source, "episode_minutes": minutes, "missing_locally": missing,
              "total_seconds": round(total, 1), "video_seconds": video}
-    if not isinstance(video, (int, float)) or video <= 0:
-        text = f"对应剧集为{label}，{'约长' + str(minutes) + '分钟' if len(eps) == 1 and not missing else length}，" \
-               "占原作品比例较少，足以构成适当引用。"
-        return {"text": text, "numbers": numbers, "basis": basis, "flags": flags}
+    short = f"对应剧集为{label}，{length}，占原作品比例较少，足以构成适当引用。"
+    if not isinstance(video, (int, float)) or video <= 0 or source == "原告主张":
+        return {"text": short, "numbers": numbers, "basis": basis, "flags": flags}
     pct = video / total * 100
-    m, s = divmod(int(round(video)), 60)
-    numbers |= {m, s}
-    share = "占原作品比例较少"
-    if pct <= MAX_SHOWN_PCT:
-        share += f"，为{pct_text(pct)}%"
-        numbers.add(pct_text(pct))
     basis["pct"] = round(pct, 3)
-    text = f"对应剧集为{label}，{length}，被诉视频引用原作品的画面仅{minutes_seconds(video)}，{share}，足以构成适当引用。"
+    if pct > MAX_SHOWN_PCT:                    # no "仅18分45秒" for a reaction that covers four tenths of an episode
+        return {"text": short, "numbers": numbers, "basis": basis, "flags": flags}
+    m, s = divmod(int(round(video)), 60)
+    numbers |= {m, s, pct_text(pct)}
+    text = (f"对应剧集为{label}，{length}，被诉视频引用原作品的画面仅{minutes_seconds(video)}，"
+            f"占原作品比例较少，为{pct_text(pct)}%，足以构成适当引用。")
     return {"text": text, "numbers": numbers, "basis": basis, "flags": flags}
