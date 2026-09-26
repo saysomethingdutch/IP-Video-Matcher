@@ -143,8 +143,9 @@ def prepare_one(row: dict, case: Path, videos: Path,
     existing = target / "meta.json"
     if existing.exists():
         prior = json.loads(existing.read_text(encoding="utf-8"))
+        version = prior.get("canvas_version")
         if Path(prior.get("collage_path", "")).is_file() and (
-                prior.get("page_mode") != "landscape" or prior.get("canvas_version") == 2):
+                prior.get("page_mode") != "landscape" or isinstance(version, int) and version >= 2):
             return prior
     if row["row_id"] in NO_PLAY or not any(s.get("event") == "play" for s in row.get("playback_map", [])):
         try:

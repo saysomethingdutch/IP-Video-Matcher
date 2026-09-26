@@ -19,6 +19,17 @@ class CaseCanvasTest(unittest.TestCase):
         self.assertEqual(len(times), len(set(times)))
         self.assertTrue(all(838 <= t < 839 for t in times))
 
+    def test_prepared_canvas_version_three_is_reused(self):
+        with tempfile.TemporaryDirectory() as folder:
+            target = Path(folder) / "r3" / "1663"
+            target.mkdir(parents=True)
+            collage = target / "collage_1.jpg"
+            collage.touch()
+            meta = {"collage_path": str(collage), "page_mode": "landscape", "canvas_version": 3}
+            (target / "meta.json").write_text(json.dumps(meta))
+            with mock.patch.object(r3, "R3", Path(folder) / "r3"):
+                self.assertEqual(r3.prepare_one({"row_id": "1663"}, Path(folder), Path(folder), {}, {}), meta)
+
     def test_case_box_follows_phone_orientation(self):
         preset = {"landscape": [250, 60, 1080, 500], "portrait": [465, 60, 755, 225],
                   "rotated_portrait": [195, 100, 470, 570]}
