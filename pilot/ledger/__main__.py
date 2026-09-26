@@ -23,7 +23,8 @@ def run_case(config_path, only_videos=None):
     else:
         rows = read_qsjx(Path(config["workbook"])) if case == "qsjx" else read_zhuyu(Path(config["workbook"]))
     names = [name for name in config["videos"] if not only_videos or name in only_videos]
-    rows = [row for row in rows if row["video"] in names]
+    if not config.get("workbook_spec"):
+        rows = [row for row in rows if row["video"] in names]
     if not rows:
         raise ValueError("no workbook rows selected")
     fps = config.get("fps", 1)
@@ -54,9 +55,11 @@ def run_case(config_path, only_videos=None):
                 records = frame_ocr(path, config["videos"][name], fps, output / "ocr_cache",
                                     Path(directory), force_full=force_full)
                 frame_count += len(records)
-                obs = observations(records, {row["duration"] for row in rows if row["video"] == name})
+                local_rows = [row for row in rows if row["video"] == name]
+                candidate_rows = local_rows or rows
+                obs = observations(records, {row["duration"] for row in candidate_rows})
                 if config.get("repair_nearby_identity", case == "qsjx"):
-                    resolve_nearby_identity_readings(obs, [row for row in rows if row["video"] == name])
+                    resolve_nearby_identity_readings(obs, candidate_rows)
                 obs_by_video[name] = obs
                 sessions.extend(build_sessions(obs, fps, name))
             print(f"{case_id}: {name} {len(records)} frames, {sum(s['video']==name for s in sessions)} sessions", flush=True)
@@ -65,23 +68,25 @@ def run_case(config_path, only_videos=None):
         for _ in range(2 if config.get("repair_truncated_readings", case == "qsjx") else 1):
             for name, shots in mapped.items():
                 add_screenshots([s for s in sessions if s["video"] == name], shots)
-            linked, unmatched = match_sessions(sessions, rows)
+            linked, unmatched = match_sessions(sessions, rows, cross_video=bool(config.get("workbook_spec")))
             if not config.get("repair_truncated_readings", case == "qsjx"):
                 break
             adopted = sum(resolve_truncated_readings(obs_by_video[name],
-                [row for row in rows if row["video"] == name], linked) for name in names)
+                [row for row in rows if row["video"] == name] or rows, linked,
+                cross_video=bool(config.get("workbook_spec"))) for name in names)
             if not adopted:
                 break
             sessions = [session for name in names
                         for session in build_sessions(obs_by_video[name], fps, name)]
         for name, shots in mapped.items():
             add_screenshots([s for s in sessions if s["video"] == name], shots)
-        linked, unmatched = match_sessions(sessions, rows)
+        linked, unmatched = match_sessions(sessions, rows, cross_video=bool(config.get("workbook_spec")))
         ledger = build_rows(rows, linked, output, video_paths, fps=fps, video_obs=obs_by_video)
         link_without_readings(ledger, mapped, obs_by_video, output, video_paths)
         audit = quality_audit(ledger, obs_by_video)
         summary = write_outputs(output, ledger, unmatched, names, durations,
-                                time.monotonic() - started, frame_count, case_id, fps, audit)
+                                time.monotonic() - started, frame_count, case_id, fps, audit,
+                                session_audit=sessions if config.get("workbook_spec") else None)
         if config.get("repair_truncated_readings", case == "qsjx") and not only_videos:
             summary["r2_changed_rows_gt10_seconds"] = write_r2_changes(output, ledger)
         summary["screenshots_ocr"] = len(screens)

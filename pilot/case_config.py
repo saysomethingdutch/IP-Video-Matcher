@@ -87,6 +87,9 @@ class CaseConfig:
             raise ValueError("models.text must be glm-5.3-flash, deepseek-flash or local")
         if self.raw["models"].get("opinion", self.raw["models"]["text"]) not in ("deepseek-flash", "glm-5.3-flash", "local"):
             raise ValueError("models.opinion must be glm-5.3-flash, deepseek-flash or local")
+        audio = self.raw["models"].get("audio") or {}
+        if audio.get("enabled") and not audio.get("model"):
+            raise ValueError("models.audio.model is required when local audio is enabled")
         self.case_dir = self.path_of(self.raw["output"]["dir"])
         self.output_root = self.case_dir.parent
         self.vlm_dir = self.path_of(self.raw["output"].get("visual_dir")) or self.case_dir / "vlm"

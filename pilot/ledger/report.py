@@ -66,7 +66,8 @@ def write_r2_changes(output, ledger):
     return len(changes)
 
 
-def write_outputs(output, ledger, unmatched, videos, durations, elapsed, frames, case_id, fps, audit=None):
+def write_outputs(output, ledger, unmatched, videos, durations, elapsed, frames, case_id, fps, audit=None,
+                  session_audit=None):
     audit = audit or {}
     output.mkdir(parents=True, exist_ok=True)
     with (output / "ledger.jsonl").open("w") as file:
@@ -101,6 +102,12 @@ def write_outputs(output, ledger, unmatched, videos, durations, elapsed, frames,
          "结束": _clock(s["end"]), "播放器总长(秒)": s["total"],
          "BV候选": ";".join(s["bvs"])} for s in unmatched],
          ["会话", "录像", "开始", "结束", "播放器总长(秒)", "BV候选"])
+    if session_audit is not None:
+        _csv(output / "session_disposition.csv", [
+            {"会话": s["id"], "录像": s["video"], "处置": s.get("disposition", "未关联"),
+             "对应行": ",".join(s.get("row_ids") or ([s["duplicate_of_row"]] if s.get("duplicate_of_row") else [])),
+             "候选行": ",".join(s.get("candidate_rows", []))} for s in session_audit],
+             ["会话", "录像", "处置", "对应行", "候选行"])
     _csv(output / "rows_without_session.csv", [
         {"总编号": item["row_id"], "录像": item["video"], "BV号": item["plaintiff"]["bv"],
          "标题": item["plaintiff"]["title"]} for item in ledger if not item["session_id"]],
@@ -118,6 +125,10 @@ def write_outputs(output, ledger, unmatched, videos, durations, elapsed, frames,
                "unmatched_sessions": len(unmatched), **audit,
                "flags": {flag: sum(flag in row["flags"] for row in ledger)
                          for flag in sorted({flag for row in ledger for flag in row["flags"]})}}
+    if session_audit is not None:
+        summary["session_disposition"] = {
+            category: sum(s.get("disposition") == category for s in session_audit)
+            for category in ("关联表格行", "重复取证同一表格行", "无本批闭集身份依据", "未关联")}
     (output / "run_summary.json").write_text(json.dumps(summary, ensure_ascii=False, indent=2))
     for video in videos:
         write_page(output / f"{video}.html", video, [r for r in ledger if r["video"] == video],

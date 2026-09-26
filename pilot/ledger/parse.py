@@ -11,6 +11,8 @@ SPEED = re.compile(r"(?<!\d)(0[.]5|0[.]75|1[.]0|1[.]25|1[.]5|2[.]0)\s*[Xx×倍](
 BV = re.compile(r"(?<![A-Za-z0-9])[B8][Vv][1Il][A-Za-z0-9]{9}(?![A-Za-z0-9])")
 CLOCK = re.compile(r"(?:(上午|下午)\s*)?([01]?\d|2[0-3])[:;]([0-5]\d)")
 PART = re.compile(r"(?:合集\s*\d+\s*/\s*\d+|\bP\s*\d+\b|(?<!\d)\d{1,2}-\d{1,2}(?!\d))", re.I)
+EPISODE_PART = re.compile(r"(?<!\d)(\d{1,2})\s*[-－]\s*(\d{1,2})(?!\d)")
+PART_INDEX = re.compile(r"(?:\bP\s*(\d{1,2})\b|[（(](\d{1,2})[）)]|(?<!\d)(\d{1,2})\s*/\s*\d{1,2}(?!\d))", re.I)
 DATE = re.compile(r"20\d{2}\s*[年./-]\s*\d{1,2}\s*[月./-]\s*\d{1,2}")
 VIEWS = re.compile(r"(?:播放(?:量)?\s*[:：]?\s*([\d.]+\s*[万亿]?)|([\d.]+\s*[万亿]?)\s*(?:播放|次观看))")
 
@@ -120,6 +122,17 @@ def edit_distance(a, b):
 
 def normalize_title(text):
     return "".join(re.findall(r"[\u4e00-\u9fffA-Za-z0-9]+", text)).lower()
+
+
+def part_identifier(text):
+    """Return (episode or None, part) from a title/player part label."""
+    match = EPISODE_PART.search(text)
+    if match:
+        return int(match[1]), int(match[2])
+    match = PART_INDEX.search(text)
+    if match:
+        return None, int(next(value for value in match.groups() if value))
+    return None
 
 
 def title_score(text, title):

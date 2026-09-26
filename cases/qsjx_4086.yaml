@@ -55,6 +55,9 @@ ledger:
   repair_truncated_readings: true
   screenshot_time_pattern: Screenshot_\d{8}_(\d\d)(\d\d)(\d\d)_
 models:
+  audio:
+    enabled: true
+    model: models/sensevoice/models/iic--SenseVoiceSmall/snapshots/master
   opinion: glm-5.3-flash
   speech:
     enabled: false
@@ -70,7 +73,7 @@ models:
 output:
   dir: workspace/pilot/qsjx_4086
   export_name: 七时吉祥-4086-机器填写
-  visual_dir: null
+  visual_dir: workspace/pilot/qsjx_4086/vlm_wo008
 schema_version: 1
 source:
   boundaries: /Users/lestersun/IP-Video-Matcher/experiments/phase3a0/cases/source_boundaries.json

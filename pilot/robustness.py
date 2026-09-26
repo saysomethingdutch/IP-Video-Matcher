@@ -6,6 +6,7 @@ import csv
 import hashlib
 import json
 import random
+import re
 import unicodedata
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
@@ -16,6 +17,39 @@ from .review.data import read_source
 FACT_COLUMNS = tuple("U V W X Y Z AA AB AC AD AE".split())
 GRID_COLUMNS = ("AG", "AH", "AI", "AJ")
 LABELS = ("甲", "乙", "丙")
+
+
+def normalize_blind_opinion(text: str) -> str:
+    """Standardize only section labels and the final conclusion sentence."""
+    lines = text.splitlines()
+    labels = ("【使用的性质和目的】", "【使用的比例】", "【对原作品的替代可能性】")
+    heading = re.compile(r"^(\s*)【[^】]{2,35}】")
+    found = [i for i, line in enumerate(lines) if heading.match(line) and "结论" not in line[:12]]
+    if len(found) == 3:
+        for i, label in zip(found, labels):
+            lines[i] = heading.sub(lambda match: match[1] + label, lines[i], count=1)
+    else:
+        aliases = {"使用的方式和目的": labels[0], "对原作品的使用比例": labels[1]}
+        for i, line in enumerate(lines):
+            for old, label in aliases.items():
+                lines[i] = line.replace(f"【{old}】", label, 1)
+    body = "\n".join(lines)
+    # Match a terminal conclusion only; the preceding reasons remain byte for byte.
+    terminal = re.search(r"(?s)([^。！？\n]{0,160}[。！？])\s*$", body)
+    if not terminal:
+        return body
+    sentence = terminal[1]
+    if not re.search(r"结论|综上|因此|据此|由此|故|合理使用", sentence):
+        return body
+    if re.search(r"不构成|不属于|不能认定为|难以认定为", sentence) and "合理使用" in sentence:
+        conclusion = "【结论】该视频不构成合理使用。"
+    elif re.search(r"构成|属于|可以认定为", sentence) and "合理使用" in sentence:
+        conclusion = "【结论】该视频构成合理使用。"
+    elif re.search(r"待核实|无法判断|尚不能判断|难以判断", sentence):
+        conclusion = "【结论】是否构成合理使用有待核实。"
+    else:
+        return body
+    return body[:terminal.start(1)] + conclusion + body[terminal.end(1):]
 
 
 
@@ -176,7 +210,7 @@ def generate(config: CaseConfig) -> dict:
         key[rid] = dict(zip(LABELS, [item[0] for item in opinions]))
         title = str(row["plaintiff"].get("title") or "")
         blind.append(f"## 总编号 {rid}\n\n标题：{title}\n\n" +
-                     "\n\n".join(f"### 意见 {label}\n\n{text or '（没有生成）'}"
+                     "\n\n".join(f"### 意见 {label}\n\n{normalize_blind_opinion(text) if text else '（没有生成）'}"
                                    for label, (_, text) in zip(LABELS, opinions)))
         scores.append({"总编号": rid, "甲评分": "", "乙评分": "", "丙评分": "", "最好（甲/乙/丙/并列）": "", "备注": ""})
     with (out / "grid_compare.csv").open("w", encoding="utf-8-sig", newline="") as handle:

@@ -53,6 +53,9 @@ ledger:
   repair_nearby_identity: true
   repair_truncated_readings: true
 models:
+  audio:
+    enabled: true
+    model: models/sensevoice/models/iic--SenseVoiceSmall/snapshots/master
   opinion: glm-5.3-flash
   speech:
     enabled: false
@@ -68,7 +71,7 @@ models:
 output:
   dir: workspace/pilot/qsjx_2591
   export_name: 七时吉祥-2591-机器填写
-  visual_dir: null
+  visual_dir: workspace/pilot/qsjx_2591/vlm_wo008
 schema_version: 1
 source:
   boundaries: /Users/lestersun/IP-Video-Matcher/experiments/phase3a0/cases/source_boundaries.json
