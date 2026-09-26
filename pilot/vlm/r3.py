@@ -88,7 +88,14 @@ def video_dir() -> Path:
 
 
 def sixteen(row: dict, flags: dict[int, dict]) -> list[float]:
-    playable = candidates(row, flags)
+    try:
+        playable = candidates(row, flags)
+    except ValueError as exc:
+        # A one-second played span may have no frames left after the seek/menu
+        # exclusions. The subsecond fallback below stays inside that span.
+        if "少于" not in str(exc):
+            raise
+        playable = []
     if len(playable) >= 16:
         return [float(t) for t, _ in spread(playable, 16)]
     # Short played segments still supply 16 distinct subsecond observations.

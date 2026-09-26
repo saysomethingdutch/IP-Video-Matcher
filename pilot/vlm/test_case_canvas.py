@@ -12,6 +12,13 @@ from pilot.vlm import r3
 
 
 class CaseCanvasTest(unittest.TestCase):
+    def test_one_second_playback_stays_inside_recorded_interval(self):
+        row = {"playback_map": [{"event": "play", "video_start": 838, "video_end": 839}]}
+        with mock.patch.object(r3, "candidates", side_effect=ValueError("播放区间中少于 4 个避开跳转和倍速菜单的关键帧")):
+            times = r3.sixteen(row, {})
+        self.assertEqual(len(times), len(set(times)))
+        self.assertTrue(all(838 <= t < 839 for t in times))
+
     def test_case_box_follows_phone_orientation(self):
         preset = {"landscape": [250, 60, 1080, 500], "portrait": [465, 60, 755, 225],
                   "rotated_portrait": [195, 100, 470, 570]}
