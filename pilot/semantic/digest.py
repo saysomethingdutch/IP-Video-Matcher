@@ -23,19 +23,22 @@ def v(value, source: str) -> dict:
     return {"value": value, "source": source}
 
 
-VISUAL_FILES = {"r1": ("predictions_r1.csv",), "full": ("predictions_r1.csv", "predictions_full.csv")}
+VISUAL_FILES = {"r1": ("predictions_r1.csv",), "full": ("predictions_r1.csv", "predictions_full.csv"),
+                "consensus": ("predictions_consensus_r3.csv",)}
+CONSENSUS = "三方定值"          # WO-004a-R3: GLM, DeepSeek and geometry settled per value; "不确定" where they disagree
 
 
 def load_visual(vlm_dir: Path, which: str = "full") -> tuple[dict[str, dict], dict[str, str]]:
-    """Qwen3-VL-8B visual facts per row: "r1" = the 19 rows of predictions_r1.csv (WO-004a-R1); "full" = a row
-    of predictions_full.csv (WO-004a-R2) wins over the same row of r1. Returns (rows, {row_id: file name})."""
+    """Visual facts per row: "r1" = the 19 Qwen3-VL rows of predictions_r1.csv (WO-004a-R1); "full" = a row of
+    predictions_full.csv (WO-004a-R2) wins over the same row of r1; "consensus" = predictions_consensus_r3.csv
+    (WO-004a-R3, D-033). Returns (rows, {row_id: file name})."""
     rows, source = {}, {}
     for name in VISUAL_FILES[which]:
         path = vlm_dir / name
         if not path.exists():
             continue
         for r in csv.DictReader(path.open(encoding="utf-8-sig")):
-            if r.get("model", "").startswith("qwen3-vl") and r.get("status", "ok") == "ok":
+            if (r.get("model", "").startswith("qwen3-vl") or r.get("model") == CONSENSUS) and r.get("status", "ok") == "ok":
                 rows[r["row_id"]], source[r["row_id"]] = r, name
     return rows, source
 
@@ -51,7 +54,8 @@ def _visual(row: dict | None, source: str) -> dict | None:
             "rights_ratio_geometry": row.get("geometry_ratio") or "", "uploader_on_camera": row.get("uploader_on_camera") or "",
             "overlays": [o for o in overlays if o], "other_works": row.get("other_works") or "",
             "other_works_desc": row.get("other_works_desc") or "", "ui_status": row.get("ui_status") or "",
-            "source": f"workspace/pilot/vlm/{source}（Qwen3-VL-8B，行 {row['row_id']}）"}
+            "consensus": row.get("model") == CONSENSUS,
+            "source": f"workspace/pilot/vlm/{source}（{'三方定值' if row.get('model') == CONSENSUS else 'Qwen3-VL-8B'}，行 {row['row_id']}）"}
 
 
 def music_tags(frames: dict[int, list[dict]], t0: float, t1: float) -> list[str]:

@@ -168,6 +168,12 @@ def size_column(d: dict) -> tuple[dict, list]:
     if not vis:
         return col("未识别", "画面事实", "无画面事实"), []
     geo, model = vis["rights_ratio_geometry"], vis["rights_ratio_model"]
+    if vis.get("consensus"):                         # R3: the settled value is the answer, geometry was one party
+        if model in ("", "不确定"):
+            return (col("未识别", "画面事实（三方定值）", f"{vis['source']}；三方定值为{model or '空'}，几何 {geo or '无'}"),
+                    [flag("yellow", "画面大小：三方定值为不确定")])
+        value = "否" if model in ("约1", "1", "全屏") else f"是，画面缩小为{model}"
+        return col(value, "画面事实（三方定值）", f"{vis['source']}；三方定值 {model}，几何 {geo or '无'}"), []
     known = [r for r in (geo, model) if r and r != "不确定"]
     if not known:
         return (col("未识别", "画面事实（几何法+模型）", f"{vis['source']}；几何 {geo or '无'}，模型 {model or '无'}"),
