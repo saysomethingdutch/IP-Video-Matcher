@@ -190,8 +190,18 @@ def generate(config: CaseConfig) -> dict:
         writer = csv.DictWriter(handle, fieldnames=list(scores[0]) if scores else
                                 ["总编号", "甲评分", "乙评分", "丙评分", "最好（甲/乙/丙/并列）", "备注"])
         writer.writeheader(); writer.writerows(scores)
+    agreement = {}
+    for col in GRID_COLUMNS:
+        measured = [row for row in pairs if row[f"一致_{col}"] != "未填"]
+        agreement[col] = {"compared": len(measured),
+                          "same": sum(row[f"一致_{col}"] == "是" for row in measured)}
+    fair = [row for row in pairs if _norm(row["人工_AG"]) in ("是", "否")]
+    typed = [row for row in pairs if row["一致_AI"] != "未填" and row["一致_AJ"] != "未填"]
     summary = {"case_id": config.case_id, "grid_rows": len(pairs), "blind_opinion_rows": len(scores),
-               "freeze_hashes": len(record["machine_sha256"])}
+               "freeze_hashes": len(record["machine_sha256"]), "column_agreement": agreement,
+               "fair_use_yes_no": {"compared": len(fair), "same": sum(row["一致_AG"] == "是" for row in fair)},
+               "type_both_cells": {"compared": len(typed),
+                                   "same": sum(row["一致_AI"] == row["一致_AJ"] == "是" for row in typed)}}
     (out / "summary.json").write_text(json.dumps(summary, ensure_ascii=False, indent=1), encoding="utf-8")
     return summary
 
