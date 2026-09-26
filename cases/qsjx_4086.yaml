@@ -116,3 +116,19 @@ workbook:
     first: 1663
     last: 1706
   sheet: 比对表
+
+visual:
+  # Evidence-frame player canvases, measured from this case’s recordings (1280×720).
+  canvas_boxes:
+    MVI_0002:
+      landscape: [175, 80, 1040, 605]
+      portrait: [470, 65, 820, 260]
+    MVI_0003:
+      landscape: [165, 55, 1190, 625]
+      portrait: [470, 65, 820, 260]
+    MVI_0004:
+      landscape: [150, 65, 1080, 610]
+      portrait: [470, 65, 820, 260]
+    MVI_0007:
+      landscape: [150, 65, 1100, 610]
+      portrait: [470, 65, 820, 260]

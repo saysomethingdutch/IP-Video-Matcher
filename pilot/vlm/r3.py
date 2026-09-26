@@ -30,15 +30,17 @@ NO_PLAY = {"1115", "1133", "1194", "1197"}
 CASE_ROWS: set[str] | None = None
 VIDEO_DIR: Path | None = None
 CASE_ID: str | None = None
+CANVAS_BOXES: dict[str, dict] = {}
 
 
 def configure(config):
     """Set case-owned paths and rows; R3 inference and consensus rules remain unchanged."""
-    global OUTPUT, R3, NO_PLAY, CASE_ROWS, VIDEO_DIR, MODEL, CASE_ID
+    global OUTPUT, R3, NO_PLAY, CASE_ROWS, VIDEO_DIR, MODEL, CASE_ID, CANVAS_BOXES
     OUTPUT = config.vlm_dir
     R3 = OUTPUT / "r3"
     CASE_ROWS = set(config.row_ids)
     CASE_ID = config.case_id
+    CANVAS_BOXES = config.raw.get("visual", {}).get("canvas_boxes", {})
     VIDEO_DIR = config.path_of(config.raw["evidence"]["video_dir"])
     NO_PLAY = set(config.raw.get("visual", {}).get("no_play_rows", []))
     MODEL = config.raw["models"]["visual"]["local_fallback"]
@@ -138,7 +140,15 @@ def prepare_one(row: dict, case: Path, videos: Path,
                 prior.get("page_mode") != "landscape" or prior.get("canvas_version") == 2):
             return prior
     if row["row_id"] in NO_PLAY or not any(s.get("event") == "play" for s in row.get("playback_map", [])):
-        meta = _screenshot_collage(row, target)
+        try:
+            meta = _screenshot_collage(row, target)
+        except (KeyError, TypeError, ValueError, FileNotFoundError) as exc:
+            # A stitched/absent screenshot is not evidence of a played video.
+            # Keep the row explicit and let downstream stages flag missing visual facts.
+            meta = {"row_id": row["row_id"], "video": row["video"], "page_mode": "unavailable",
+                    "frame_times": [], "boxes": [], "geometry": None, "collage_path": "",
+                    "ui_status": f"台账无已播放区间；截图不可用于画面判断（{type(exc).__name__}: {exc}）",
+                    "source": "unavailable", "created_at": datetime.now(timezone.utc).isoformat()}
         atomic_json(existing, meta)
         return meta
     times = sixteen(row, flags)
@@ -147,7 +157,8 @@ def prepare_one(row: dict, case: Path, videos: Path,
         # settled landscape player on both played spans, avoiding the turn.
         times = [116.5 + i * .55 for i in range(8)] + [190.2 + i * .5 for i in range(8)]
     frames = [video_frame(videos / f"{row['video']}.MP4", t) for t in times]
-    detected = [player_box(im, row["video"], t, ocr) for im, t in zip(frames, times)]
+    detected = [player_box(im, row["video"], t, ocr, CANVAS_BOXES.get(row["video"]))
+                for im, t in zip(frames, times)]
     modes = [x[0] for x in detected]
     landscape_frames = [frame for frame, result in zip(frames, detected) if result[0] == "landscape"]
     landscape_box = trim_persistent_black(detected[modes.index("landscape")][1], landscape_frames) if landscape_frames else None
@@ -415,6 +426,14 @@ def cloud(case: Path, selected: set[str] | None = None):
         if selected and rid not in selected:
             continue
         meta = json.loads((R3 / rid / "meta.json").read_text(encoding="utf-8"))
+        if meta.get("source") == "unavailable":
+            for model in CLOUDS:
+                skipped = _base(row, meta, model)
+                skipped.update(status="skipped", error=meta["ui_status"], prompt_tokens=0,
+                               completion_tokens=0, reasoning_tokens=0, total_tokens=0,
+                               cost_usd="", cost_basis="未调用", attempts=0)
+                atomic_json(R3 / rid / f"{model}.json", skipped)
+            continue
         for model in CLOUDS:
             path = R3 / rid / f"{model}.json"
             if path.exists() and json.loads(path.read_text(encoding="utf-8")).get("status") == "ok":
@@ -469,7 +488,10 @@ def finalize(case: Path):
         loc = json.loads(local_path.read_text(encoding="utf-8")) if local_path.exists() else {}
         item = _base(row, meta, "三方定值")
         flags = []
-        if a["status"] != "ok" or b["status"] != "ok":
+        if a["status"] == b["status"] == "skipped":
+            item["status"] = "skipped"
+            flags.append(meta["ui_status"])
+        elif a["status"] != "ok" or b["status"] != "ok":
             flags.append("云端判断失败，需核对")
         else:
             for field in ("layout", "rights_content_ratio", "uploader_on_camera", "other_works", "overlays"):

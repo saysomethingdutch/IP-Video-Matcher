@@ -38,9 +38,25 @@ def _runs(values: np.ndarray, max_gap: int = 3) -> list[tuple[int, int]]:
 
 
 def player_box(frame: Image.Image, video: str, second: float,
-               ocr: dict[int, list[dict]]) -> tuple[str, tuple[int, int, int, int], dict]:
+               ocr: dict[int, list[dict]], preset: dict | None = None) -> tuple[str, tuple[int, int, int, int], dict]:
     """Use the page below the portrait player and OCR tabs to find its canvas."""
     items = ocr.get(round(second), [])
+    if preset:
+        # A new evidence batch can place the same recording name at a different
+        # camera angle. Its boxes are read from the case config, not the pilot map.
+        import numpy as np
+        rgb = np.asarray(frame, dtype=np.int16)
+        sides = np.concatenate((rgb[180:550, 150:350].reshape(-1, 3),
+                                rgb[180:550, 900:1100].reshape(-1, 3)))
+        tabletop = ((sides[:, 0] - sides[:, 1] > 15) &
+                    (sides[:, 1] - sides[:, 2] > 5) & (sides[:, 0] > 40)).mean()
+        if tabletop > .65 and preset.get("portrait"):
+            return "portrait", tuple(preset["portrait"]), {"configured": True, "tabletop": round(float(tabletop), 2)}
+        side_text = sum(1 for item in items if 400 < item.get("x", 0) * 1280 < 1120
+                        and 100 < item.get("y", 0) * 720 < 620 and str(item.get("text", "")))
+        if side_text >= 12 and preset.get("rotated_portrait"):
+            return "rotated_portrait", tuple(preset["rotated_portrait"]), {"configured": True, "side_ocr": side_text}
+        return "landscape", tuple(preset["landscape"]), {"configured": True, "side_ocr": side_text}
     nominal = PORTRAIT_PLAYER[video]
     if int(video[-1]) <= 4:
         # These recordings occasionally show a portrait detail page while the

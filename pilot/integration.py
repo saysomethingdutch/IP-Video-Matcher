@@ -92,9 +92,13 @@ def _ready(config: CaseConfig, step: str, rows: list[str]) -> bool:
             return all((json.loads((case / "semantic" / f"{rid}.json").read_text(encoding="utf-8"))
                         .get("opinion") is not None) for rid in rows)
         if config.raw["models"]["visual"]["allow_image_upload"]:
-            return all("predictions_consensus_r3.csv" in str(
-                (json.loads((case / "semantic" / f"{rid}.json").read_text(encoding="utf-8"))
-                 .get("digest") or {}).get("visual") or {}) for rid in rows)
+            def visual_ready(rid: str) -> bool:
+                consensus = vlm / "r3" / rid / "consensus.json"
+                if consensus.is_file() and json.loads(consensus.read_text()).get("status") == "skipped":
+                    return True
+                row = json.loads((case / "semantic" / f"{rid}.json").read_text(encoding="utf-8"))
+                return "predictions_consensus_r3.csv" in str((row.get("digest") or {}).get("visual") or {})
+            return all(visual_ready(rid) for rid in rows)
         return True
     return (case / "review" / "data_summary.json").is_file()
 

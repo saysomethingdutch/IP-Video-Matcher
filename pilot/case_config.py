@@ -71,6 +71,16 @@ class CaseConfig:
             raise ValueError("ledger.case must be qsjx, zhuyu, or custom")
         if ledger["case"] == "custom" and not ledger.get("screenshot_time_pattern"):
             raise ValueError("custom ledger case needs screenshot_time_pattern")
+        for video, preset in (self.raw.get("visual", {}).get("canvas_boxes") or {}).items():
+            if video not in self.raw["evidence"]["videos"] or "landscape" not in preset:
+                raise ValueError(f"visual.canvas_boxes invalid video or missing landscape: {video}")
+            for mode, box in preset.items():
+                if mode not in ("landscape", "portrait", "rotated_portrait") or len(box) != 4 or not all(
+                        isinstance(value, int) for value in box):
+                    raise ValueError(f"visual.canvas_boxes invalid {video}.{mode}")
+                x0, y0, x1, y1 = box
+                if not (0 <= x0 < x1 <= 1280 and 0 <= y0 < y1 <= 720):
+                    raise ValueError(f"visual.canvas_boxes out of frame: {video}.{mode}")
         if not isinstance(self.raw["models"].get("visual", {}).get("allow_image_upload"), bool):
             raise ValueError("models.visual.allow_image_upload must be true or false")
         if self.raw["models"].get("text") not in ("deepseek-flash", "glm-5.3-flash", "local"):

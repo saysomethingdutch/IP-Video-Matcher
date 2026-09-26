@@ -114,3 +114,23 @@ workbook:
     first: 469
     last: 548
   sheet: 比对表
+
+visual:
+  # Evidence-frame player canvases, measured from this case’s recordings (1280×720).
+  canvas_boxes:
+    MAH00734:
+      landscape: [250, 60, 1080, 500]
+      portrait: [465, 60, 755, 225]
+      rotated_portrait: [195, 100, 470, 570]
+    MAH00735:
+      landscape: [265, 75, 1060, 520]
+      portrait: [450, 60, 755, 225]
+      rotated_portrait: [430, 100, 750, 570]
+    MAH00736:
+      landscape: [205, 85, 1040, 525]
+      portrait: [455, 60, 755, 225]
+      rotated_portrait: [430, 100, 750, 570]
+    MAH00737:
+      landscape: [130, 115, 1120, 560]
+      portrait: [455, 60, 755, 225]
+      rotated_portrait: [420, 100, 730, 570]
