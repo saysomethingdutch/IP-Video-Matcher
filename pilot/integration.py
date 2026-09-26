@@ -99,9 +99,6 @@ def _healthy(config: CaseConfig, step: str, rows: list[str]) -> bool:
         name = "consensus.json" if config.raw["models"]["visual"]["allow_image_upload"] else "local.json"
         return all(json.loads((config.vlm_dir / "r3" / rid / name).read_text()).get("status") in ("ok", "skipped")
                    for rid in rows)
-    if step == "opinion":
-        return all((json.loads((config.case_dir / "semantic" / f"{rid}.json").read_text())
-                    .get("opinion") or {}).get("validation", {}).get("ok", True) for rid in rows)
     return True
 
 
@@ -258,7 +255,7 @@ def run(config: CaseConfig, from_step: str | None = None, requested_rows: str | 
                 RUNNERS[step](config)
                 status = "ran"
             else:
-                RUNNERS[step](config, rows, force=i >= force_from or stale or (unhealthy and step == "opinion"))
+                RUNNERS[step](config, rows, force=i >= force_from or stale)
                 status = "ran"
             if not _ready(config, step, rows):
                 raise RuntimeError(f"{step}: selected-row outputs are incomplete")
@@ -322,5 +319,11 @@ def run(config: CaseConfig, from_step: str | None = None, requested_rows: str | 
         costs["known_or_upper_total_usd"] = round(sum(costs.values()), 4)
         report["cloud_cost_usd"] = costs
     (config.case_dir / "integration_summary.json").write_text(json.dumps(report, ensure_ascii=False, indent=2))
-    print(json.dumps(report, ensure_ascii=False, indent=2))
+    print(f"摘要：{config.case_id}，本次范围 {len(rows)} 行")
+    print("步骤耗时：" + "；".join(f"{name} {item['status']} {item['seconds']}s"
+                             for name, item in report["steps"].items()))
+    print(f"失败行（{len(report['failed_rows'])}）：{'、'.join(report['failed_rows']) or '无'}")
+    print(f"旗标：黄 {report['yellow_flags']}，红 {report['red_flags']}（涉及 {len(report['red_flag_rows'])} 行）")
+    print("云端费用（USD，已记录/上限估算）：" + (json.dumps(costs, ensure_ascii=False) if costs else "无"))
+    print(f"明细：{config.case_dir / 'integration_summary.json'}")
     return report
