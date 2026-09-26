@@ -23,31 +23,34 @@ LABELS = {"purpose": r"【使用(?:的)?性质和目的】", "proportion": r"【
           "substitution": r"【对原作品的替代可能性】"}
 
 
-def paragraphs(text: str) -> dict[str, str]:
+def paragraphs(text: str, headings: list[str] | None = None, conclusion: str | None = None) -> dict[str, str]:
     """The three labelled paragraphs of an opinion, without their labels (missing ones are absent)."""
-    marks = sorted((m.start(), m.end(), key) for key, rx in LABELS.items() for m in re.finditer(rx, text))
+    labels = {key: re.escape(label) for key, label in zip(("purpose", "proportion", "substitution"), headings)} if headings else LABELS
+    marks = sorted((m.start(), m.end(), key) for key, rx in labels.items() for m in re.finditer(rx, text))
     out = {}
     for i, (_, end, key) in enumerate(marks):
         stop = marks[i + 1][0] if i + 1 < len(marks) else len(text)
         body = text[end:stop].strip()
-        body = re.split(r"\n\s*因此该视频构成", body)[0].strip()
+        body = (body.split(conclusion, 1)[0] if conclusion else re.split(r"\n\s*因此该视频构成", body)[0]).strip()
         out[key] = body
     return out
 
 
-def table_samples(table: Table, sample_rows: dict | None = None, excluded_rows: set[int] | None = None) -> list[dict]:
+def table_samples(table: Table, sample_rows: dict | None = None, excluded_rows: set[int] | None = None,
+                  headings: list[str] | None = None, conclusion: str | None = None) -> list[dict]:
     out = []
     for kind, rows in (sample_rows if sample_rows is not None else SAMPLE_ROWS).items():
         for no in rows:
             if no in (excluded_rows if excluded_rows is not None else BATCH):
                 continue
-            p = paragraphs(str(table.value(no, "AF") or ""))
+            p = paragraphs(str(table.value(no, "AF") or ""), headings, conclusion)
             if p.get("purpose") and p.get("substitution"):
                 out.append({"type": kind, "source": f"比对表人工意见（本批以外，序号 {no}）", **p})
     return out
 
 
-def client_examples(path: Path | None = REQUIREMENTS) -> list[dict]:
+def client_examples(path: Path | None = REQUIREMENTS, headings: list[str] | None = None,
+                    conclusion: str | None = None) -> list[dict]:
     """观点评析类 / 混剪类 / Reaction类 examples from 《比对要求》 "4. 比对意见部分"."""
     if path is None or not path.exists():
         return []
@@ -55,7 +58,7 @@ def client_examples(path: Path | None = REQUIREMENTS) -> list[dict]:
     part = text.split("示例：", 1)[-1].split("常见错误分享", 1)[0]
     out = []
     for m in re.finditer(r"(\S+?)类示例\s*\n(.*?)(?=\n\S+?类示例|\Z)", part, flags=re.S):
-        p = paragraphs(m.group(2))
+        p = paragraphs(m.group(2), headings, conclusion)
         if p.get("purpose") and p.get("substitution"):
             out.append({"type": m.group(1), "source": "客户《比对要求》示例", **p})
     return out
