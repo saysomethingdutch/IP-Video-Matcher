@@ -122,11 +122,16 @@ def _screenshot_collage(row: dict, target: Path) -> dict:
     path = Path(row["screenshot"]["path"])
     with Image.open(path) as source:
         image = source.convert("RGB")
-    if image.size != (1080, 2400):
+    if image.size == (1080, 2400):
+        box = (0, 180, 1080, 712)
+    elif image.size == (2412, 1084):
+        # Huawei landscape captures have black side panels outside the player.
+        margin = round(image.width * .1)
+        box = (margin, 0, image.width - margin, image.height)
+    else:
         raise ValueError(f"unexpected screenshot size: {image.size}")
     # The four rows have no ledger playback. Their original phone screenshots
     # still contain the player; a repeated still is marked as snapshot only.
-    box = (0, 180, 1080, 712)
     one = tile(image, box)
     path = target / "collage_1.jpg"
     collage([one] * 4, path)
@@ -383,8 +388,11 @@ def cloud_one(row: dict, meta: dict, model: str) -> dict:
     image = {"url": f"data:image/jpeg;base64,{encoded}"}
     if model == "deepseek-flash":
         image["detail"] = "high"
+    prompt = (PROMPT if meta.get("source") != "screenshot_only" else PROMPT.replace(
+        "这是一部被诉视频在播放器画布内的四帧，编号 1–4。",
+        "这四格是同一张被诉视频播放器截图的复制，不能据此推断不同时间的画面。"))
     payload = {"model": model, "messages": [{"role": "user", "content": [
-        {"type": "image_url", "image_url": image}, {"type": "text", "text": PROMPT}]}],
+        {"type": "image_url", "image_url": image}, {"type": "text", "text": prompt}]}],
         "temperature": 0}
     started = time.monotonic()
     requested_at = datetime.now(timezone.utc)

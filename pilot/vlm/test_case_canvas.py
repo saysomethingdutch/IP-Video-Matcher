@@ -30,6 +30,21 @@ class CaseCanvasTest(unittest.TestCase):
             with mock.patch.object(r3, "R3", Path(folder) / "r3"):
                 self.assertEqual(r3.prepare_one({"row_id": "1663"}, Path(folder), Path(folder), {}, {}), meta)
 
+    def test_huawei_landscape_screenshot_uses_player_canvas(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            source = root / "screenshot.jpg"
+            image = Image.new("RGB", (2412, 1084), "black")
+            ImageDraw.Draw(image).rectangle((241, 0, 2171, 1083), fill="pink")
+            image.save(source)
+            target = root / "output"
+            target.mkdir()
+            meta = r3._screenshot_collage({"row_id": "1677", "video": "MVI_0003",
+                                            "screenshot": {"path": str(source)}}, target)
+            self.assertEqual(meta["boxes"], [(241, 0, 2171, 1084)])
+            self.assertEqual(meta["source"], "screenshot_only")
+            self.assertTrue((target / "collage_1.jpg").is_file())
+
     def test_case_box_follows_phone_orientation(self):
         preset = {"landscape": [250, 60, 1080, 500], "portrait": [465, 60, 755, 225],
                   "rotated_portrait": [195, 100, 470, 570]}
