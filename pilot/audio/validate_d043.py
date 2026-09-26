@@ -35,6 +35,7 @@ def validate(config: CaseConfig, selected: list[str]) -> dict:
             (config.case_dir / "ledger.jsonl").read_text(encoding="utf-8").splitlines() if line)}
     index = Index.load(config.index_dir / "index.sqlite")
     counts = Counter()
+    combined_counts = Counter()
     details = []
     for rid in selected:
         row = rows[rid]
@@ -51,17 +52,22 @@ def validate(config: CaseConfig, selected: list[str]) -> dict:
         caption = commentary_caption(content, index)
         predicted = oral or caption
         cell = "TP" if expected and predicted else "FN" if expected else "FP" if predicted else "TN"
-        counts[cell] += 1
+        oral_cell = "TP" if expected and oral else "FN" if expected else "FP" if oral else "TN"
+        combined_counts[cell] += 1
+        counts[oral_cell] += 1
         counts["source_with_oral_candidate"] += int(not expected and oral)
         counts["commentary_with_oral_candidate"] += int(expected and oral)
         counts["commentary_with_caption"] += int(expected and caption)
+        counts["captioned_commentary_rows"] += int(expected and caption)
+        counts["captioned_commentary_with_oral"] += int(expected and caption and oral)
+        counts["captioned_commentary_detected"] += int(expected and caption and predicted)
         details.append({"row_id": rid, "expected_type": row["plaintiff"]["video_type"],
-                        "cell": cell, "oral_candidate": oral, "caption_commentary": caption,
+                        "cell": cell, "oral_cell": oral_cell, "oral_candidate": oral, "caption_commentary": caption,
                         "uploader_clause_count": len(audio.get("uploader_speech") or []),
                         "player_frames": (content.get("counts") or {}).get("player_frames", 0)})
     result = {"case_id": config.case_id, "basis": "原告 A–T 的视频类型；只比较开发集切条/原片/解说，未读人工 U–AJ",
               "positive_rule": "至少一条不少于6字的口播候选，或至少一条已播放画面的非原剧解说字幕",
-              "counts": dict(counts), "rows": details}
+              "counts": dict(counts), "combined_diagnostic": dict(combined_counts), "rows": details}
     out = config.case_dir / "audio" / "validation_d043.json"
     out.write_text(json.dumps(result, ensure_ascii=False, indent=1), encoding="utf-8")
     return result
@@ -78,7 +84,8 @@ def main():
     if summary["error"]:
         raise RuntimeError(f"pilot audio failed for {summary['error']} rows")
     result = validate(config, selected)
-    print(json.dumps({"audio": summary, "confusion": result["counts"]}, ensure_ascii=False), flush=True)
+    print(json.dumps({"audio": summary, "oral_confusion": result["counts"],
+                      "combined_diagnostic": result["combined_diagnostic"]}, ensure_ascii=False), flush=True)
 
 
 if __name__ == "__main__":

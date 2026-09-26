@@ -138,3 +138,8 @@ visual:
       landscape: [130, 115, 1120, 560]
       portrait: [455, 60, 755, 225]
       rotated_portrait: [420, 100, 730, 570]
+    MAH00738:
+      # Checked at recording seconds 60, 1650, 4300, 5620 after WO-008 linked this file.
+      landscape: [180, 70, 1040, 580]
+      portrait: [420, 60, 780, 225]
+      rotated_portrait: [80, 80, 395, 550]

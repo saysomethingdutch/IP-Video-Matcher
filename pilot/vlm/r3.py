@@ -192,7 +192,15 @@ def prepare_one(row: dict, case: Path, videos: Path,
                for frame, box, mode in zip(frames, boxes, modes)]
     geo = geometry_16(cropped)
     preferred = next((mode for mode in ("rotated_portrait", "portrait") if modes.count(mode) >= 4), None)
+    if preferred is None and CASE_ID in ("qsjx_4086", "qsjx_2591") and modes.count("landscape") >= 4:
+        # A transient detail page in a new batch must not enter a landscape collage.
+        preferred = "landscape"
     pool = [i for i, mode in enumerate(modes) if mode == preferred] if preferred else list(range(len(times)))
+    if CASE_ID == "qsjx_2591" and row["video"] == "MAH00738":
+        from pilot.content.extract import is_player_frame
+        visible = [i for i in pool if not ocr.get(round(times[i])) or is_player_frame(ocr[round(times[i])])]
+        if len(visible) >= 4:
+            pool = visible
     chosen = [pool[round((i + .5) * len(pool) / 4 - .5)] for i in range(4)]
     if CASE_ID in (None, "qsjx_e18") and row["row_id"] == "1095":
         # The hand covers the player later in this two-second rotated segment.

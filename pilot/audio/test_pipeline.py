@@ -5,9 +5,10 @@ import unittest
 import json
 from pathlib import Path
 import tempfile
+from types import SimpleNamespace
 
 from pilot.audio.pipeline import (_music_evidence, _sentence_segments, compare_dialogue,
-                                  decode_tags, played_recording_spans)
+                                  decode_tags, played_recording_spans, reinterpret_existing)
 from pilot.semantic.audio import load_audio
 from pilot.textindex.search import Index, SubEntry
 from pilot.textindex.text import normalize
@@ -78,6 +79,21 @@ class AudioEvidenceTests(unittest.TestCase):
                       "tags": ["BGM"], "text": "", "clauses": []} for t in range(0, 20, 4)]
         self.assertIsNone(_music_evidence({}, sustained, [], {}, False))
         self.assertIn("连续至少20秒", _music_evidence({}, sustained, [], {}, True))
+
+    def test_music_voice_and_isolated_speech_remain_uncertain(self):
+        def record(speech_chunks):
+            tags = [["Speech"] for _ in range(speech_chunks)] + [["BGM"]]
+            return {"audio_chunks": [{"recording_start": n * 4, "recording_end": n * 4 + 4,
+                                       "text": "我认为这个角色很有趣", "tags": tag, "clauses": []}
+                                      for n, tag in enumerate(tags)]}
+        with tempfile.TemporaryDirectory() as folder:
+            config = SimpleNamespace(vlm_dir=Path(folder))
+            row = {"row_id": "1", "playback_map": []}
+            weak = reinterpret_existing(row, config, record(2), self.index, [], {}, 10)
+            self.assertFalse(weak["uploader_speech"])
+            strong = reinterpret_existing(row, config, record(3), self.index, [], {}, 10)
+            self.assertEqual(len(strong["uploader_speech"]), 3)
+            self.assertEqual(strong["segments"][-1]["kind"], "uncertain")
 
 
 if __name__ == "__main__":

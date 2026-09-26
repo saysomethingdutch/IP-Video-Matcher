@@ -22,6 +22,8 @@ MATCH_THRESHOLD = .5
 OCR_WINDOW_SECONDS = 2.0
 MIN_UPLOADER_CHARS = 6
 MUSIC_ONLY_SECONDS = 20.0
+RULE_VERSION = "D-043-audio-v3"
+MIN_SPEECH_CHUNKS = 3
 
 
 def played_recording_spans(row: dict) -> list[tuple[float, float]]:
@@ -180,6 +182,45 @@ def _music_evidence(row: dict, chunks: list[dict], content_events: list[dict],
     return None
 
 
+def reinterpret_existing(row: dict, config: CaseConfig, record: dict, index: Index | None,
+                         content_events: list[dict], ocr_frames: dict[int, list[dict]],
+                         player_frames: int) -> dict:
+    """Re-score saved 4-second transcripts without sending audio through the model again."""
+    chunks = record["audio_chunks"]
+    for chunk in chunks:
+        chunk["clauses"] = compare_dialogue(chunk["text"], index, content_events,
+                                            chunk["recording_start"], chunk["recording_end"],
+                                            visual_subtitles_available=player_frames >= 3)
+    speech_chunks = sum("Speech" in chunk["tags"] and any(
+        clause["kind"] == "UP主口播候选" for clause in chunk["clauses"]) for chunk in chunks)
+    for chunk in chunks:
+        for clause in chunk["clauses"]:
+            if clause["kind"] != "UP主口播候选":
+                continue
+            if "Speech" not in chunk["tags"]:
+                clause.update(kind="未定声音", uncertainty="BGM 片段可能是歌曲人声，不能当口播")
+            elif speech_chunks < MIN_SPEECH_CHUNKS:
+                clause.update(kind="未定声音", uncertainty="独立说话片段不足 3 个，无法排除转写误报")
+    all_clauses = [clause for chunk in chunks for clause in chunk["clauses"]]
+    total_chars = sum(len(normalize(clause["text"])) for clause in all_clauses)
+    source_chars = sum(len(normalize(clause["text"])) for clause in all_clauses
+                       if clause["kind"] == "原剧台词")
+    played = sum(chunk["recording_end"] - chunk["recording_start"] for chunk in chunks)
+    bgm = round(sum(chunk["recording_end"] - chunk["recording_start"] for chunk in chunks
+                    if "BGM" in chunk["tags"]) / played, 3) if played else 0.0
+    basis = (_music_evidence(row, chunks, content_events, ocr_frames,
+                             _visual_original(config, row["row_id"])) if bgm >= .6 else None)
+    record.update(rule_version=RULE_VERSION, segments=_sentence_segments(row, chunks),
+                  uploader_speech=[clause["text"] for clause in all_clauses
+                                   if clause["kind"] == "UP主口播候选"],
+                  source_dialogue_ratio=round(source_chars / total_chars, 3) if total_chars else 0.0,
+                  bgm_ratio=bgm, suspected_uploader_music=True if basis else None,
+                  uploader_music={"suspected": True if basis else None,
+                                  "basis": basis or "仅报告 BGM 占比；缺少配乐归属旁证"},
+                  interpretation_limit="同期字幕或台词索引相似度≥0.5为原剧；未匹配且≥6字、至少3个独立Speech片段才列口播；BGM人声未定")
+    return record
+
+
 def analyze_row(row: dict, config: CaseConfig, model, index: Index | None,
                 content_events: list[dict] | None = None, ocr_frames: dict[int, list[dict]] | None = None,
                 *, player_frames: int = 0) -> dict:
@@ -188,7 +229,7 @@ def analyze_row(row: dict, config: CaseConfig, model, index: Index | None,
     ocr_frames = ocr_frames or {}
     chunks = played_recording_spans(row)
     base = {"row_id": rid, "video": row["video"], "engine": "SenseVoice-Small",
-            "audio_uploaded": False, "playback_spans": chunks, "rule_version": "D-043-audio-v2"}
+            "audio_uploaded": False, "playback_spans": chunks, "rule_version": RULE_VERSION}
     if not chunks:
         return {**base, "status": "skipped", "reason": "台账无已播放录音区间", "segments": []}
     if "泰配" in row["plaintiff"].get("title", ""):
@@ -233,9 +274,10 @@ def analyze_row(row: dict, config: CaseConfig, model, index: Index | None,
     source_ratio = round(source_chars / total_chars, 3) if total_chars else 0.0
     uploader = [c["text"] for c in all_clauses if c["kind"] == "UP主口播候选"]
     elapsed = time.monotonic() - started
-    music_basis = _music_evidence(row, audio_chunks, content_events, ocr_frames, _visual_original(config, rid))
+    music_basis = (_music_evidence(row, audio_chunks, content_events, ocr_frames, _visual_original(config, rid))
+                   if ratio("BGM") >= .6 else None)
     suspected_music = True if music_basis else None
-    return {**base, "status": "ok", "segments": _sentence_segments(row, audio_chunks),
+    result = {**base, "status": "ok", "segments": _sentence_segments(row, audio_chunks),
             "audio_chunks": audio_chunks,
             "transcript": "".join(s["text"] for s in audio_chunks),
             "uploader_speech": uploader, "source_dialogue_ratio": source_ratio,
@@ -250,7 +292,8 @@ def analyze_row(row: dict, config: CaseConfig, model, index: Index | None,
             "recording_file_seconds": round(recording_duration, 2),
             "processing_seconds": round(elapsed, 2),
             "realtime_factor": round(elapsed / played, 3) if played else None,
-            "interpretation_limit": "片段级声音标签；未做说话人声纹识别；仅同期字幕和台词索引均不匹配且不少于6字才列口播候选"}
+            "interpretation_limit": "片段级声音标签；未做说话人声纹识别"}
+    return reinterpret_existing(row, config, result, index, content_events, ocr_frames, player_frames)
 
 
 def run(config: CaseConfig, row_ids: list[str] | None = None, *, force: bool = False) -> dict:
@@ -261,7 +304,20 @@ def run(config: CaseConfig, row_ids: list[str] | None = None, *, force: bool = F
     source = Index.load(config.index_dir / "index.sqlite") if (config.index_dir / "index.sqlite").is_file() else None
     model = None
     ocr_cache: dict[str, dict[int, list[dict]]] = {}
-    counts = {"ok": 0, "skipped": 0, "whisper_thai": 0, "error": 0, "cached": 0}
+    counts = {"ok": 0, "skipped": 0, "whisper_thai": 0, "error": 0, "cached": 0, "reinterpreted": 0}
+    def context(row: dict) -> tuple[list[dict], dict[int, list[dict]], int]:
+        rid = row["row_id"]
+        content_path = config.case_dir / "content" / f"{rid}.json"
+        content = json.loads(content_path.read_text(encoding="utf-8")) if content_path.is_file() else {}
+        video_name = row.get("video")
+        if video_name and played_recording_spans(row) and video_name not in ocr_cache:
+            ocr_cache.clear()
+            try:
+                ocr_cache[video_name] = load_ocr(config.case_dir, video_name)
+            except FileNotFoundError:
+                ocr_cache[video_name] = {}
+        return (content.get("events") or [], ocr_cache.get(video_name, {}),
+                int((content.get("counts") or {}).get("player_frames") or 0))
     for row in ledger:
         rid = row["row_id"]
         if rid not in selected:
@@ -273,23 +329,25 @@ def run(config: CaseConfig, row_ids: list[str] | None = None, *, force: bool = F
         if path.is_file() and not force:
             old = json.loads(path.read_text(encoding="utf-8"))
             if old.get("status") in ("ok", "skipped", "whisper_thai") and old.get("ledger_fingerprint") == ledger_fingerprint:
-                counts["cached"] += 1
-                continue
+                if old.get("rule_version") == RULE_VERSION:
+                    counts["cached"] += 1
+                    continue
+                if old.get("status") != "ok" or old.get("audio_chunks"):
+                    if old.get("status") == "ok":
+                        events, frames, player_frames = context(row)
+                        old = reinterpret_existing(row, config, old, source, events, frames, player_frames)
+                    else:
+                        old["rule_version"] = RULE_VERSION
+                    path.write_text(json.dumps(old, ensure_ascii=False, indent=1), encoding="utf-8")
+                    counts["reinterpreted"] += 1
+                    print(f"audio {rid}: reinterpreted", flush=True)
+                    continue
         if played_recording_spans(row) and "泰配" not in row["plaintiff"].get("title", "") and model is None:
             model = _model(config.path_of(config.raw["models"]["audio"]["model"]))
         try:
-            content_path = config.case_dir / "content" / f"{rid}.json"
-            content = json.loads(content_path.read_text(encoding="utf-8")) if content_path.is_file() else {}
-            video_name = row.get("video")
-            if video_name and played_recording_spans(row) and video_name not in ocr_cache:
-                ocr_cache.clear()
-                try:
-                    ocr_cache[video_name] = load_ocr(config.case_dir, video_name)
-                except FileNotFoundError:
-                    ocr_cache[video_name] = {}
-            result = analyze_row(row, config, model, source, content.get("events") or [],
-                                 ocr_cache.get(video_name, {}),
-                                 player_frames=int((content.get("counts") or {}).get("player_frames") or 0))
+            events, frames, player_frames = context(row)
+            result = analyze_row(row, config, model, source, events, frames,
+                                 player_frames=player_frames)
             result["session_id"] = row["session_id"]
             result["ledger_fingerprint"] = ledger_fingerprint
             counts[result["status"]] += 1
