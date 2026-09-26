@@ -27,6 +27,8 @@ def main(argv=None) -> None:
     r.add_argument("--rows", help="comma-separated row ids")
     r.add_argument("--out", type=Path)
     r.add_argument("--workers", type=int, default=1, help="rows classified at once (cloud backends only)")
+    r.add_argument("--story-edit-policy", default="strict", choices=["strict", "lenient"],
+                   help="subtitle edits told as plot: strict = 剧情解说 (D-041 default), lenient = 混剪类 when music/theme")
     r.add_argument("--fields-only", action="store_true",
                    help="with --reuse: keep every saved classification, recompute the columns only (no model call)")
     r.add_argument("--visual", default="full", choices=["r1", "full", "consensus"],
@@ -59,6 +61,7 @@ def main(argv=None) -> None:
                 a.resume, a.redo_failed)
         return
     rules = load_rules(a.rules) if a.rules else load_rules()
+    rules["story_edit_policy"] = a.story_edit_policy
     only = set(a.rows.split(",")) if a.rows else None
     out = a.out or a.case_dir / "semantic"
     workers = a.workers if a.backend != "local" else 1

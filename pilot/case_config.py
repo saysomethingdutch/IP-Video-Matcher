@@ -53,6 +53,8 @@ class CaseConfig:
             raise ValueError("source.enabled requires the workbook episode-claim column")
         if bool(self.raw["source"].get("enabled")) and not self.raw["source"].get("episode_dir"):
             raise ValueError("source.enabled requires source.episode_dir")
+        if self.raw["client"].get("story_edit_policy", "strict") not in ("strict", "lenient"):
+            raise ValueError("client.story_edit_policy must be strict or lenient (D-041)")
         if not self.raw["client"].get("rules") or not self.raw["client"].get("opinion_format"):
             raise ValueError("client.rules and client.opinion_format are required")
         if not self.raw["client"].get("work_title") or not isinstance(self.raw["client"].get("style_examples"), dict):

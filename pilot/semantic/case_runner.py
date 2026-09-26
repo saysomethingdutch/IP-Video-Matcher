@@ -19,6 +19,7 @@ def run_case(config, rows: list[str], force: bool = False) -> dict:
     table = load_table(config.path_of(workbook["path"]), workbook["sheet"], workbook["output_columns"],
                        workbook["bv_column"], holdout_rows=holdout, sample_rows=style_rows if holdout else None)
     rules = load_rules(config.path_of(config.raw["client"]["rules"]))
+    rules["story_edit_policy"] = config.raw["client"].get("story_edit_policy", "strict")     # D-041
     backend = {"deepseek-flash": "deepseek", "glm-5.3-flash": "zhipu", "local": "local"}[config.raw["models"]["text"]]
     llm.LOCAL_ALLOWED = backend == "local"
     visual = "consensus" if config.raw["models"]["visual"]["allow_image_upload"] else "local-r3"

@@ -60,6 +60,7 @@ source:
   boundaries: /Users/lestersun/IP-Video-Matcher/experiments/phase3a0/cases/source_boundaries.json
 
 client:
+  story_edit_policy: strict  # D-041：字幕讲剧情、几乎没有观点判剧情解说；lenient = 有配乐/主题化剪辑时按混剪类（标黄）
   work_title: 七时吉祥
   rules: pilot/semantic/rules_qsjx.yaml
   opinion_format:
