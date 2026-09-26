@@ -1,6 +1,6 @@
 import unittest
 
-from pilot.textindex.search import Index, SubEntry
+from pilot.textindex.search import Index, SubEntry, adjacent_pairs
 from pilot.textindex.sequence import AMBIGUOUS, LINKED, NO_MATCH, match_sequence, segments
 from pilot.textindex.text import normalize
 
@@ -75,6 +75,24 @@ class SequenceTest(unittest.TestCase):
 
     def test_empty_input(self):
         self.assertEqual(match_sequence(self.index, []), [])
+
+
+class PairTest(unittest.TestCase):
+    def setUp(self):
+        lines = [(16, 863.0, "该不是"), (16, 864.5, "要告自吧"), (16, 900.0, "第一计"), (17, 10.0, "别的集")]
+        entries = [SubEntry(n + 1, ep, t, t + 1.0, s, normalize(s), 1.0, ()) for n, (ep, t, s) in enumerate(lines)]
+        self.index = Index(entries + adjacent_pairs(entries))
+
+    def test_caption_spanning_two_lines_matches_the_pair(self):
+        best = self.index.search("该不是要告自吧")[0]
+        self.assertEqual((best.entry.id, best.entry.parts, best.entry.t_start, best.sim), (-1, (1, 2), 863.0, 1.0))
+
+    def test_pairs_only_join_neighbours_in_one_episode(self):
+        pair_texts = [e.norm for e in self.index.entries if e.parts]
+        self.assertEqual(pair_texts, ["该不是要告自吧"])     # 864.5 -> 900.0 too far apart; 17 is another episode
+
+    def test_pair_is_hidden_when_one_of_its_lines_matches_better(self):
+        self.assertEqual([c.entry.id for c in self.index.search("该不是")], [1])
 
 
 if __name__ == "__main__":

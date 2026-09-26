@@ -44,9 +44,16 @@ CREATE INDEX IF NOT EXISTS entries_episode ON entries(episode, t_start);
 CREATE INDEX IF NOT EXISTS entries_norm ON entries(norm);
 """
 
-FLAGS = ("OPENING_ENDING", "RECAP", "BOUNDARY_REGION", "SHORT")
+FLAGS = ("OPENING_ENDING", "RECAP", "BOUNDARY_REGION", "SHORT", "LYRIC")
 SHORT_LEN = 4                # fewer than 4 characters -> SHORT
 OPENING_ENDING_MIN_EPS = 3   # same text in >= 3 episodes -> OPENING_ENDING
+
+# LYRIC: sung or chanted voice-over that uploaders reuse as background audio, so a text match does
+# not show the episode's picture. Marked from a reviewed list of time ranges per work
+# (pilot/textindex/lyrics/<work>.json). Text-only rules were tried and rejected on this drama: lines
+# repeated in >= 3 episodes are stock dialogue ("既然如此", "你说什么"), runs of verse-like short lines
+# are mostly narration and formal dialogue, and 4-line blocks repeated in >= 3 episodes are flashbacks.
+LYRICS_DIR = Path(__file__).with_name("lyrics")
 
 
 def connect(path: Path) -> sqlite3.Connection:
@@ -105,13 +112,22 @@ def episode_bounds(boundaries: tuple[dict, float, float], episode: int, duration
     return start, duration - end_offset, "rule"
 
 
-def recompute_flags(con: sqlite3.Connection) -> None:
+def load_lyric_ranges(path: Path | None) -> list[dict]:
+    """[{"episode", "start", "end", "note"}, ...]; an absent file means no LYRIC ranges."""
+    if path is None or not path.exists():
+        return []
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
+def recompute_flags(con: sqlite3.Connection, lyric_ranges: list[dict] = ()) -> None:
     """Flags only down-weight entries; nothing is deleted. Recomputed over all episodes after every build."""
     bounds = {r["episode"]: (r["content_start"], r["content_end"]) for r in con.execute("SELECT * FROM episodes")}
-    rows = con.execute("SELECT id, episode, t_start, t_end, norm FROM entries").fetchall()
+    rows = con.execute("SELECT id, episode, t_start, t_end, text, norm FROM entries ORDER BY episode, t_start").fetchall()
     eps_by_norm: dict[str, set[int]] = defaultdict(set)
     for r in rows:
         eps_by_norm[r["norm"]].add(r["episode"])
+    lyric = {r["id"] for r in rows for g in lyric_ranges
+             if r["episode"] == g["episode"] and r["t_start"] < g["end"] and r["t_end"] > g["start"]}
     updates = []
     for r in rows:
         eps = eps_by_norm[r["norm"]]
@@ -126,6 +142,8 @@ def recompute_flags(con: sqlite3.Connection) -> None:
             flags.append("BOUNDARY_REGION")
         if len(r["norm"]) < SHORT_LEN:
             flags.append("SHORT")
+        if r["id"] in lyric:
+            flags.append("LYRIC")
         updates.append((",".join(flags), r["id"]))
     with con:
         con.executemany("UPDATE entries SET flags = ? WHERE id = ?", updates)

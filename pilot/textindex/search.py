@@ -10,10 +10,13 @@ from pathlib import Path
 from .text import grams, normalize, similarity
 
 # Down-weights used when ranking ties and in the sequence matcher; flags never remove an entry.
-# OPENING_ENDING and SHORT describe the text (generic wherever it occurs), RECAP and BOUNDARY_REGION the place.
-FLAG_WEIGHTS = {"OPENING_ENDING": 0.3, "RECAP": 0.8, "BOUNDARY_REGION": 0.7, "SHORT": 0.5}
+# OPENING_ENDING and SHORT describe the text (generic wherever it occurs); RECAP, BOUNDARY_REGION
+# and LYRIC the place.
+FLAG_WEIGHTS = {"OPENING_ENDING": 0.3, "RECAP": 0.8, "BOUNDARY_REGION": 0.7, "SHORT": 0.5, "LYRIC": 0.7}
 TEXT_FLAGS = ("OPENING_ENDING", "SHORT")
 MIN_SHARED_GRAMS = 0.3   # recall: an entry must share >= 30% of the query's 2-grams
+PAIR_GAP_S = 2.0         # adjacent lines at most this far apart may be shown as one caption
+PAIR_MIN_CHARS = 5
 
 
 @dataclass(frozen=True)
@@ -26,6 +29,7 @@ class SubEntry:
     norm: str
     conf: float
     flags: tuple[str, ...]
+    parts: tuple[int, ...] = ()   # ids of the two lines of a pair entry
 
     @property
     def weight(self) -> float:
@@ -51,6 +55,25 @@ class Candidate:
                 "text": e.text, "flags": list(e.flags), "entry_id": e.id}
 
 
+def adjacent_pairs(entries: list[SubEntry]) -> list[SubEntry]:
+    """"Line + next line" entries of each episode, id -(first line id).
+
+    Uploaders who re-subtitle a clip often put two source lines into one caption ("该不是" +
+    "要告自吧" -> "该不是要告自吧"). OPENING_ENDING only if both lines carry it; place flags merge.
+    """
+    ordered = sorted((e for e in entries if not e.parts), key=lambda e: (e.episode, e.t_start))
+    pairs = []
+    for a, b in zip(ordered, ordered[1:]):
+        if a.episode != b.episode or b.t_start - a.t_end > PAIR_GAP_S or len(a.norm + b.norm) < PAIR_MIN_CHARS:
+            continue
+        flags = {f for f in a.flags + b.flags if f not in TEXT_FLAGS}
+        if "OPENING_ENDING" in a.flags and "OPENING_ENDING" in b.flags:
+            flags.add("OPENING_ENDING")
+        pairs.append(SubEntry(-a.id, a.episode, a.t_start, b.t_end, f"{a.text} {b.text}", a.norm + b.norm,
+                              min(a.conf, b.conf), tuple(sorted(flags)), (a.id, b.id)))
+    return pairs
+
+
 class Index:
     def __init__(self, entries: list[SubEntry]):
         self.entries = entries
@@ -60,15 +83,17 @@ class Index:
                 self.postings[g].append(i)
 
     @classmethod
-    def load(cls, db_path: Path) -> "Index":
+    def load(cls, db_path: Path, pairs: bool = True) -> "Index":
+        """All subtitle entries of the index, plus adjacent-line pairs unless pairs=False."""
         if not db_path.exists():
             raise FileNotFoundError(f"index not found: {db_path} (run the build command first)")
         con = sqlite3.connect(db_path)
         rows = con.execute(
             "SELECT id, episode, t_start, t_end, text, norm, conf, flags FROM entries ORDER BY episode, t_start").fetchall()
         con.close()
-        return cls([SubEntry(r[0], r[1], r[2], r[3], r[4], r[5], r[6], tuple(f for f in r[7].split(",") if f))
-                    for r in rows])
+        entries = [SubEntry(r[0], r[1], r[2], r[3], r[4], r[5], r[6], tuple(f for f in r[7].split(",") if f))
+                   for r in rows]
+        return cls(entries + adjacent_pairs(entries) if pairs else entries)
 
     def search(self, text: str, min_sim: float = 0.5, top: int | None = 10, keep_above: float = 0.9) -> list[Candidate]:
         """Candidates sorted by similarity (then flag weight, episode, time).
@@ -90,6 +115,9 @@ class Index:
             s = similarity(q, e.norm)
             if s >= min_sim:
                 cands.append(Candidate(e, s))
+        # a pair adds nothing where one of its own lines matches at least as well
+        single = {c.entry.id: c.sim for c in cands if not c.entry.parts}
+        cands = [c for c in cands if not c.entry.parts or max(single.get(i, 0.0) for i in c.entry.parts) < c.sim]
         cands.sort(key=lambda c: (-c.sim, -c.entry.weight, c.entry.episode, c.entry.t_start))
         if top is None:
             return cands

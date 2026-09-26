@@ -18,6 +18,11 @@ class NormalizeTest(unittest.TestCase):
         self.assertEqual(normalize("《七时吉祥》第１２集，ＯＫ?"), "七时吉祥第12集ok")
         self.assertEqual(normalize("  ——…… "), "")
 
+    def test_traditional_characters_become_simplified(self):
+        self.assertEqual(normalize("你不應該來的"), "你不应该来的")
+        self.assertEqual(normalize("至少伱讓我知道"), "至少你让我知道")      # 伱: an OCR variant form
+        self.assertEqual(normalize("古靈精怪 活泼好動"), normalize("古灵精怪 活泼好动"))
+
     def test_edit_distance_and_similarity(self):
         self.assertEqual(edit_distance("宁王他不会放过你们的", "王他不会放过你们的"), 1)
         self.assertEqual(edit_distance("潇洒", "潇酒"), 1)

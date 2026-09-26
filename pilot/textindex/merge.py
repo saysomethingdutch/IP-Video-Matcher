@@ -6,7 +6,7 @@ from dataclasses import dataclass
 
 from .text import edit_distance, normalize
 
-MERGE_VERSION = 1        # bump when frame_text/merge_frames change; re-derives entries from the OCR cache
+MERGE_VERSION = 2        # bump when frame_text/merge_frames/normalize change; re-derives entries from the OCR cache
 MIN_ITEM_CONF = 0.3      # Vision "accurate" confidences are coarse (0.3 / 0.5 / 1.0)
 MIN_ITEM_H = 0.12        # item height, as a fraction of the strip; subtitles are ~0.2-0.3, credits/ads smaller
 ROW_Y_BAND = (0.4, 0.9)  # vertical centre of a subtitle row within the strip (observed ~0.55-0.75)
