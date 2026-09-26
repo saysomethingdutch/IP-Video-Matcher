@@ -11,7 +11,7 @@ from openpyxl import Workbook
 
 from pilot.ledger.workbook import duration_seconds
 from pilot.ledger.pipeline import screenshot_ocr
-from pilot.robustness import freeze, generate
+from pilot.robustness import _norm, freeze, generate
 from pilot.review.data import read_source
 from pilot.semantic.table import load_table
 
@@ -91,6 +91,9 @@ class BlindHoldoutTest(unittest.TestCase):
             self.assertEqual(result["blind_opinion_rows"], 1)
             key = json.loads((case / "robustness/key.json").read_text())
             self.assertEqual(set(key["pairs"][rid].values()), {"人工", "GLM", "DeepSeek"})
+
+    def test_grid_writing_normalization(self):
+        self.assertEqual(_norm("跳播＋ Reaction类 "), _norm("跳播+reaction"))
 
     def test_excel_duration_past_24_encoded_minutes(self):
         self.assertEqual(duration_seconds(datetime(1900, 1, 1, 14, 3), qsjx=True), 2283)
