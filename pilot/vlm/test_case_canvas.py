@@ -1,6 +1,8 @@
 """New camera layouts and missing playback remain explicit in WO-007."""
+import json
 import tempfile
 import unittest
+from unittest import mock
 from pathlib import Path
 
 from PIL import Image, ImageDraw
@@ -23,6 +25,26 @@ class CaseCanvasTest(unittest.TestCase):
         ocr = {10: [{"x": .5, "y": .4, "text": "sideways"}] * 12}
         self.assertEqual(player_box(horizontal, "MAH00734", 10, ocr, preset)[:2],
                          ("rotated_portrait", tuple(preset["rotated_portrait"])))
+
+    def test_unavailable_canvas_skips_both_cloud_calls(self):
+        with tempfile.TemporaryDirectory() as folder:
+            case = Path(folder) / "case"; case.mkdir()
+            output = Path(folder) / "vlm"; target = output / "r3/469"; target.mkdir(parents=True)
+            (case / "ledger.jsonl").write_text(json.dumps({"row_id": "469", "video": "MAH00734",
+                "plaintiff": {"video_type": "混剪"}}) + "\n")
+            meta = {"row_id": "469", "video": "MAH00734", "source": "unavailable",
+                    "page_mode": "unavailable", "collage_path": "", "ui_status": "台账无已播放区间",
+                    "geometry": None}
+            (target / "meta.json").write_text(json.dumps(meta))
+            with mock.patch.object(r3, "OUTPUT", output), mock.patch.object(r3, "R3", output / "r3"), \
+                 mock.patch.object(r3, "CASE_ROWS", {"469"}), \
+                 mock.patch.dict("os.environ", {"ZHIPU_API_KEY": "test", "DEEPSEEK_API_KEY": "test"}), \
+                 mock.patch.object(r3, "cloud_one", side_effect=AssertionError("cloud must not run")):
+                r3.cloud(case)
+                r3.finalize(case)
+            for name in ("glm-5.3-flash", "deepseek-flash", "consensus"):
+                result = json.loads((target / f"{name}.json").read_text())
+                self.assertEqual(result["status"], "skipped")
 
     def test_no_playback_without_usable_screenshot_is_marked_unavailable(self):
         with tempfile.TemporaryDirectory() as folder:
