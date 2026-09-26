@@ -229,7 +229,8 @@ def run(config: CaseConfig, from_step: str | None = None, requested_rows: str | 
     manifest_path = config.case_dir / "integration_manifest.json"
     manifest = json.loads(manifest_path.read_text()) if manifest_path.exists() else {}
     report = {"case_id": config.case_id, "selected_rows": rows, "steps": {}, "failed_rows": [],
-              "yellow_flags": 0, "red_flags": 0, "red_flag_rows": [], "cloud_cost_usd": None}
+              "yellow_flags": 0, "red_flags": 0, "red_flag_rows": [], "cloud_cost_usd": None,
+              "unpriced_cloud_usage": None}
     force_from = STEPS.index(from_step) if from_step else len(STEPS)
     for i, step in enumerate(STEPS):
         start = time.monotonic()
@@ -303,12 +304,19 @@ def run(config: CaseConfig, from_step: str | None = None, requested_rows: str | 
                                             if r.get("row_id") in rows), 4)
     calls = []
     opinion_cost = 0.0
+    unpriced_calls, unpriced_tokens = 0, {"prompt": 0, "completion": 0}
     for rid in rows:
         path = config.case_dir / "semantic" / f"{rid}.json"
         if path.exists():
             item = json.loads(path.read_text(encoding="utf-8"))
             calls.extend(item.get("calls") or [])
-            opinion_cost += float((item.get("opinion") or {}).get("usd") or 0)
+            opinion = item.get("opinion") or {}
+            opinion_cost += float(opinion.get("usd") or 0)
+            for call in opinion.get("calls") or []:
+                if call.get("backend") == "zhipu":
+                    unpriced_calls += 1
+                    for key in unpriced_tokens:
+                        unpriced_tokens[key] += (call.get("usage") or {}).get(key) or 0
     deepseek = [c for c in calls if c.get("backend") == "deepseek"]
     if deepseek:
         prompt = sum((c.get("usage") or {}).get("prompt") or 0 for c in deepseek)
@@ -317,6 +325,9 @@ def run(config: CaseConfig, from_step: str | None = None, requested_rows: str | 
         costs["classification_upper_usd"] = round((prompt * .30 + completion * 1.20) / 1e6, 4)
     if opinion_cost:
         costs["opinion_usd"] = round(opinion_cost, 4)
+    if unpriced_calls:
+        report["unpriced_cloud_usage"] = {"model": "glm-5.3-flash", "opinion_calls": unpriced_calls,
+                                          "tokens": unpriced_tokens, "note": "金额以平台账单为准"}
     if costs:
         costs["known_or_upper_total_usd"] = round(sum(costs.values()), 4)
         report["cloud_cost_usd"] = costs
@@ -326,6 +337,8 @@ def run(config: CaseConfig, from_step: str | None = None, requested_rows: str | 
                              for name, item in report["steps"].items()))
     print(f"失败行（{len(report['failed_rows'])}）：{'、'.join(report['failed_rows']) or '无'}")
     print(f"旗标：黄 {report['yellow_flags']}，红 {report['red_flags']}（涉及 {len(report['red_flag_rows'])} 行）")
-    print("云端费用（USD，已记录/上限估算）：" + (json.dumps(costs, ensure_ascii=False) if costs else "无"))
+    print("云端费用（USD，已记录/上限估算，不含未定价 GLM）：" + (json.dumps(costs, ensure_ascii=False) if costs else "无"))
+    if report["unpriced_cloud_usage"]:
+        print("未计价云端用量：" + json.dumps(report["unpriced_cloud_usage"], ensure_ascii=False))
     print(f"明细：{config.case_dir / 'integration_summary.json'}")
     return report
