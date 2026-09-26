@@ -109,6 +109,16 @@ class ValidateTest(unittest.TestCase):
         errors = validate(*opinion(purpose), {**ctx, "title_only": True})
         self.assertFalse(any(e.startswith(("具体性", "证据")) for e in errors), errors)
 
+    def test_r2_wording_rules(self):
+        thai = GOOD_PURPOSE.replace("并配以UP主字幕", "并通过泰语评论配音方式")
+        errors = validate(*opinion(thai), {**CTX, "thai_dub": True})
+        self.assertTrue(any(e.startswith("泰配") for e in errors), errors)
+        self.assertFalse(any(e.startswith("泰配") for e in validate(*opinion(), {**CTX, "thai_dub": True})))
+        dub_ok = GOOD_PURPOSE.replace("进行评论", "进行评论（原剧为泰语配音版）")
+        self.assertFalse(any(e.startswith("泰配") for e in validate(*opinion(dub_ok), {**CTX, "thai_dub": True})))
+        skipped = GOOD_PURPOSE.replace("进行评论", "通过跳播选取画面进行评论")
+        self.assertTrue(any(e.startswith("跳播") for e in validate(*opinion(skipped), CTX)))
+
     def test_evidence_must_be_verbatim(self):
         errors = validate(*opinion(), {**CTX, "evidence": [{"quote": "编出来的话"}]})
         self.assertTrue(any(e.startswith("证据") for e in errors))
@@ -146,6 +156,21 @@ class RouteTest(unittest.TestCase):
             out = PL.draft({}, f, {"text": PROP}, "system", "deepseek")
         self.assertEqual((out["errors"], len(out["calls"])), ([], 2))
         self.assertTrue(prompts[1].startswith("重试：") and "具体性" in prompts[1] and "加粗" in prompts[1])
+
+
+class UndecidedTest(unittest.TestCase):
+    def test_plot_retelling_guess_is_not_drafted(self):
+        r = {"row_id": "1", "classification": {"nature": "不确定", "model_nature": "剧情解说"}, "flags": [],
+             "fields": {"AG": {"value": "不确定"}}}
+        op = PL.opinion_for(r, None, {}, "", "zhipu", None)
+        self.assertEqual((op["kind"], op["text"]), ("slash", "/"))
+        self.assertIn("剧情解说", op["flags"][0]["reason"])
+
+    def test_ui_noise(self):
+        for t in ("2人正在者", "1.1人正在劃", "人正在福", "UP主都在用的宝藏功能", "+ 美注", "厂 此生不换"):
+            self.assertTrue(PL.UI_NOISE.search(t), t)
+        for t in ("门外有人", "有人正在哭", "口是心非的初空"):
+            self.assertFalse(PL.UI_NOISE.search(t), t)
 
 
 class AbTest(unittest.TestCase):

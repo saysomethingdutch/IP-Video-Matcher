@@ -11,6 +11,7 @@ from __future__ import annotations
 import csv
 import hashlib
 import json
+import re
 import time
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
@@ -23,7 +24,7 @@ from pilot.textindex.t2s import T2S
 from . import prompt as P
 from .proportion import episode_seconds, proportion
 from .samples import client_examples, corrections, table_samples
-from .validate import CONCLUSION, PROPORTION, PURPOSE, SUBSTITUTION, validate
+from .validate import CONCLUSION, PROPORTION, PURPOSE, SUBSTITUTION, TYPE_WORDS, validate
 
 SKIP_TEXT = ("原告故意跳播，跳去 up 主点评内容，导致被告根本无法判断视频的性质，基于原告这种故意截取、有意跳过的行为，"
              "应当推定涉案视频构成合理使用。")      # 要求"故意跳播"B：候选文字，不起草，由所有者决定（§1）
@@ -32,6 +33,10 @@ SHORT_SECONDS = 300
 TEMPERATURE = 0.3
 PICTURE = {"Z": "非权利作品（Z）", "AA": "遮挡物（AA）", "AB": "画面大小（AB）"}
 TAG = "意见："
+DRAFT_AS = ("观点评析", "夹叙夹议解说", "混剪", "reaction")      # an undecided row is drafted as the model's first guess (R2)
+UI_NOISE = re.compile(r"\d\s*人?正在\S{0,2}$|^人正在\S{0,2}$|宝藏功能|^[+＋]?\s*[美关]注$|^[厂J♪♫门口]\s+\S{1,20}$|^冂\s*\S{1,20}$")
+# bilibili UI read as text: viewer count "2人正在看", promo banner, follow button, the music chip (note icon + song)
+TIMEOUT = 900.0             # glm-5.3-flash thinks for minutes on this prompt
 
 
 def usd(usage: dict, when: datetime) -> float:
@@ -65,17 +70,24 @@ def foreign_lines(case_dir: Path, rid: str) -> tuple[list[str], str | None]:
 def facts(r: dict, case_dir: Path) -> dict:
     d, cls = r["digest"], r["classification"]
     nature = cls["nature"] + (f"（{cls['subtype']}）" if cls.get("subtype") and cls["nature"] in ("观点评析", "混剪") else "")
-    note = None
+    note, draft_as = None, None
     if cls["nature"] == "不确定":
-        nature = f"未定（分类模型初判：{cls.get('model_nature') or '无'}）"
-        note = "性质未定：请先按事实判断这条视频更接近哪一类，再按那一类的角度写。"
+        guess = cls.get("model_nature")
+        if guess in DRAFT_AS:
+            draft_as = guess
+            nature = f"未定（按分类模型的初判“{guess}”起草）"
+            note = f"性质未定：按“{guess}”这一类的角度起草，全文只写这一种类型。"
+        else:
+            nature = "未定（分类模型也没有判断）"
+            note = "性质未定：请先按事实判断这条视频更接近哪一类，全文只认定一种。"
     grid = f"合理使用类型：{r['fields']['AI']['value']}；演绎类型：{r['fields']['AJ']['value']}"
     seeks = d["ledger"]["seeks"]["value"]
-    up_all = [l["text"].translate(T2S) for l in d["up_texts"]]
+    up_all = [l["text"].translate(T2S) for l in d["up_texts"] if not UI_NOISE.search(l["text"].strip())]
     up = P.fit(up_all, P.UP_TEXT_CHARS)
     foreign, lang = foreign_lines(case_dir, r["row_id"])
     video = d["ledger"]["video_duration"]["value"]
-    return {"title": d["title"]["value"], "nature": f"{nature}；{grid}", "nature_raw": cls["nature"],
+    return {"title": d["title"]["value"], "nature": f"{nature}；{grid}", "nature_raw": draft_as or cls["nature"],
+            "draft_as": draft_as, "thai_dub": "泰配" in d["title"]["value"] or lang == "泰",
             "jump": "不清楚是否跳播" if seeks == "未知" else "有跳播" if seeks else "没有跳播",
             "short": isinstance(video, (int, float)) and video < SHORT_SECONDS,
             "picture": {c: str(r["fields"][c]["value"]) for c in PICTURE},
@@ -98,7 +110,7 @@ def inputs_hash(system: str, f: dict, prop: str) -> str:
 def context(f: dict, prop: dict, data: dict) -> dict:
     return {"title": f["title"], "up_texts": f["up_texts"], "foreign": f["foreign"], "picture": f["picture"],
             "picture_named": f.get("picture_named"), "proportion": prop["text"], "evidence": data.get("evidence"),
-            "nature": f.get("nature_raw"), "title_only": f.get("title_only")}
+            "nature": f.get("nature_raw"), "title_only": f.get("title_only"), "thai_dub": f.get("thai_dub")}
 
 
 def revalidate(r: dict, case_dir: Path, ep_secs: dict) -> dict | None:
@@ -122,7 +134,7 @@ def draft(r: dict, f: dict, prop: dict, system: str, backend: str) -> dict:
     for attempt in range(2):
         user = P.user_prompt(f) if attempt == 0 else P.retry_prompt(f, previous, errors)
         when = datetime.now(timezone.utc)
-        reply = ask(backend, user, system=system, temperature=TEMPERATURE, required=("purpose", "substitution"))
+        reply = ask(backend, user, system=system, temperature=TEMPERATURE, required=("purpose", "substitution"), timeout=TIMEOUT)
         calls.append({"attempt": attempt + 1, "backend": reply.backend, "model": reply.model, "seconds": reply.seconds,
                       "usage": reply.usage, "usd": round(usd(reply.usage, when), 6) if reply.backend == "deepseek" else 0.0,
                       "error": reply.error, "fallback": reply.fallback, "valid_json": reply.data is not None})
@@ -149,14 +161,17 @@ def opinion_for(r: dict, case_dir: Path, ep_secs: dict, system: str, backend: st
         return {"kind": kind, "text": SKIP_PLACEHOLDER, "candidate": SKIP_TEXT, "candidate_style": "红字",
                 "flags": [{"level": "red", "reason": "疑似故意跳播：不起草；候选文字取自客户要求原文，请所有者决定"}],
                 "validation": {"ok": True, "errors": []}}
+    cls = r["classification"]
+    if cls["nature"] == "不确定" and cls.get("model_nature") == "剧情解说":      # 剧情解说 is not fair use (要求 L100)
+        return {"kind": "slash", "text": "/", "validation": {"ok": True, "errors": []}, "source": "性质未定：模型初判剧情解说，待确认",
+                "flags": [{"level": "yellow", "reason": "性质未定，分类模型初判为剧情解说（按客户口径不构成合理使用），意见暂填“/”，请确认"}]}
     f = facts(r, case_dir)
     prop = proportion(r["digest"], ep_secs)
     key = inputs_hash(system, f, prop["text"])
     if saved and saved.get("inputs_hash") == key and saved.get("kind") == "draft":
         return {**saved, "reused": True}
     flags = list(prop["flags"])
-    if r["classification"]["nature"] == "不确定":
-        flags.append({"level": "yellow", "reason": "分类为不确定：意见照常起草，请核对性质"})
+    undecided = r["classification"]["nature"] == "不确定"
     if f["foreign"]:
         flags.append({"level": "yellow", "reason": "外语转写，请核对大意"})
     if f["title_only"]:
@@ -166,6 +181,10 @@ def opinion_for(r: dict, case_dir: Path, ep_secs: dict, system: str, backend: st
                 "validation": {"ok": False, "errors": ["比例段缺集数，未起草"]}}
     out = draft(r, f, prop, system, backend)
     ok = not out["errors"]
+    if undecided:
+        named = [t for t, rx in TYPE_WORDS.items() if rx.search(out["text"])]
+        as_what = f["draft_as"] or (named[0] if len(named) == 1 else "模型判断")
+        flags.append({"level": "yellow", "reason": f"性质未定，意见按“{as_what}”起草，请确认"})
     if not ok:
         flags.append({"level": "red", "reason": "意见未通过校验：" + "；".join(out["errors"])[:300]})
     if any(c["fallback"] or c["backend"] in ("local", "local-vl") for c in out["calls"]):
@@ -185,8 +204,8 @@ def opinion_for(r: dict, case_dir: Path, ep_secs: dict, system: str, backend: st
 
 def merge(r: dict, op: dict) -> None:
     """Write the opinion into the row: AF (the review page reads it), the opinion record and its flags."""
-    source = {"repeat": "重复取证规则", "slash": "合理使用可能性为否", "skip": "疑似故意跳播（候选文字待定）",
-              "draft": f"WO-004c 草稿（{op.get('model') or '模型'}）"}[op["kind"]]
+    source = op.get("source") or {"repeat": "重复取证规则", "slash": "合理使用可能性为否", "skip": "疑似故意跳播（候选文字待定）",
+                                  "draft": f"WO-004c 草稿（{op.get('model') or '模型'}）"}[op["kind"]]
     basis = "；".join(op["validation"]["errors"]) if op["validation"]["errors"] else \
         ("校验通过" if op["kind"] == "draft" else source)
     r["fields"]["AF"] = {"value": op["text"], "source": source, "basis": basis}
