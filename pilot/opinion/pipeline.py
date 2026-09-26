@@ -220,9 +220,10 @@ def run(case_dir: Path, table: Table, backend: str = "deepseek", only: set[str] 
         style = client["style_examples"]
         requirements = case_config.path_of(style.get("requirements"))
         excluded = set(map(int, case_config.row_ids)) if style.get("exclude_current_rows", True) else set()
-        samples = (client_examples(requirements, opinion_format["headings"], opinion_format["conclusion"])
+        sample_conclusion = None if opinion_format.get("validation_profile") == "qsjx" else opinion_format["conclusion"]
+        samples = (client_examples(requirements, opinion_format["headings"], sample_conclusion)
                    + table_samples(table, style.get("table_rows") or {}, excluded,
-                                   opinion_format["headings"], opinion_format["conclusion"])
+                                   opinion_format["headings"], sample_conclusion)
                    + corrections(corrections_path or case_dir / "corrections.jsonl"))
         rules_path = case_config.path_of(opinion_format.get("prompt_rules"))
         rules = rules_path.read_text(encoding="utf-8") if rules_path else None
