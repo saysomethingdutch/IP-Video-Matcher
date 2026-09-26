@@ -16,7 +16,6 @@ from statistics import mean
 
 from pilot.content.evidence import parse_claim
 
-EP_FILE = re.compile(r"qsjx_ep(\d+)\.ts$")
 MAX_SHOWN_PCT = 10.0        # 要求第 4 条：超过 10% 不写数值，只写"占原作品比例较少"
 
 
@@ -24,13 +23,16 @@ def flag(level: str, reason: str) -> dict:
     return {"level": level, "reason": reason}
 
 
-def episode_seconds(episodes_dir: Path, cache: Path) -> dict[int, float]:
+def episode_seconds(episodes_dir: Path, cache: Path, pattern: str = r"qsjx_ep(\d+)\.ts$") -> dict[int, float]:
     """{episode: seconds} of the local copies, cached after the first ffprobe pass."""
     if cache.exists():
         return {int(k): v for k, v in json.loads(cache.read_text(encoding="utf-8")).items()}
     out = {}
-    for path in sorted(episodes_dir.glob("qsjx_ep*.ts")):
-        m = EP_FILE.search(path.name)
+    filename_pattern = re.compile(pattern)
+    for path in sorted(episodes_dir.iterdir()):
+        if not path.is_file():
+            continue
+        m = filename_pattern.search(path.name)
         if not m:
             continue
         r = subprocess.run(["ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "csv=p=0", str(path)],
@@ -79,8 +81,11 @@ def pct_text(pct: float) -> str:
     return f"{max(pct, 0.01):.2f}".rstrip("0").rstrip(".")
 
 
-def proportion(d: dict, ep_secs: dict[int, float]) -> dict:
+def proportion(d: dict, ep_secs: dict[int, float], source_enabled: bool = True) -> dict:
     """{"text", "numbers" (every number the paragraph may contain), "basis", "flags"}."""
+    if not source_enabled:
+        return {"text": "本案未配置原片对应集数和时长，无法核算具体引用比例，请人工核对。", "numbers": set(),
+                "basis": {"source": "原片未配置"}, "flags": [flag("yellow", "比例段：原片未配置，引用比例待人工核对")]}
     eps, source, flags = corresponding_episodes(d)
     if not eps:
         return {"text": "", "numbers": set(), "basis": {"source": source}, "flags": flags}

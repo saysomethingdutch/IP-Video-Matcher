@@ -35,20 +35,21 @@ def paragraphs(text: str) -> dict[str, str]:
     return out
 
 
-def table_samples(table: Table) -> list[dict]:
+def table_samples(table: Table, sample_rows: dict | None = None, excluded_rows: set[int] | None = None) -> list[dict]:
     out = []
-    for kind, rows in SAMPLE_ROWS.items():
+    for kind, rows in (sample_rows if sample_rows is not None else SAMPLE_ROWS).items():
         for no in rows:
-            assert no not in BATCH, "samples never come from this batch"
+            if no in (excluded_rows if excluded_rows is not None else BATCH):
+                continue
             p = paragraphs(str(table.value(no, "AF") or ""))
             if p.get("purpose") and p.get("substitution"):
                 out.append({"type": kind, "source": f"比对表人工意见（本批以外，序号 {no}）", **p})
     return out
 
 
-def client_examples(path: Path = REQUIREMENTS) -> list[dict]:
+def client_examples(path: Path | None = REQUIREMENTS) -> list[dict]:
     """观点评析类 / 混剪类 / Reaction类 examples from 《比对要求》 "4. 比对意见部分"."""
-    if not path.exists():
+    if path is None or not path.exists():
         return []
     text = subprocess.run(["pandoc", "-t", "plain", str(path)], capture_output=True, text=True, check=True).stdout
     part = text.split("示例：", 1)[-1].split("常见错误分享", 1)[0]

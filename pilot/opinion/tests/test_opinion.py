@@ -48,6 +48,11 @@ class ProportionTest(unittest.TestCase):
         p = proportion(digest(evidence=[2], video="未知"), EPS)
         self.assertEqual(p["text"], "对应剧集为第2集，约长41分钟，占原作品比例较少，足以构成适当引用。")
 
+    def test_no_source_marks_ratio_for_review(self):
+        p = proportion(digest(claim=None), {}, source_enabled=False)
+        self.assertIn("无法核算具体引用比例", p["text"])
+        self.assertEqual(p["flags"][0]["level"], "yellow")
+
 
 PROP = "对应剧集为第2集，长约41分钟，被诉视频引用原作品的画面仅2分6秒，占原作品比例较少，为5.12%，足以构成适当引用。"
 GOOD_PURPOSE = ("该视频中作者对祥云与初空的相处进行评论，认为两人斗嘴其实是在互相关心，并配以UP主字幕解读人物心理，"
