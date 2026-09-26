@@ -19,6 +19,7 @@ workbook:
     capture_date: null
   capture_date: null  # Optional YYYY-MM-DD filter for one notarial batch.
   duration_encoding: hms  # hms or excel_mss (legacy Excel m:ss stored as h:m).
+  blind_holdout: false  # true for evaluation batches: inference reads only A–T, never target U–AJ.
   bv_column: L  # Physical column letter used to find the same BV in other batches.
   output_columns:  # Logical U–AJ fields mapped to physical workbook letters.
     U: U
@@ -91,6 +92,9 @@ ledger:
   probe_full_and_crop: false  # Diagnostic full-frame OCR pass.
   repair_nearby_identity: false  # Enable only if this evidence needs the WO-001 R2 repair.
   repair_truncated_readings: false
+
+visual:
+  canvas_boxes: {}  # Optional per-recording 1280×720 player rectangles: landscape / portrait / rotated_portrait.
 
 cache:
   adopt_existing: false  # true only when verified old outputs predate integration manifests.
