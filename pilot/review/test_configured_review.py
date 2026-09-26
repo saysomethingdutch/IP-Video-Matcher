@@ -1,0 +1,58 @@
+"""Cross-module check: logical fields land in the configured physical Excel columns."""
+from __future__ import annotations
+
+import json
+
+import openpyxl
+import yaml
+
+from pilot.case_config import CaseConfig, LOGICAL_OUTPUTS
+from pilot.review.data import ReviewStore
+from pilot.review.export import export_case
+
+
+def test_review_and_export_respect_case_column_mapping(tmp_path):
+    source = tmp_path / "source.xlsx"
+    book = openpyxl.Workbook()
+    sheet = book.active
+    sheet.title = "Case Sheet"
+    for col in range(1, 53):
+        sheet.cell(1, col, f"Header {col}")
+    sheet.cell(2, 1, 17)
+    sheet.cell(2, 21, "original U")
+    book.save(source)
+
+    mapping = {letter: openpyxl.utils.get_column_letter(37 + i)
+               for i, letter in enumerate(LOGICAL_OUTPUTS)}
+    output = tmp_path / "case"
+    config_path = tmp_path / "case.yaml"
+    config_path.write_text(yaml.safe_dump({
+        "schema_version": 1, "case_id": "test_case",
+        "workbook": {"path": str(source), "sheet": "Case Sheet", "row_ids": [17],
+                     "columns": {"row_id": "Header 1", "video": "Header 2"},
+                     "output_columns": mapping},
+        "evidence": {"videos": {"V1": {}}, "video_dir": str(tmp_path), "screenshot_dir": str(tmp_path)},
+        "source": {"enabled": False},
+        "client": {"rules": str(tmp_path / "rules.yaml"), "opinion_format": {"headings": []}},
+        "models": {"visual": {"allow_image_upload": False}, "text": "local", "speech": {"enabled": False}},
+        "output": {"dir": str(output), "export_name": "result"}, "ledger": {"case": "custom", "screenshot_time_pattern": r"(\d\d)(\d\d)(\d\d)"}
+    }), encoding="utf-8")
+    config = CaseConfig(config_path)
+    output.mkdir()
+    ledger = {"row_id": "17", "video": "V1", "video_duration": 5,
+              "plaintiff": {"source_row": 2, "source_workbook": str(source), "uploader": "u", "title": "t"}}
+    (output / "ledger.jsonl").write_text(json.dumps(ledger) + "\n")
+    semantic = output / "semantic"
+    semantic.mkdir()
+    (semantic / "17.json").write_text(json.dumps({"fields": {
+        letter: {"value": f"machine {letter}", "basis": "test"} for letter in LOGICAL_OUTPUTS}}))
+
+    store = ReviewStore(output, config)
+    assert store.detail("17")["fields"][36]["value"] == "machine U"
+    exported = export_case(store)
+    filled = openpyxl.load_workbook(exported, read_only=True, data_only=True)
+    assert filled["Case Sheet"]["U2"].value == "original U"
+    assert filled["Case Sheet"]["AK2"].value == "machine U"
+    assert filled["Case Sheet"]["AZ2"].value == "machine AJ"
+    assert "机器来源" in filled.sheetnames
+    filled.close()

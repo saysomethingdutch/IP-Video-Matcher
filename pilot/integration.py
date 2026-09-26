@@ -49,8 +49,11 @@ def _fingerprint(config: CaseConfig, step: str, rows: list[str]) -> str:
         "classification": ("client", "models"), "opinion": ("client", "models", "source"),
         "review": ("workbook", "output"),
     }[step]
+    module_dir = {"ledger": "ledger", "captions": "content", "speech": "asr", "visual": "vlm",
+                  "classification": "semantic", "opinion": "opinion", "review": "review"}[step]
     # Per-row outputs can be numerous and contain timestamps; only the selected row inputs affect a partial run.
-    data = [config.config_digest(*sections), rows, [_stamp(p) for p in inputs if p is not None]]
+    data = [config.config_digest(*sections), rows, [_stamp(p) for p in inputs if p is not None],
+            [_stamp(p) for p in sorted((REPO / "pilot" / module_dir).glob("*.py"))]]
     return hashlib.sha256(json.dumps(data, ensure_ascii=False, sort_keys=True).encode()).hexdigest()
 
 
