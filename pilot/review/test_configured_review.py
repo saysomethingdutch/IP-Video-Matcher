@@ -32,7 +32,7 @@ def test_review_and_export_respect_case_column_mapping(tmp_path):
     config_path.write_text(yaml.safe_dump({
         "schema_version": 1, "case_id": "test_case",
         "workbook": {"path": str(source), "sheet": "Case Sheet", "row_ids": [17],
-                     "columns": {"row_id": "Header 1", "video": "Header 2"},
+                     "columns": {"row_id": "Header 1", "video": "Header 2"}, "bv_column": "L",
                      "output_columns": mapping},
         "evidence": {"videos": {"V1": {}}, "video_dir": str(tmp_path), "screenshot_dir": str(tmp_path)},
         "source": {"enabled": False},

@@ -28,6 +28,8 @@ class CaseConfig:
         book = self.raw["workbook"]
         if not book.get("sheet") or not isinstance(book.get("columns"), dict):
             raise ValueError("workbook.sheet and workbook.columns are required")
+        if not re.fullmatch(r"[A-Z]{1,3}", str(book.get("bv_column") or "")):
+            raise ValueError("workbook.bv_column must be an Excel column letter")
         self.row_ids = self._row_ids(book.get("row_ids"))
         if any(not rid.isdecimal() for rid in self.row_ids):
             raise ValueError("row IDs must be numeric for the current pilot modules")

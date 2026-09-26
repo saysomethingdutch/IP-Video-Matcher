@@ -75,8 +75,8 @@ def _ready(config: CaseConfig, step: str, rows: list[str]) -> bool:
     if step == "speech":
         return _row_files(case / "asr", rows)
     if step == "visual":
-        return _row_files(vlm / "r3", rows, "/consensus.json") if config.raw["models"]["visual"]["allow_image_upload"] else \
-               _row_files(vlm / "r3", rows, "/local.json")
+        name = "consensus.json" if config.raw["models"]["visual"]["allow_image_upload"] else "local.json"
+        return all((vlm / "r3" / rid / name).is_file() for rid in rows)
     if step in ("classification", "opinion"):
         if not _row_files(case / "semantic", rows):
             return False
@@ -89,6 +89,20 @@ def _ready(config: CaseConfig, step: str, rows: list[str]) -> bool:
                  .get("digest") or {}).get("visual") or {}) for rid in rows)
         return True
     return (case / "review" / "data_summary.json").is_file()
+
+
+def _healthy(config: CaseConfig, step: str, rows: list[str]) -> bool:
+    if step == "speech":
+        return all(json.loads((config.case_dir / "asr" / f"{rid}.json").read_text()).get("status") != "ERROR"
+                   for rid in rows)
+    if step == "visual":
+        name = "consensus.json" if config.raw["models"]["visual"]["allow_image_upload"] else "local.json"
+        return all(json.loads((config.vlm_dir / "r3" / rid / name).read_text()).get("status") in ("ok", "skipped")
+                   for rid in rows)
+    if step == "opinion":
+        return all((json.loads((config.case_dir / "semantic" / f"{rid}.json").read_text())
+                    .get("opinion") or {}).get("validation", {}).get("ok", True) for rid in rows)
+    return True
 
 
 def _ledger(config: CaseConfig):
@@ -226,9 +240,10 @@ def run(config: CaseConfig, from_step: str | None = None, requested_rows: str | 
         fingerprint = _fingerprint(config, step, rows)
         key = step + ":" + ",".join(rows)
         ready = _ready(config, step, rows)
+        unhealthy = ready and not _healthy(config, step, rows)
         stale = key in manifest and manifest[key] != fingerprint
         adopt = config.raw.get("cache", {}).get("adopt_existing") and key not in manifest and ready
-        if i < force_from and ready and (manifest.get(key) == fingerprint or adopt):
+        if i < force_from and ready and not unhealthy and (manifest.get(key) == fingerprint or adopt):
             status = "adopted" if adopt else "cached"
             manifest[key] = fingerprint
         else:
@@ -243,7 +258,7 @@ def run(config: CaseConfig, from_step: str | None = None, requested_rows: str | 
                 RUNNERS[step](config)
                 status = "ran"
             else:
-                RUNNERS[step](config, rows, force=i >= force_from or stale)
+                RUNNERS[step](config, rows, force=i >= force_from or stale or (unhealthy and step == "opinion"))
                 status = "ran"
             if not _ready(config, step, rows):
                 raise RuntimeError(f"{step}: selected-row outputs are incomplete")
@@ -268,6 +283,10 @@ def run(config: CaseConfig, from_step: str | None = None, requested_rows: str | 
                 path = config.vlm_dir / "r3" / rid / f"{model}.json"
                 if path.exists() and json.loads(path.read_text(encoding="utf-8")).get("status") != "ok":
                     failures.add(rid)
+        else:
+            path = config.vlm_dir / "r3" / rid / "local.json"
+            if path.exists() and json.loads(path.read_text(encoding="utf-8")).get("status") == "error":
+                failures.add(rid)
         path = config.case_dir / "semantic" / f"{rid}.json"
         if path.exists():
             item = json.loads(path.read_text(encoding="utf-8"))
