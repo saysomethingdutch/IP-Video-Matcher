@@ -72,7 +72,7 @@ class BlindHoldoutTest(unittest.TestCase):
             (case / "ledger.jsonl").write_text(json.dumps({"row_id": rid, "plaintiff":
                 {"source_row": 2, "title": "标题"}}) + "\n")
             (case / "content/469.json").write_text("{}")
-            (vlm / "r3/469/consensus.json").write_text("{}")
+            (vlm / "r3/469/consensus.json").write_text('{"status": "ok"}')
             (case / "semantic/469.json").write_text(json.dumps({"opinion": {"text": "GLM意见"},
                 "fields": {c: {"value": "机器事实"} for c in
                            "U V W X Y Z AA AB AC AD AE AG AH AI AJ".split()}}))
