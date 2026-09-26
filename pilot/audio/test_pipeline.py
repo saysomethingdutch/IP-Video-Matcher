@@ -54,16 +54,20 @@ class AudioEvidenceTests(unittest.TestCase):
         self.assertEqual(clause["source_basis"], "同期画面字幕")
         far = compare_dialogue("我日思夜想想见一个人的时候", self.index, events, 490, 494)[0]
         self.assertEqual(far["kind"], "UP主口播候选")
+        mismatched = [{"rec_start": 482, "rec_end": 483, "text": "另一句字幕完全不同",
+                       "status": "NO_MATCH", "category": "底部解说字幕"}]
+        uncertain = compare_dialogue("我日思夜想想见一个人的时候", self.index, mismatched, 481, 484)[0]
+        self.assertEqual(uncertain["kind"], "未定声音")
 
     def test_index_match_and_short_uncertain(self):
         source = compare_dialogue("你为什么还没有回來", self.index, [], 10, 14)[0]
         self.assertEqual(source["kind"], "原剧台词")
         self.assertEqual(source["source_basis"], "原剧台词索引")
         short = compare_dialogue("那好吧", self.index, [], 10, 14)[0]
-        self.assertEqual(short["kind"], "未定短句")
+        self.assertEqual(short["kind"], "未定声音")
         no_screen = compare_dialogue("完全看不到字幕证据", self.index, [], 10, 14,
                                      visual_subtitles_available=False)[0]
-        self.assertEqual(no_screen["kind"], "未定短句")
+        self.assertEqual(no_screen["kind"], "未定声音")
         segments = _sentence_segments({"playback_map": []}, [{"recording_start": 10, "recording_end": 14,
                                                                "clauses": [short]}])
         self.assertEqual(segments[0]["kind"], "uncertain")

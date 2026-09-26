@@ -22,7 +22,7 @@ MATCH_THRESHOLD = .5
 OCR_WINDOW_SECONDS = 2.0
 MIN_UPLOADER_CHARS = 6
 MUSIC_ONLY_SECONDS = 20.0
-RULE_VERSION = "D-043-audio-v3"
+RULE_VERSION = "D-043-audio-v4"
 MIN_SPEECH_CHUNKS = 3
 
 
@@ -78,14 +78,21 @@ def compare_dialogue(text: str, index: Index | None, events: list[dict],
         matches = index.search(clause, min_sim=MATCH_THRESHOLD, top=1) if index and len(normalize(clause)) >= 4 else []
         best = matches[0] if matches else None
         source = ocr_sim >= MATCH_THRESHOLD or bool(best and best.sim >= MATCH_THRESHOLD)
+        concurrent_caption = any(
+            event.get("rec_start") is not None and event["rec_start"] <= midpoint + OCR_WINDOW_SECONDS and
+            (event.get("rec_end") or event["rec_start"]) >= midpoint - OCR_WINDOW_SECONDS and
+            (event.get("status") == "LINKED" or event.get("category") == "底部解说字幕")
+            for event in events)
         kind = ("原剧台词" if source else "UP主口播候选"
-                if visual_subtitles_available and len(normalize(clause)) >= MIN_UPLOADER_CHARS else "未定短句")
+                if visual_subtitles_available and not concurrent_caption and
+                len(normalize(clause)) >= MIN_UPLOADER_CHARS else "未定声音")
         result.append({"text": clause, "kind": kind,
                        "recording_midpoint": round(midpoint, 2),
                        "source_match": caption["text"] if ocr_sim >= MATCH_THRESHOLD else best.entry.text if source and best else None,
                        "source_basis": "同期画面字幕" if ocr_sim >= MATCH_THRESHOLD else "原剧台词索引" if source else None,
                        "source_episode": best.entry.episode if best and best.sim >= MATCH_THRESHOLD else None,
-                       "source_similarity": round(max(ocr_sim, best.sim if best else 0.0), 3)})
+                       "source_similarity": round(max(ocr_sim, best.sim if best else 0.0), 3),
+                       "uncertainty": "同期画面有字幕但转写未达匹配阈值" if not source and concurrent_caption else None})
     return result
 
 
@@ -217,7 +224,7 @@ def reinterpret_existing(row: dict, config: CaseConfig, record: dict, index: Ind
                   bgm_ratio=bgm, suspected_uploader_music=True if basis else None,
                   uploader_music={"suspected": True if basis else None,
                                   "basis": basis or "仅报告 BGM 占比；缺少配乐归属旁证"},
-                  interpretation_limit="同期字幕或台词索引相似度≥0.5为原剧；未匹配且≥6字、至少3个独立Speech片段才列口播；BGM人声未定")
+                  interpretation_limit="同期字幕或台词索引相似度≥0.5为原剧；未匹配、同期无字幕且≥6字，至少3个独立Speech片段才列口播；BGM人声未定")
     return record
 
 

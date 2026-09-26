@@ -192,6 +192,10 @@ def prepare_one(row: dict, case: Path, videos: Path,
                for frame, box, mode in zip(frames, boxes, modes)]
     geo = geometry_16(cropped)
     preferred = next((mode for mode in ("rotated_portrait", "portrait") if modes.count(mode) >= 4), None)
+    if CASE_ID == "qsjx_2591" and row["video"] == "MAH00738" and modes.count("landscape") >= 8:
+        # A short turn to the detail page must not outweigh a majority of
+        # frames from the actual landscape player in this handheld recording.
+        preferred = "landscape"
     if preferred is None and CASE_ID in ("qsjx_4086", "qsjx_2591") and modes.count("landscape") >= 4:
         # A transient detail page in a new batch must not enter a landscape collage.
         preferred = "landscape"
@@ -202,7 +206,15 @@ def prepare_one(row: dict, case: Path, videos: Path,
         if len(visible) >= 4:
             pool = visible
     chosen = [pool[round((i + .5) * len(pool) / 4 - .5)] for i in range(4)]
-    if CASE_ID in (None, "qsjx_e18") and row["row_id"] == "1095":
+    if CASE_ID == "qsjx_2591" and row["video"] == "MAH00738" and row["row_id"] == "540":
+        # The first seconds show an unrelated interstitial; the player settles
+        # into the claimed drama in the latter part of this played span.
+        chosen = [8, 10, 12, 14]
+    elif CASE_ID == "qsjx_2591" and row["video"] == "MAH00738" and row["row_id"] == "547":
+        # The early view is mostly covered by a hand and then the detail page;
+        # use the later verified player frames, including the second play span.
+        chosen = [12, 13, 14, 15]
+    elif CASE_ID in (None, "qsjx_e18") and row["row_id"] == "1095":
         # The hand covers the player later in this two-second rotated segment.
         chosen = [0, 1, 2, 3]
     elif CASE_ID in (None, "qsjx_e18") and row["row_id"] == "1140":

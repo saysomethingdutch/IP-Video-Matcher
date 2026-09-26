@@ -21,7 +21,7 @@ def _evidence_ready(config: CaseConfig) -> None:
         visual = visual_dir / "consensus.json"
         audio_result = json.loads(audio.read_text()) if audio.is_file() else {}
         if audio_result.get("status") not in ("ok", "skipped", "whisper_thai") or \
-           audio_result.get("rule_version") != "D-043-audio-v3":
+           audio_result.get("rule_version") != "D-043-audio-v4":
             raise RuntimeError(f"{config.case_id}: audio incomplete at {rid}")
         if not visual.is_file() or json.loads(visual.read_text()).get("status") not in ("ok", "skipped"):
             raise RuntimeError(f"{config.case_id}: visual incomplete at {rid}")
