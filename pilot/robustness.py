@@ -23,6 +23,8 @@ def run_deepseek_opinions(config: CaseConfig) -> dict:
     """Draft a separate opinion from the same machine facts; never overwrite GLM output."""
     if not config.raw["workbook"].get("blind_holdout"):
         raise ValueError("WO-007 requires workbook.blind_holdout")
+    if (config.case_dir / "corrections.jsonl").exists():
+        raise ValueError("blind holdout cannot use target-case opinion corrections")
     from pilot.opinion import prompt as P
     from pilot.opinion.pipeline import opinion_for
     from pilot.opinion.proportion import episode_seconds

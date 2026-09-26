@@ -11,6 +11,8 @@ from .pipeline import run
 
 def run_case(config, rows: list[str], force: bool = False) -> dict:
     workbook = config.raw["workbook"]
+    if workbook.get("blind_holdout") and (config.case_dir / "corrections.jsonl").exists():
+        raise ValueError("blind holdout cannot use target-case opinion corrections")
     style_rows = {int(rid) for values in config.raw["client"]["style_examples"].get("table_rows", {}).values()
                   for rid in values}
     holdout = set(map(int, config.row_ids)) if workbook.get("blind_holdout") else None
