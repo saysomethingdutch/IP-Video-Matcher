@@ -133,7 +133,7 @@ def export_case(store: ReviewStore):
                 xfs.set("count", str(len(xfs)))
             return yellow_styles[old_style]
 
-        provenance = [["总编号", "比对表单元格", "字段", "取值", "来源", "经所有者修改", "核对状态"]]
+        provenance = [["总编号", f"{store.sheet_name}单元格", "字段", "取值", "来源", "经所有者修改", "核对状态"]]
         for rid in store.row_ids:
             detail = store.detail(rid)
             excel_row = int(store.rows[rid]["plaintiff"]["source_row"])
