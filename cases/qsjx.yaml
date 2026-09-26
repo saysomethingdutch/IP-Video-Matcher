@@ -66,7 +66,7 @@ client:
     headings: [【使用的性质和目的】, 【使用的比例】, 【对原作品的替代可能性】]
     conclusion: 因此该视频构成“介绍、评论、说明”目的的合理使用。
     characters: {hard_min: 150, target_min: 220, target_max: 300, hard_max: 330}
-    prompt_rules: null  # Use the already approved WO-004c client wording.
+    prompt_rules: pilot/opinion/rules_qsjx.txt  # Approved WO-004c client wording.
     validation_profile: qsjx
   style_examples:
     workbook: /Volumes/Element/ip-video-matching-repo_de_material/七时吉祥/七时吉祥-比对总表 - 副本.xlsx

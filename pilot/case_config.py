@@ -55,8 +55,8 @@ class CaseConfig:
             raise ValueError("opinion_format needs three headings and a conclusion")
         if opinion.get("validation_profile", "qsjx") not in ("qsjx", "generic"):
             raise ValueError("opinion_format.validation_profile must be qsjx or generic")
-        if self.case_id != "qsjx_e18" and not opinion.get("prompt_rules"):
-            raise ValueError("new cases need client.opinion_format.prompt_rules")
+        if not opinion.get("prompt_rules"):
+            raise ValueError("client.opinion_format.prompt_rules is required")
         if not self.raw["evidence"].get("videos"):
             raise ValueError("evidence.videos must list the recording files")
         ledger = self.raw.get("ledger") or {}
