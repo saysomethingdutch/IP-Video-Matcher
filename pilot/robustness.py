@@ -87,6 +87,9 @@ def _paths(config: CaseConfig) -> dict[str, Path]:
     if missing:
         raise RuntimeError(f"machine outputs incomplete ({len(missing)} missing): {missing[:8]}")
     for rid in config.row_ids:
+        visual = json.loads(paths[f"visual/{rid}"].read_text(encoding="utf-8"))
+        if visual.get("status") not in ("ok", "skipped"):
+            raise RuntimeError(f"visual facts failed: {rid}: {visual.get('error')}")
         row = json.loads(paths[f"semantic/{rid}"].read_text(encoding="utf-8"))
         if row.get("opinion") is None:
             raise RuntimeError(f"GLM opinion absent: {rid}")
