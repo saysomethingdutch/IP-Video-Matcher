@@ -48,11 +48,18 @@ class CaseConfig:
             raise ValueError("client.rules and client.opinion_format are required")
         if not self.raw["evidence"].get("videos"):
             raise ValueError("evidence.videos must list the recording files")
+        ledger = self.raw.get("ledger") or {}
+        if ledger.get("case") not in ("qsjx", "zhuyu", "custom"):
+            raise ValueError("ledger.case must be qsjx, zhuyu, or custom")
+        if ledger["case"] == "custom" and not ledger.get("screenshot_time_pattern"):
+            raise ValueError("custom ledger case needs screenshot_time_pattern")
         if not isinstance(self.raw["models"].get("visual", {}).get("allow_image_upload"), bool):
             raise ValueError("models.visual.allow_image_upload must be true or false")
+        if self.raw["models"].get("text") not in ("deepseek-flash", "local"):
+            raise ValueError("models.text must be deepseek-flash or local")
         self.case_dir = self.path_of(self.raw["output"]["dir"])
         self.output_root = self.case_dir.parent
-        self.vlm_dir = self.output_root / "vlm"
+        self.vlm_dir = self.path_of(self.raw["output"].get("visual_dir")) or self.case_dir / "vlm"
         self.index_dir = self.output_root / "textindex" / str(self.raw["source"].get("index_name") or self.case_id)
 
     @staticmethod

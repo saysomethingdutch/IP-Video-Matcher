@@ -29,14 +29,16 @@ R3 = OUTPUT / "r3"
 NO_PLAY = {"1115", "1133", "1194", "1197"}
 CASE_ROWS: set[str] | None = None
 VIDEO_DIR: Path | None = None
+CASE_ID: str | None = None
 
 
 def configure(config):
     """Set case-owned paths and rows; R3 inference and consensus rules remain unchanged."""
-    global OUTPUT, R3, NO_PLAY, CASE_ROWS, VIDEO_DIR, MODEL
+    global OUTPUT, R3, NO_PLAY, CASE_ROWS, VIDEO_DIR, MODEL, CASE_ID
     OUTPUT = config.vlm_dir
     R3 = OUTPUT / "r3"
     CASE_ROWS = set(config.row_ids)
+    CASE_ID = config.case_id
     VIDEO_DIR = config.path_of(config.raw["evidence"]["video_dir"])
     NO_PLAY = set(config.raw.get("visual", {}).get("no_play_rows", []))
     MODEL = config.raw["models"]["visual"]["local_fallback"]
@@ -140,7 +142,7 @@ def prepare_one(row: dict, case: Path, videos: Path,
         atomic_json(existing, meta)
         return meta
     times = sixteen(row, flags)
-    if row["row_id"] == "1167":
+    if CASE_ID in (None, "qsjx_e18") and row["row_id"] == "1167":
         # The phone turns from its detail page to landscape. Sample the
         # settled landscape player on both played spans, avoiding the turn.
         times = [116.5 + i * .55 for i in range(8)] + [190.2 + i * .5 for i in range(8)]
@@ -150,16 +152,16 @@ def prepare_one(row: dict, case: Path, videos: Path,
     landscape_frames = [frame for frame, result in zip(frames, detected) if result[0] == "landscape"]
     landscape_box = trim_persistent_black(detected[modes.index("landscape")][1], landscape_frames) if landscape_frames else None
     boxes = [landscape_box if mode == "landscape" else box for mode, box, _ in detected]
-    if row["row_id"] == "1167":
+    if CASE_ID in (None, "qsjx_e18") and row["row_id"] == "1167":
         # The handset fills the camera view; its actual video is inset.
         boxes = [(158, 164, 1055, 524)] * len(frames)
-    elif row["row_id"] == "1204":
+    elif CASE_ID in (None, "qsjx_e18") and row["row_id"] == "1204":
         # The status bar sits just above this portrait player.
         boxes = [(407, 59, 698, 213)] * len(frames)
-    elif row["row_id"] == "1140":
+    elif CASE_ID in (None, "qsjx_e18") and row["row_id"] == "1140":
         # The moving detail-page edge and wooden table sit below/right.
         boxes = [(416, 55, 694, 190)] * len(frames)
-    elif row["row_id"] == "1218":
+    elif CASE_ID in (None, "qsjx_e18") and row["row_id"] == "1218":
         boxes = [(402, 52, 696, 187)] * len(frames)
     cropped = [(frame.crop(box).transpose(Image.Transpose.ROTATE_270)
                 if mode == "rotated_portrait" else frame.crop(box))
@@ -168,13 +170,13 @@ def prepare_one(row: dict, case: Path, videos: Path,
     preferred = next((mode for mode in ("rotated_portrait", "portrait") if modes.count(mode) >= 4), None)
     pool = [i for i, mode in enumerate(modes) if mode == preferred] if preferred else list(range(len(times)))
     chosen = [pool[round((i + .5) * len(pool) / 4 - .5)] for i in range(4)]
-    if row["row_id"] == "1095":
+    if CASE_ID in (None, "qsjx_e18") and row["row_id"] == "1095":
         # The hand covers the player later in this two-second rotated segment.
         chosen = [0, 1, 2, 3]
-    elif row["row_id"] == "1140":
+    elif CASE_ID in (None, "qsjx_e18") and row["row_id"] == "1140":
         # The hand covers the player near the end of this segment.
         chosen = [1, 5, 9, 12]
-    elif row["row_id"] == "1218":
+    elif CASE_ID in (None, "qsjx_e18") and row["row_id"] == "1218":
         # Use clean frames before and after the brief hand and phone overlay.
         chosen = [0, 2, 11, 14]
     chosen_tiles = [tile(frames[i], boxes[i], rotated=modes[i] == "rotated_portrait") for i in chosen]

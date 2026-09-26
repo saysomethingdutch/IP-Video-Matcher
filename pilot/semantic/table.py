@@ -22,20 +22,25 @@ def col_index(letter: str) -> int:
 class Table:
     headers: list[str]
     by_no: dict[int, list] = field(default_factory=dict)
+    output_mapping: dict[str, str] = field(default_factory=dict)
+    bv_column: str = "L"
+
+    def physical(self, letter: str) -> str:
+        return self.output_mapping.get(letter, letter)
 
     def header(self, letter: str) -> str:
-        return self.headers[col_index(letter) - 1]
+        return self.headers[col_index(self.physical(letter)) - 1]
 
     def value(self, no: int, letter: str):
         row = self.by_no.get(no)
-        return None if row is None else row[col_index(letter) - 1]
+        return None if row is None else row[col_index(self.physical(letter)) - 1]
 
     def other_batches(self, no: int, batch: range) -> list[int]:
         """Row numbers outside this batch with the same BV."""
-        bv = self.value(no, "L")
+        bv = self.value(no, self.bv_column)
         if not bv:
             return []
-        return sorted(n for n, r in self.by_no.items() if n not in batch and r[col_index("L") - 1] == bv)
+        return sorted(n for n, r in self.by_no.items() if n not in batch and r[col_index(self.bv_column) - 1] == bv)
 
     def original_repeat(self, no: int) -> dict[str, str] | None:
         """U-AJ exactly as the original table writes them, when it already says "同序号…，重复取证"."""
@@ -45,7 +50,8 @@ class Table:
         return None
 
 
-def load_table(path: Path, sheet: str = "比对表") -> Table:
+def load_table(path: Path, sheet: str = "比对表", output_mapping: dict[str, str] | None = None,
+               bv_column: str = "L") -> Table:
     import openpyxl
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
@@ -53,7 +59,7 @@ def load_table(path: Path, sheet: str = "比对表") -> Table:
     ws = wb[sheet]
     rows = ws.iter_rows(values_only=True)
     headers = [str(h) if h is not None else "" for h in next(rows)]
-    table = Table(headers)
+    table = Table(headers, output_mapping=output_mapping or {}, bv_column=bv_column)
     for r in rows:
         if isinstance(r[0], (int, float)):
             table.by_no[int(r[0])] = list(r)

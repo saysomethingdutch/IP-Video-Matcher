@@ -101,6 +101,7 @@ class ReviewStore:
         if set(self.rows) != set(self.row_ids):
             raise ValueError("ledger rows differ from configured case rows")
         self.sheet_name = config.raw["workbook"]["sheet"] if config else "比对表"
+        self.vlm_dir = config.vlm_dir if config else self.case.parent / "vlm"
         self.output_columns = tuple(config.output_indices) if config else OUTPUT_COLS
         self.logical_by_index = {physical: logical for logical, physical in zip(OUTPUT_COLS, self.output_columns)}
         self.export_name = config.raw["output"].get("export_name") if config else "七时吉祥-比对总表-机器填写"
@@ -210,7 +211,7 @@ class ReviewStore:
         ledger = self.rows[rid]
         content = load_json(self.case / "content" / f"{rid}.json") or {}
         semantic = load_json(self.case / "semantic" / f"{rid}.json") or {}
-        vlm = self.case.parent / "vlm"
+        vlm = self.vlm_dir
         visual = (load_json(vlm / "r3" / rid / "consensus.json")
                   or load_json(vlm / "r3" / rid / "local.json")
                   or load_json(vlm / "full" / rid / "result.json") or {})

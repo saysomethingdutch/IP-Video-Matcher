@@ -115,9 +115,11 @@ def frame_ocr(path, video_spec, fps, cache_dir, temp_dir, *, force_full=False):
     return records
 
 
-def screenshot_time(path, case):
+def screenshot_time(path, case, pattern=None):
     name = path.name
-    if case == "qsjx":
+    if pattern:
+        match = re.search(pattern, name)
+    elif case == "qsjx":
         match = re.search(r"Screenshot_\d{4}-\d\d-\d\d-(\d\d)-(\d\d)-(\d\d)-", name)
     else:
         match = re.search(r"S\d{5,6}-(\d\d)(\d\d)(\d\d)\d*", name)
@@ -127,12 +129,12 @@ def screenshot_time(path, case):
     return h * 3600 + m * 60 + s
 
 
-def screenshot_ocr(paths, case, cache_dir):
+def screenshot_ocr(paths, case, cache_dir, pattern=None):
     cache_dir.mkdir(parents=True, exist_ok=True)
     result = []
     missing = []
     for path in paths:
-        if screenshot_time(path, case) is None:
+        if screenshot_time(path, case, pattern) is None:
             continue
         signature = _signature(path, 0, None, 1)
         cache = cache_dir / f"{path.stem}-{signature}.json"
@@ -149,7 +151,7 @@ def screenshot_ocr(paths, case, cache_dir):
             for path, cache in batch:
                 record = by_name[path.name]
                 record["path"] = str(path)
-                record["wall_time"] = screenshot_time(path, case)
+                record["wall_time"] = screenshot_time(path, case, pattern)
                 cache.write_text(json.dumps(record, ensure_ascii=False))
                 result.append(record)
     return sorted(result, key=lambda r: r["wall_time"])

@@ -41,7 +41,7 @@ def run_case(config_path, only_videos=None):
         previous_summary = json.loads((output / "run_summary.json").read_text()) if (output / "run_summary.json").exists() else None
         started = time.monotonic()
         screens = screenshot_ocr(sorted(Path(config["screenshot_dir"]).glob("*")), case,
-                                 output_base / "screenshot_cache")
+                                 output_base / "screenshot_cache", config.get("screenshot_time_pattern"))
         video_paths = {name: Path(config["video_dir"]) / config["videos"][name].get("file", name + ".MP4")
                        for name in names}
         obs_by_video = {}

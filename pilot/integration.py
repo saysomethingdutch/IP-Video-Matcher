@@ -4,6 +4,7 @@ from __future__ import annotations
 import hashlib
 import csv
 import json
+import os
 import sys
 import time
 from pathlib import Path
@@ -90,13 +91,15 @@ def _ready(config: CaseConfig, step: str, rows: list[str]) -> bool:
 def _ledger(config: CaseConfig):
     from .ledger.__main__ import run_case
     raw = config.raw
-    legacy = {"case_id": config.case_id, "case": raw.get("ledger", {}).get("case", "qsjx"),
+    legacy = {"case_id": config.case_id, "case": raw["ledger"]["case"],
               "workbook": str(config.path_of(raw["workbook"]["path"])), "workbook_spec": raw["workbook"],
               "video_dir": str(config.path_of(raw["evidence"]["video_dir"])),
               "screenshot_dir": str(config.path_of(raw["evidence"]["screenshot_dir"])),
               "videos": raw["evidence"]["videos"], "output_dir": str(config.case_dir),
               **{key: raw["ledger"][key] for key in ("fps", "probe_full_and_crop", "repair_nearby_identity",
-                                                    "repair_truncated_readings")}}
+                                                    "repair_truncated_readings")},
+              **({"screenshot_time_pattern": raw["ledger"]["screenshot_time_pattern"]}
+                 if raw["ledger"].get("screenshot_time_pattern") else {})}
     path = config.case_dir / "integration_ledger_config.json"
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(legacy, ensure_ascii=False), encoding="utf-8")
@@ -167,12 +170,16 @@ def _classification(config: CaseConfig, rows: list[str], force: bool = False):
     visual = "consensus" if config.raw["models"]["visual"]["allow_image_upload"] else "full"
     model = config.raw["models"]["text"]
     backend = "deepseek" if model == "deepseek-flash" else "local" if model == "local" else model
+    if backend == "deepseek" and not os.environ.get("DEEPSEEK_API_KEY"):
+        raise RuntimeError("DEEPSEEK_API_KEY is absent; launch the command with zsh -lic")
     args = ["run", str(config.case_dir), "--vlm", str(config.vlm_dir),
             "--table", str(config.path_of(config.raw["workbook"]["path"])),
             "--rules", str(config.path_of(config.raw["client"]["rules"])),
             "--backend", backend, "--visual", visual, "--rows", ",".join(rows)]
     if not force:
         args.append("--reuse")
+    if backend != "local":
+        args.append("--no-local")
     semantic_main(args)
 
 
@@ -180,10 +187,14 @@ def _opinion(config: CaseConfig, rows: list[str], force: bool = False):
     from .opinion.__main__ import main as opinion_main
     model = config.raw["models"]["text"]
     backend = "deepseek" if model == "deepseek-flash" else "local" if model == "local" else model
+    if backend == "deepseek" and not os.environ.get("DEEPSEEK_API_KEY"):
+        raise RuntimeError("DEEPSEEK_API_KEY is absent; launch the command with zsh -lic")
     args = ["run", str(config.case_dir), "--table", str(config.path_of(config.raw["workbook"]["path"])),
             "--backend", backend, "--rows", ",".join(rows)]
     if not force:
         args.append("--reuse")
+    if backend != "local":
+        args.append("--no-local")
     if config.raw["source"]["enabled"]:
         args.extend(["--episodes", str(config.path_of(config.raw["source"]["episode_dir"]))])
     opinion_main(args)

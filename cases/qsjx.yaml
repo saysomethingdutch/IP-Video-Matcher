@@ -55,10 +55,12 @@ evidence:
 source:
   enabled: true
   episode_dir: /Users/lestersun/IP-Video-Matcher/real_test
+  episode_pattern: 'qsjx_ep(\d+)\.ts$'
   index_name: qsjx
   boundaries: /Users/lestersun/IP-Video-Matcher/experiments/phase3a0/cases/source_boundaries.json
 
 client:
+  work_title: 七时吉祥
   rules: pilot/semantic/rules_qsjx.yaml
   opinion_format:
     headings: [【使用的性质和目的】, 【使用的比例】, 【对原作品的替代可能性】]
@@ -66,6 +68,12 @@ client:
     characters: {target_min: 200, target_max: 300, hard_max: 380}
   style_examples:
     workbook: /Volumes/Element/ip-video-matching-repo_de_material/七时吉祥/七时吉祥-比对总表 - 副本.xlsx
+    requirements: /Volumes/Element/ip-video-matching-repo_de_material/七时吉祥/七时吉祥比对要求.docx
+    table_rows:
+      reaction: [851, 272]
+      混剪: [153, 1602]
+      夹叙夹议解说: [9, 2]
+      观点评析: [1591, 640]
     exclude_current_rows: true
 
 models:
@@ -81,9 +89,11 @@ models:
 
 output:
   dir: workspace/pilot/qsjx_e18
+  visual_dir: workspace/pilot/vlm  # Reuse the existing WO-004a R3 cache.
   export_name: 七时吉祥-比对总表-机器填写
 
 ledger:
+  case: qsjx
   fps: 1
   probe_full_and_crop: false
   repair_nearby_identity: true

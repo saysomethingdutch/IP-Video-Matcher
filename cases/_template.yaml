@@ -48,10 +48,12 @@ evidence:
 source:
   enabled: false  # true only when episode claims / precise source-use ratios need an original index.
   episode_dir: null  # Directory of source episodes; required when enabled.
+  episode_pattern: 'episode[_-]?(\d+)\.(?:ts|mp4)$'  # Regex with capture group 1 = episode number.
   index_name: example_case
   boundaries: null  # Optional source head/tail boundary JSON.
 
 client:
+  work_title: 作品名  # Used by opinion prompts and title checks.
   rules: /path/to/client-rules.yaml  # Four-grid and wording rules; never edit another case's rules.
   opinion_format:
     headings: [【使用的性质和目的】, 【使用的比例】, 【对原作品的替代可能性】]
@@ -59,6 +61,8 @@ client:
     characters: {target_min: 200, target_max: 300, hard_max: 380}
   style_examples:
     workbook: /path/to/examples.xlsx  # Or null if no client examples were provided.
+    requirements: null  # Optional client Word file containing example opinions.
+    table_rows: {}  # Optional type -> list of row IDs outside this batch, e.g. reaction: [12, 15].
     exclude_current_rows: true
 
 models:
@@ -73,10 +77,13 @@ models:
     model: models/whisper/ggml-large-v3.bin
 
 output:
-  dir: workspace/pilot/example_case  # Case data; sibling vlm/ and textindex/ caches.
+  dir: workspace/pilot/example_case  # Case data; textindex cache uses index_name in the parent directory.
+  visual_dir: null  # null = <output.dir>/vlm; set an existing cache path only when adopting it.
   export_name: example-case-machine-filled  # Output filename prefix, without date/extension.
 
 ledger:
+  case: custom  # qsjx / zhuyu / custom; controls legacy screenshot parsing defaults.
+  screenshot_time_pattern: 'Screenshot_.*-(\d\d)-(\d\d)-(\d\d)-'  # Optional regex: hour, minute, second captures.
   fps: 1  # 1 or 2 recording frames per second.
   probe_full_and_crop: false  # Diagnostic full-frame OCR pass.
   repair_nearby_identity: false  # Enable only if this evidence needs the WO-001 R2 repair.

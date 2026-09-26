@@ -16,9 +16,6 @@ from .classify import classify, facts_text
 from .digest import build_digest, load_visual, music_tags
 from .table import OUTPUT_COLS, Table
 
-BATCH = range(1051, 1220)
-
-
 def _load(path: Path):
     return json.loads(path.read_text(encoding="utf-8")) if path.exists() else None
 
@@ -34,7 +31,7 @@ def repeated_captures(rows: dict[str, dict]) -> dict[str, str]:
     out = {}
     for rid, row in rows.items():
         for other in row.get("duplicate_bv_rows") or []:
-            if other not in rows or other <= rid:
+            if other not in rows or int(other) <= int(rid):
                 continue
             a, b = row, rows[other]
             if _part(a["plaintiff"]["title"]) != _part(b["plaintiff"]["title"]):
@@ -88,7 +85,7 @@ def process_row(row: dict, d: dict, rules: dict, table: Table | None, repeat_of:
         flags.append(F.flag("yellow", "跳播情况未知（台账没有播放器读数）"))
     grid, grid_flags = F.four_grid(cls["nature"], cls["subtype"], cls["recreation"], jump, rules)
     flags += grid_flags
-    rule_src = f"rules_qsjx.yaml：{cls['nature']}" + ("，跳播" if jump else "")
+    rule_src = f"客户规则：{cls['nature']}" + ("，跳播" if jump else "")
     basis = f"性质 {cls['nature']}（模型 {cls['model_nature']}，评论占比 {cls['comment_share']}）；" + \
             "；".join(e.get("quote") or e.get("fact") or "" for e in cls["evidence"][:2])
 
@@ -176,6 +173,7 @@ def run(case_dir: Path, vlm_dir: Path, table: Table | None, rules: dict, backend
     """Rows are saved to save_dir as they finish, so an interrupted run resumes with reuse_dir=save_dir.
     Digests are built in order; the model calls of several rows may run at once (cloud backends)."""
     rows = {r["row_id"]: r for r in map(json.loads, (case_dir / "ledger.jsonl").read_text(encoding="utf-8").splitlines())}
+    batch_ids = {int(key) for key in rows}
     visual, visual_sources = load_visual(vlm_dir, visual_files)
     repeats = repeated_captures(rows)
     for dup, main in repeats.items():            # 要求 L68："播放量取最终那次取证"
@@ -194,7 +192,7 @@ def run(case_dir: Path, vlm_dir: Path, table: Table | None, rules: dict, backend
             ocr_cache.clear()
             ocr_cache[video] = load_ocr(case_dir, video)
         music = music_tags(ocr_cache.get(video, {}), row.get("video_start") or 0, row.get("video_end") or 0) if video else []
-        others = table.other_batches(int(rid), BATCH) if table else []
+        others = table.other_batches(int(rid), batch_ids) if table else []
         d = build_digest(row, content, asr, visual.get(rid), visual_sources.get(rid, ""), music, others)
         if row.get("_views_note"):
             d["ledger"]["views"]["source"] += "；" + row["_views_note"]
