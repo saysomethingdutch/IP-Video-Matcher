@@ -3,7 +3,7 @@ from collections import Counter
 import unittest
 
 from .parse import part_identifier
-from .pipeline import match_sessions
+from .pipeline import build_sessions, match_sessions
 
 
 class CrossVideoTest(unittest.TestCase):
@@ -25,6 +25,23 @@ class CrossVideoTest(unittest.TestCase):
         self.assertFalse(unmatched)
         self.assertEqual(linked["1"][0]["id"], "actual-1")
         self.assertEqual(linked["2"][0]["id"], "actual-2")
+
+    def test_neighboring_session_and_bulk_clipboard_do_not_supply_player_identity(self):
+        def frame(t, total=None, bvs=(), part=None):
+            return {"t": float(t), "frame": f"frame_{t}.jpg", "page": "竖屏详情页",
+                    "texts": [], "titles": [], "bvs": list(bvs), "views": [], "parts": [], "dates": [],
+                    "items": ([{"text": part, "y": .2}] if part else []),
+                    "readings": ([{"t": float(t), "position": t, "total": total,
+                                   "raw": f"00:{t:02d}/05:29", "frame": f"frame_{t}.jpg"}] if total else []),
+                    "speed": None, "speed_source_frame": None}
+        obs = [frame(0, 329), frame(1, 329, ("BV-player",), "七时22-1"),
+               frame(2, bvs=("BV-copy-1", "BV-copy-2", "BV-copy-3", "BV-copy-4")),
+               frame(6, bvs=("BV-next",), part="七时22-2"),
+               frame(8, 312), frame(9, 312, ("BV-next",), "七时22-2")]
+        first, second = build_sessions(obs, 1, "actual")
+        self.assertEqual(set(first["bvs"]), {"BV-player"})
+        self.assertEqual(first["player_parts"], Counter({(22, 1): 1}))
+        self.assertEqual(set(second["bvs"]), {"BV-next"})
 
 
 if __name__ == "__main__":

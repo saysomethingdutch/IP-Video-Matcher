@@ -426,36 +426,41 @@ def build_sessions(obs, fps, video):
                               "total": group[-1]["total"], "raw": "推荐视频结束页（推定）",
                               "speed": None, "frame": finish["frame"]}]
         end = min(obs[-1]["t"], group[-1]["t"] + (0 if recommendations else 15), next_start - 1)
-        nearby = [frame for frame in obs if start <= frame["t"] <= end]
-        bvs = Counter(bv for frame in nearby for bv in frame["bvs"])
-        titles = Counter(title for frame in nearby for title in frame["titles"])
-        pages = Counter(frame["page"] for frame in nearby)
-        title_sources = {text: {"t": frame["t"], "frame": frame["frame"]}
-                         for frame in nearby for text in frame["titles"]}
-        bv_sources = {bv: {"t": frame["t"], "frame": frame["frame"]}
-                      for frame in nearby for bv in frame["bvs"]}
-        metadata = [{"t": frame["t"], "frame": frame["frame"],
-                     "views": frame["views"], "parts": frame["parts"],
-                     "dates": frame["dates"], "bvs": frame["bvs"]} for frame in nearby
-                    if frame["views"] or frame["parts"] or frame["dates"]]
-        # The selected part is in the player header. The other parts may appear
-        # in a detail-page playlist, so do not count those as playback identity.
-        player_parts = Counter(part for frame in nearby if frame["readings"]
-                               for item in frame["items"]
-                               if item.get("y", 1) < .30 or re.fullmatch(
-                                   r"\s*(?:合集\s*)?(?:P\s*)?\d{1,2}\s*/\s*\d{1,2}\s*",
-                                   item.get("text", ""), re.I)
-                               if (part := part_identifier(item.get("text", ""))))
         result.append({"id": f"{video}-{n:03d}", "video": video, "start": start,
                        "end": end, "readings": group, "total": Counter(r["total"] for r in group).most_common(1)[0][0],
-                       "bvs": bvs, "titles": titles, "pages": pages,
-                       "title_sources": title_sources, "bv_sources": bv_sources,
-                       "metadata": metadata, "screenshots": [], "player_parts": player_parts})
+                       "screenshots": []})
     for left, right in zip(result, result[1:]):
         if left["end"] > right["start"]:
             boundary = (left["readings"][-1]["t"] + right["readings"][0]["t"]) / 2
             left["end"] = min(left["end"], boundary)
             right["start"] = max(right["start"], boundary)
+    # Build identity evidence only after clipping neighboring sessions. The
+    # previous window could include a next-part playlist or the next player,
+    # wrongly vetoing a duplicate capture despite a matching BV and duration.
+    for session in result:
+        nearby = [frame for frame in obs if session["start"] <= frame["t"] <= session["end"]]
+        # A copied search/clipboard sheet can list many unrelated BV values
+        # inside a session window. It is not the identity of the active player.
+        identity = [frame for frame in nearby if len(set(frame["bvs"])) <= 3]
+        session["bvs"] = Counter(bv for frame in identity for bv in frame["bvs"])
+        session["titles"] = Counter(title for frame in identity for title in frame["titles"])
+        session["pages"] = Counter(frame["page"] for frame in nearby)
+        session["title_sources"] = {text: {"t": frame["t"], "frame": frame["frame"]}
+                                    for frame in identity for text in frame["titles"]}
+        session["bv_sources"] = {bv: {"t": frame["t"], "frame": frame["frame"]}
+                                 for frame in identity for bv in frame["bvs"]}
+        session["metadata"] = [{"t": frame["t"], "frame": frame["frame"],
+                                "views": frame["views"], "parts": frame["parts"],
+                                "dates": frame["dates"], "bvs": frame["bvs"]} for frame in nearby
+                               if frame["views"] or frame["parts"] or frame["dates"]]
+        # The selected part is in the player header. Other parts may appear in
+        # a detail-page playlist, so they are not playback identity.
+        session["player_parts"] = Counter(part for frame in nearby if frame["readings"]
+                                          for item in frame["items"]
+                                          if item.get("y", 1) < .30 or re.fullmatch(
+                                              r"\s*(?:合集\s*)?(?:P\s*)?\d{1,2}\s*/\s*\d{1,2}\s*",
+                                              item.get("text", ""), re.I)
+                                          if (part := part_identifier(item.get("text", ""))))
     return result
 
 
