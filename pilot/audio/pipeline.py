@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import hashlib
+import csv
 from pathlib import Path
 import re
 import subprocess
@@ -11,11 +12,16 @@ import time
 
 from pilot.case_config import CaseConfig
 from pilot.textindex.search import Index
-from pilot.textindex.text import normalize
+from pilot.textindex.text import normalize, similarity
+from pilot.content.extract import MUSIC_TAG, load_ocr
 
 TAG = re.compile(r"<\|([^|]+)\|>")
 SPLIT = re.compile(r"[。！？!?；;，,、\n]+")
-CHUNK_SECONDS = 25.0
+CHUNK_SECONDS = 4.0  # Keep the transcript near the OCR frame used for the +/-2 s check.
+MATCH_THRESHOLD = .5
+OCR_WINDOW_SECONDS = 2.0
+MIN_UPLOADER_CHARS = 6
+MUSIC_ONLY_SECONDS = 20.0
 
 
 def played_recording_spans(row: dict) -> list[tuple[float, float]]:
@@ -46,17 +52,38 @@ def decode_tags(raw: str) -> tuple[str, list[str]]:
     return text, tags
 
 
-def compare_dialogue(text: str, index: Index | None) -> list[dict]:
+def _caption_match(clause: str, events: list[dict], recording_time: float) -> tuple[float, dict | None]:
+    nearby = (event for event in events
+              if event.get("text") and event.get("rec_start") is not None and
+              event["rec_start"] <= recording_time + OCR_WINDOW_SECONDS and
+              (event.get("rec_end") or event["rec_start"]) >= recording_time - OCR_WINDOW_SECONDS)
+    scored = [(similarity(normalize(clause), normalize(event["text"])), event) for event in nearby]
+    return max(scored, key=lambda pair: pair[0], default=(0.0, None))
+
+
+def compare_dialogue(text: str, index: Index | None, events: list[dict],
+                     recording_start: float, recording_end: float,
+                     *, visual_subtitles_available: bool = True) -> list[dict]:
     clauses = [piece.strip() for piece in SPLIT.split(text) if normalize(piece)]
     result = []
+    total = sum(max(1, len(normalize(piece))) for piece in clauses)
+    elapsed = 0
     for clause in clauses:
-        matches = index.search(clause, min_sim=.5, top=1) if index and len(normalize(clause)) >= 4 else []
+        weight = max(1, len(normalize(clause)))
+        midpoint = recording_start + (recording_end - recording_start) * (elapsed + weight / 2) / total
+        elapsed += weight
+        ocr_sim, caption = _caption_match(clause, events, midpoint)
+        matches = index.search(clause, min_sim=MATCH_THRESHOLD, top=1) if index and len(normalize(clause)) >= 4 else []
         best = matches[0] if matches else None
-        source = bool(best and best.sim >= .72 and len(normalize(clause)) >= 4)
-        result.append({"text": clause, "kind": "原剧台词" if source else "UP主口播候选",
-                       "source_match": best.entry.text if source else None,
-                       "source_episode": best.entry.episode if source else None,
-                       "source_similarity": round(best.sim, 3) if best else None})
+        source = ocr_sim >= MATCH_THRESHOLD or bool(best and best.sim >= MATCH_THRESHOLD)
+        kind = ("原剧台词" if source else "UP主口播候选"
+                if visual_subtitles_available and len(normalize(clause)) >= MIN_UPLOADER_CHARS else "未定短句")
+        result.append({"text": clause, "kind": kind,
+                       "recording_midpoint": round(midpoint, 2),
+                       "source_match": caption["text"] if ocr_sim >= MATCH_THRESHOLD else best.entry.text if source and best else None,
+                       "source_basis": "同期画面字幕" if ocr_sim >= MATCH_THRESHOLD else "原剧台词索引" if source else None,
+                       "source_episode": best.entry.episode if best and best.sim >= MATCH_THRESHOLD else None,
+                       "source_similarity": round(max(ocr_sim, best.sim if best else 0.0), 3)})
     return result
 
 
@@ -99,18 +126,69 @@ def _sentence_segments(row: dict, chunks: list[dict]) -> list[dict]:
             result.append({"start": _content_time(row, a), "end": _content_time(row, b),
                            "recording_start": round(a, 2), "recording_end": round(b, 2),
                            "text": clause["text"],
-                           "kind": "source" if clause["kind"] == "原剧台词" else "uploader",
+                           "kind": {"原剧台词": "source", "UP主口播候选": "uploader"}.get(clause["kind"], "uncertain"),
                            "episode": clause["source_episode"],
                            "similarity": clause["source_similarity"],
+                           "source_basis": clause.get("source_basis"),
                            "timestamp_basis": "按片段字数比例估计；SenseVoice 未提供逐词时间"})
     return result
 
 
-def analyze_row(row: dict, config: CaseConfig, model, index: Index | None) -> dict:
+def _visual_original(config: CaseConfig, rid: str) -> bool:
+    """Only a completed visual consensus showing mostly source footage supports a music-only inference."""
+    path = config.vlm_dir / "predictions_consensus_r3.csv"
+    if not path.is_file():
+        return False
+    with path.open(encoding="utf-8-sig", newline="") as handle:
+        for record in csv.DictReader(handle):
+            if record.get("row_id") != rid or record.get("status") != "ok":
+                continue
+            ratio = record.get("rights_content_ratio") or ""
+            return record.get("other_works") == "否" and ratio in ("约3/4", "约1", "几乎全部")
+    return False
+
+
+def _music_evidence(row: dict, chunks: list[dict], content_events: list[dict],
+                    ocr_frames: dict[int, list[dict]], visual_original: bool) -> str | None:
+    music_chunks = [c for c in chunks if "BGM" in c["tags"]]
+    if not music_chunks:
+        return None
+    played = [(c["recording_start"], c["recording_end"]) for c in music_chunks]
+    def during(t: float) -> bool:
+        return any(a - 1 <= t <= b + 1 for a, b in played)
+    if any(during(e["rec_start"]) and (e.get("lyric") or "♪" in e["text"] or "♫" in e["text"])
+           for e in content_events):
+        return "同期 OCR 歌词字幕"
+    if any(during(t) and any(MUSIC_TAG.match(item.get("text", "").strip()) for item in items)
+           for t, items in ocr_frames.items()):
+        return "同期 B 站音乐标签"
+    if not visual_original:
+        return None
+    # A sustained, contiguous music-only interval must have neither source speech nor source captions.
+    continuous = 0.0
+    last_end = None
+    for chunk in music_chunks:
+        a, b = chunk["recording_start"], chunk["recording_end"]
+        source_speech = any(c["kind"] == "原剧台词" for c in chunk["clauses"])
+        source_caption = any(e.get("status") == "LINKED" and e["rec_start"] <= b + 2 and
+                             (e.get("rec_end") or e["rec_start"]) >= a - 2 for e in content_events)
+        only_music = "Speech" not in chunk["tags"] and not chunk["text"].strip() and not source_speech and not source_caption
+        continuous = (continuous if last_end is not None and a <= last_end + .25 else 0.0) + (b - a) if only_music else 0.0
+        if continuous >= MUSIC_ONLY_SECONDS:
+            return "原剧画面连续至少20秒仅有音乐，未见原剧台词字幕或语音"
+        last_end = b if only_music else None
+    return None
+
+
+def analyze_row(row: dict, config: CaseConfig, model, index: Index | None,
+                content_events: list[dict] | None = None, ocr_frames: dict[int, list[dict]] | None = None,
+                *, player_frames: int = 0) -> dict:
     rid = row["row_id"]
+    content_events = content_events or []
+    ocr_frames = ocr_frames or {}
     chunks = played_recording_spans(row)
     base = {"row_id": rid, "video": row["video"], "engine": "SenseVoice-Small",
-            "audio_uploaded": False, "playback_spans": chunks}
+            "audio_uploaded": False, "playback_spans": chunks, "rule_version": "D-043-audio-v2"}
     if not chunks:
         return {**base, "status": "skipped", "reason": "台账无已播放录音区间", "segments": []}
     if "泰配" in row["plaintiff"].get("title", ""):
@@ -140,7 +218,8 @@ def analyze_row(row: dict, config: CaseConfig, model, index: Index | None) -> di
             output = model.generate(input=str(wav), language="auto", use_itn=True, batch_size_s=30)
             raw = str(output[0].get("text") or "") if output else ""
             text, tags = decode_tags(raw)
-            clauses = compare_dialogue(text, index)
+            clauses = compare_dialogue(text, index, content_events, start, end,
+                                       visual_subtitles_available=player_frames >= 3)
             audio_chunks.append({"recording_start": start, "recording_end": end,
                                  "text": text, "tags": tags, "raw_model_text": raw,
                                  "clauses": clauses})
@@ -154,7 +233,8 @@ def analyze_row(row: dict, config: CaseConfig, model, index: Index | None) -> di
     source_ratio = round(source_chars / total_chars, 3) if total_chars else 0.0
     uploader = [c["text"] for c in all_clauses if c["kind"] == "UP主口播候选"]
     elapsed = time.monotonic() - started
-    suspected_music = ratio("BGM") >= .6 and source_ratio < .15
+    music_basis = _music_evidence(row, audio_chunks, content_events, ocr_frames, _visual_original(config, rid))
+    suspected_music = True if music_basis else None
     return {**base, "status": "ok", "segments": _sentence_segments(row, audio_chunks),
             "audio_chunks": audio_chunks,
             "transcript": "".join(s["text"] for s in audio_chunks),
@@ -164,14 +244,13 @@ def analyze_row(row: dict, config: CaseConfig, model, index: Index | None) -> di
             "events": {"speech": ratio("Speech"), "bgm": ratio("BGM"), "laughter": ratio("Laughter")},
             "suspected_uploader_music": suspected_music,
             "uploader_music": {"suspected": suspected_music,
-                               "basis": "原剧台词很少且BGM占已播放时间多数" if suspected_music else
-                                        "未同时满足原剧台词少和BGM占多数"},
+                               "basis": music_basis or "仅报告 BGM 占比；缺少配乐归属旁证"},
             "played_seconds": round(played, 2),
             "played_recording_seconds": round(played, 2),
             "recording_file_seconds": round(recording_duration, 2),
             "processing_seconds": round(elapsed, 2),
             "realtime_factor": round(elapsed / played, 3) if played else None,
-            "interpretation_limit": "片段级声音标签；未做说话人声纹识别，未匹配台词为UP主口播候选"}
+            "interpretation_limit": "片段级声音标签；未做说话人声纹识别；仅同期字幕和台词索引均不匹配且不少于6字才列口播候选"}
 
 
 def run(config: CaseConfig, row_ids: list[str] | None = None, *, force: bool = False) -> dict:
@@ -181,6 +260,7 @@ def run(config: CaseConfig, row_ids: list[str] | None = None, *, force: bool = F
     output.mkdir(parents=True, exist_ok=True)
     source = Index.load(config.index_dir / "index.sqlite") if (config.index_dir / "index.sqlite").is_file() else None
     model = None
+    ocr_cache: dict[str, dict[int, list[dict]]] = {}
     counts = {"ok": 0, "skipped": 0, "whisper_thai": 0, "error": 0, "cached": 0}
     for row in ledger:
         rid = row["row_id"]
@@ -188,7 +268,7 @@ def run(config: CaseConfig, row_ids: list[str] | None = None, *, force: bool = F
             continue
         path = output / f"{rid}.json"
         ledger_fingerprint = hashlib.sha256(json.dumps(
-            [row["video"], row["session_id"], played_recording_spans(row)],
+            [row["video"], row["session_id"], played_recording_spans(row), "D-043-audio-v2"],
             ensure_ascii=False, sort_keys=True).encode()).hexdigest()
         if path.is_file() and not force:
             old = json.loads(path.read_text(encoding="utf-8"))
@@ -198,7 +278,18 @@ def run(config: CaseConfig, row_ids: list[str] | None = None, *, force: bool = F
         if played_recording_spans(row) and "泰配" not in row["plaintiff"].get("title", "") and model is None:
             model = _model(config.path_of(config.raw["models"]["audio"]["model"]))
         try:
-            result = analyze_row(row, config, model, source)
+            content_path = config.case_dir / "content" / f"{rid}.json"
+            content = json.loads(content_path.read_text(encoding="utf-8")) if content_path.is_file() else {}
+            video_name = row.get("video")
+            if video_name and played_recording_spans(row) and video_name not in ocr_cache:
+                ocr_cache.clear()
+                try:
+                    ocr_cache[video_name] = load_ocr(config.case_dir, video_name)
+                except FileNotFoundError:
+                    ocr_cache[video_name] = {}
+            result = analyze_row(row, config, model, source, content.get("events") or [],
+                                 ocr_cache.get(video_name, {}),
+                                 player_frames=int((content.get("counts") or {}).get("player_frames") or 0))
             result["session_id"] = row["session_id"]
             result["ledger_fingerprint"] = ledger_fingerprint
             counts[result["status"]] += 1

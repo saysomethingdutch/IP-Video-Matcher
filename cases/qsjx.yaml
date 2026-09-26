@@ -80,6 +80,9 @@ client:
     exclude_current_rows: true
 
 models:
+  audio:
+    enabled: true  # WO-008 D-043 pilot validation; audio remains local.
+    model: models/sensevoice/models/iic--SenseVoiceSmall/snapshots/master
   visual:
     protocol: player_canvas_r3
     cloud: [glm-5.3-flash, deepseek-flash]
