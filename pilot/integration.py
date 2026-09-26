@@ -85,7 +85,9 @@ def _ready(config: CaseConfig, step: str, rows: list[str]) -> bool:
         return _row_files(case / "asr", rows)
     if step == "visual":
         name = "consensus.json" if config.raw["models"]["visual"]["allow_image_upload"] else "local.json"
-        return all((vlm / "r3" / rid / name).is_file() for rid in rows)
+        return all((vlm / "r3" / rid / name).is_file() and
+                   json.loads((vlm / "r3" / rid / name).read_text(encoding="utf-8")).get("status")
+                   in ("ok", "skipped") for rid in rows)
     if step in ("classification", "opinion"):
         if not _row_files(case / "semantic", rows):
             return False
