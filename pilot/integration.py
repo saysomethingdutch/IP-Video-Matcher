@@ -170,21 +170,12 @@ def _visual(config: CaseConfig, rows: list[str], force: bool = False):
 
 
 def _classification(config: CaseConfig, rows: list[str], force: bool = False):
-    from .semantic.__main__ import main as semantic_main
-    visual = "consensus" if config.raw["models"]["visual"]["allow_image_upload"] else "full"
+    from .semantic.case_runner import run_case
     model = config.raw["models"]["text"]
     backend = "deepseek" if model == "deepseek-flash" else "local" if model == "local" else model
     if backend == "deepseek" and not os.environ.get("DEEPSEEK_API_KEY"):
         raise RuntimeError("DEEPSEEK_API_KEY is absent; launch the command with zsh -lic")
-    args = ["run", str(config.case_dir), "--vlm", str(config.vlm_dir),
-            "--table", str(config.path_of(config.raw["workbook"]["path"])),
-            "--rules", str(config.path_of(config.raw["client"]["rules"])),
-            "--backend", backend, "--visual", visual, "--rows", ",".join(rows)]
-    if not force:
-        args.append("--reuse")
-    if backend != "local":
-        args.append("--no-local")
-    semantic_main(args)
+    run_case(config, rows, force=force)
 
 
 def _opinion(config: CaseConfig, rows: list[str], force: bool = False):

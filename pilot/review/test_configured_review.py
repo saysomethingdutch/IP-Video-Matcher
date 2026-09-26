@@ -9,6 +9,7 @@ import yaml
 from pilot.case_config import CaseConfig, LOGICAL_OUTPUTS
 from pilot.review.data import ReviewStore
 from pilot.review.export import export_case
+from pilot.semantic.table import load_table
 
 
 def test_review_and_export_respect_case_column_mapping(tmp_path):
@@ -42,6 +43,8 @@ def test_review_and_export_respect_case_column_mapping(tmp_path):
         "output": {"dir": str(output), "export_name": "result"}, "ledger": {"case": "custom", "screenshot_time_pattern": r"(\d\d)(\d\d)(\d\d)"}
     }), encoding="utf-8")
     config = CaseConfig(config_path)
+    table = load_table(source, config.raw["workbook"]["sheet"], mapping, "L")
+    assert table.header("U") == "Header 37"
     output.mkdir()
     ledger = {"row_id": "17", "video": "V1", "video_duration": 5,
               "plaintiff": {"source_row": 2, "source_workbook": str(source), "uploader": "u", "title": "t"}}
