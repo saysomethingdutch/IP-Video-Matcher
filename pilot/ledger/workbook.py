@@ -72,8 +72,9 @@ def read_configured(path: Path, spec: dict, videos: set[str]) -> list[dict]:
     workbook = load_workbook(path, read_only=True, data_only=True)
     try:
         sheet = workbook[spec["sheet"]]
+        header_max = 20 if spec.get("blind_holdout") else sheet.max_column
         headers = [str(value) if value is not None else "" for value in
-                   next(sheet.iter_rows(min_row=1, max_row=1, values_only=True))]
+                   next(sheet.iter_rows(min_row=1, max_row=1, max_col=header_max, values_only=True))]
         columns = spec["columns"]
         required = ("row_id", "video", "bv", "title", "uploader", "duration")
         missing = [key for key in required if not columns.get(key) or columns[key] not in headers]
@@ -86,6 +87,8 @@ def read_configured(path: Path, spec: dict, videos: set[str]) -> list[dict]:
         # Read row values only through the last configured input field. In particular,
         # held-out human output columns must never enter the ledger pipeline.
         input_last_column = max(headers.index(name) + 1 for name in used_headers)
+        if spec.get("blind_holdout") and input_last_column > 20:
+            raise ValueError("blind holdout inputs must be within A–T")
         iterator = sheet.iter_rows(min_row=2, max_col=input_last_column, values_only=True)
         allowed = spec["row_ids"]
         ids = (set(map(str, allowed)) if isinstance(allowed, list)
