@@ -39,7 +39,7 @@ def load_visual(vlm_dir: Path, which: str = "full") -> tuple[dict[str, dict], di
             continue
         for r in csv.DictReader(path.open(encoding="utf-8-sig")):
             if (r.get("model", "").startswith("qwen3-vl") or r.get("model") == CONSENSUS) and r.get("status", "ok") == "ok":
-                rows[r["row_id"]], source[r["row_id"]] = r, name
+                rows[r["row_id"]], source[r["row_id"]] = r, str(path)
     return rows, source
 
 
@@ -55,7 +55,7 @@ def _visual(row: dict | None, source: str) -> dict | None:
             "overlays": [o for o in overlays if o], "other_works": row.get("other_works") or "",
             "other_works_desc": row.get("other_works_desc") or "", "ui_status": row.get("ui_status") or "",
             "consensus": row.get("model") == CONSENSUS,
-            "source": f"workspace/pilot/vlm/{source}（{'三方定值' if row.get('model') == CONSENSUS else 'Qwen3-VL-8B'}，行 {row['row_id']}）"}
+            "source": f"{source}（{'三方定值' if row.get('model') == CONSENSUS else 'Qwen3-VL-8B'}，行 {row['row_id']}）"}
 
 
 def music_tags(frames: dict[int, list[dict]], t0: float, t1: float) -> list[str]:
