@@ -72,7 +72,8 @@ models:
     cloud: [glm-5.3-flash, deepseek-flash]  # Two providers must agree before adopting a fact.
     local_fallback: qwen3-vl:8b-instruct-q4_K_M
     allow_image_upload: false  # Explicit owner consent is required before sending canvases.
-  text: deepseek-flash  # Or local when cloud text is not authorized.
+  text: glm-5.3-flash  # Classification; deepseek-flash or local are alternatives.
+  opinion: glm-5.3-flash  # Opinion backend; deepseek-flash or local are alternatives.
   speech:
     enabled: false  # true to transcribe played recording audio with whisper.cpp.
     model: models/whisper/ggml-large-v3.bin

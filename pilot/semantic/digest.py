@@ -24,14 +24,14 @@ def v(value, source: str) -> dict:
 
 
 VISUAL_FILES = {"r1": ("predictions_r1.csv",), "full": ("predictions_r1.csv", "predictions_full.csv"),
-                "consensus": ("predictions_consensus_r3.csv",)}
+                "consensus": ("predictions_consensus_r3.csv",), "local-r3": ("predictions_r3.csv",)}
 CONSENSUS = "三方定值"          # WO-004a-R3: GLM, DeepSeek and geometry settled per value; "不确定" where they disagree
 
 
 def load_visual(vlm_dir: Path, which: str = "full") -> tuple[dict[str, dict], dict[str, str]]:
     """Visual facts per row: "r1" = the 19 Qwen3-VL rows of predictions_r1.csv (WO-004a-R1); "full" = a row of
     predictions_full.csv (WO-004a-R2) wins over the same row of r1; "consensus" = predictions_consensus_r3.csv
-    (WO-004a-R3, D-033). Returns (rows, {row_id: file name})."""
+    (WO-004a-R3, D-033); "local-r3" = predictions_r3.csv. Returns (rows, {row_id: file name})."""
     rows, source = {}, {}
     for name in VISUAL_FILES[which]:
         path = vlm_dir / name

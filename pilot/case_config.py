@@ -62,8 +62,10 @@ class CaseConfig:
             raise ValueError("custom ledger case needs screenshot_time_pattern")
         if not isinstance(self.raw["models"].get("visual", {}).get("allow_image_upload"), bool):
             raise ValueError("models.visual.allow_image_upload must be true or false")
-        if self.raw["models"].get("text") not in ("deepseek-flash", "local"):
-            raise ValueError("models.text must be deepseek-flash or local")
+        if self.raw["models"].get("text") not in ("deepseek-flash", "glm-5.3-flash", "local"):
+            raise ValueError("models.text must be glm-5.3-flash, deepseek-flash or local")
+        if self.raw["models"].get("opinion", self.raw["models"]["text"]) not in ("deepseek-flash", "glm-5.3-flash", "local"):
+            raise ValueError("models.opinion must be glm-5.3-flash, deepseek-flash or local")
         self.case_dir = self.path_of(self.raw["output"]["dir"])
         self.output_root = self.case_dir.parent
         self.vlm_dir = self.path_of(self.raw["output"].get("visual_dir")) or self.case_dir / "vlm"

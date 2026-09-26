@@ -16,7 +16,7 @@ def run_case(config, rows: list[str], force: bool = False) -> dict:
     table = load_table(config.path_of(workbook["path"]), workbook["sheet"], workbook["output_columns"],
                        workbook["bv_column"])
     rules = load_rules(config.path_of(config.raw["client"]["rules"]))
-    backend = "deepseek" if config.raw["models"]["text"] == "deepseek-flash" else "local"
+    backend = {"deepseek-flash": "deepseek", "glm-5.3-flash": "zhipu", "local": "local"}[config.raw["models"]["text"]]
     llm.LOCAL_ALLOWED = backend == "local"
     visual = "consensus" if config.raw["models"]["visual"]["allow_image_upload"] else "local-r3"
     out = config.case_dir / "semantic"
