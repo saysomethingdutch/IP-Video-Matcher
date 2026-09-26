@@ -36,6 +36,7 @@ BOLD = re.compile(r"\*\*(.+?)\*\*", re.S)
 TRANSFORM_END = re.compile(r"(具有转换性|具有一定的转化性使用特征)[。．.]?$")
 TYPE_WORDS = {"reaction": re.compile(r"(?i)reaction"), "混剪": re.compile("混剪"), "夹叙夹议解说": re.compile("夹叙夹议"),
               "观点评析": re.compile("观点评析"), "剧情解说": re.compile("剧情解说|剧情类解说")}
+THAI_DUB = re.compile(r"(?:UP主|up主|作者|主播)[^，。；]{0,8}配音|(?:评论|解说|实时|口播)配音|配音(?:方式|评论|解说)|泰语配音(?!版)")
 CN_DIGIT = {"一": 1, "二": 2, "两": 2, "三": 3, "四": 4, "五": 5, "六": 6, "七": 7, "八": 8, "九": 9}
 
 
@@ -137,6 +138,12 @@ def validate(text: str, parts: dict, ctx: dict) -> list[str]:
         errors.append("加粗：只能在第一段")
     if qsjx_checks and text.count("**") % 2:
         errors.append("加粗：** 没有成对")
+
+    # R2: 〔泰配〕 is the drama's Thai dub, the uploader speaks; 跳播 is the plaintiff's act, not an editing method
+    if ctx.get("thai_dub") and (m := THAI_DUB.search(plain(parts.get("purpose", "") + parts.get("substitution", "")))):
+        errors.append(f"泰配：〔泰配〕是原剧的泰语配音版，UP 主是泰语口播；不能写“{m.group(0)}”，应写“以泰语口播评论”")
+    if "跳播" in purpose:
+        errors.append("跳播：第一段不写跳播（那是原告取证时的操作，已体现在四格类型里，不是 UP 主的手法）")
 
     # picture wording comes from the Z / AA / AB columns
     model_text = plain(parts.get("purpose", "") + parts.get("substitution", ""))

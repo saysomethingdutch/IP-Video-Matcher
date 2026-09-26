@@ -115,3 +115,19 @@ zsh -lic '/opt/homebrew/bin/python3 -m pilot.semantic run workspace/pilot/qsjx_e
 zsh -lic '/opt/homebrew/bin/python3 -m pilot.opinion run workspace/pilot/qsjx_e18 --workers 4 --no-local'
 zsh -lic '/opt/homebrew/bin/python3 -m pilot.opinion ab workspace/pilot/qsjx_e18 --backend zhipu --workers 4 --no-local'
 ```
+
+## R2（2026-09-26，D-037：写意见改用 GLM）
+
+- **三处措辞**写进了提示词和校验器：
+  - 〔泰配〕不写成 UP 主配音，改为"以泰语口播评论"；
+  - 第一段不写跳播；
+  - "不确定"的行按分类模型的初判起草，标黄"性质未定，意见按'X'起草，请确认"，共 16 行。初判为剧情解说的 3 行按客户口径暂填"/"，标黄待确认。
+- **glm-5.3-flash 重写 153 行**：4 路并行，约 3.7 小时。
+  - 校验通过 148/153（96.7%），重试 40 行；每行耗时中位数 300 秒；长度中位数 276 字，最长 327 字。
+  - token：输入 60.2 万（缓存 11.2 万），输出 278.4 万（其中思考 271.9 万）；费用以账单为准。
+  - 泰配行不再写"配音"，第一段不再写跳播，1121 已改正。DeepSeek 的旧草稿另存在 `semantic/opinions_ds/`。
+- **"字幕"问题**：
+  - 1163 画面有 1 行底部字幕（疑似歌词），不到 AA 列"至少 2 行"的门槛，模型所说有依据。
+  - 1207 没有字幕，模型把 B 站音乐标签"厂 此生不换"当成了字幕。现在意见的输入里已滤掉音乐标签、在线人数、推广条等界面文字，分类用的摘要没动。
+  - 这两行这次都通过了。新出现的未通过有 5 行，都已标红：1140、1165 把画面上的其他文字叫作字幕；1194、1203、1206 事实太少。
+- **请转告 Codex**：把 `pilot/wo-004c-opinion` 再合进 `pilot/integration` 一次。
