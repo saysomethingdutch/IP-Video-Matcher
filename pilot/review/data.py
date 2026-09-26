@@ -28,7 +28,7 @@ def col_name(n: int) -> str:
 
 
 def read_source(path: Path, sheet_name: str = "比对表", source_rows: set[int] | None = None,
-                max_column: int = 36) -> tuple[list[str], dict[int, list[str]]]:
+                max_column: int = 36, holdout_source_rows: set[int] | None = None) -> tuple[list[str], dict[int, list[str]]]:
     """Read the existing workbook without a third-party dependency."""
     ns = {"m": MAIN, "r": R}
     with zipfile.ZipFile(path) as book:
@@ -56,7 +56,7 @@ def read_source(path: Path, sheet_name: str = "比对表", source_rows: set[int]
                 col = 0
                 for char in letters.group():
                     col = col * 26 + ord(char) - 64
-                if not 1 <= col <= max_column:
+                if not 1 <= col <= max_column or (holdout_source_rows and number in holdout_source_rows and col > 20):
                     continue
                 kind = cell.get("t")
                 v = cell.find("m:v", ns)
@@ -108,7 +108,8 @@ class ReviewStore:
         self.source_path = config.path_of(config.raw["workbook"]["path"]) if config else Path(next(iter(self.rows.values()))["plaintiff"]["source_workbook"])
         source_rows = {int(row["plaintiff"]["source_row"]) for row in self.rows.values()}
         self.headers, self.source_rows = read_source(self.source_path, self.sheet_name, source_rows,
-                                                    max(36, *self.output_columns))
+                                                    max(36, *self.output_columns),
+                                                    source_rows if config and config.raw["workbook"].get("blind_holdout") else None)
         self.decisions_path = self.case / "review" / "decisions.jsonl"
         self.lock = threading.RLock()
         self.decisions: dict[str, dict] = {rid: {"status": "待核", "edits": {}, "modified": []} for rid in self.rows}

@@ -31,6 +31,13 @@ class CaseConfig:
         if not re.fullmatch(r"[A-Z]{1,3}", str(book.get("bv_column") or "")):
             raise ValueError("workbook.bv_column must be an Excel column letter")
         self.row_ids = self._row_ids(book.get("row_ids"))
+        examples = self.raw["client"].get("style_examples") or {}
+        selected = set(map(int, self.row_ids))
+        sample_rows = {int(rid) for values in (examples.get("table_rows") or {}).values() for rid in values}
+        if sample_rows & selected:
+            raise ValueError(f"style examples overlap current rows: {sorted(sample_rows & selected)}")
+        if book.get("blind_holdout") and not examples.get("exclude_current_rows", True):
+            raise ValueError("blind holdout requires style_examples.exclude_current_rows")
         if any(not rid.isdecimal() for rid in self.row_ids):
             raise ValueError("row IDs must be numeric for the current pilot modules")
         mapping = book.get("output_columns") or {}

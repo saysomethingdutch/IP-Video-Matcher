@@ -11,8 +11,11 @@ from .pipeline import run
 
 def run_case(config, rows: list[str], force: bool = False) -> dict:
     workbook = config.raw["workbook"]
+    style_rows = {int(rid) for values in config.raw["client"]["style_examples"].get("table_rows", {}).values()
+                  for rid in values}
+    holdout = set(map(int, config.row_ids)) if workbook.get("blind_holdout") else None
     table = load_table(config.path_of(workbook["path"]), workbook["sheet"], workbook["output_columns"],
-                       workbook["bv_column"])
+                       workbook["bv_column"], holdout_rows=holdout, sample_rows=style_rows if holdout else None)
     model = config.raw["models"].get("opinion", config.raw["models"]["text"])
     backend = {"deepseek-flash": "deepseek", "glm-5.3-flash": "zhipu", "local": "local"}[model]
     llm.LOCAL_ALLOWED = backend == "local"

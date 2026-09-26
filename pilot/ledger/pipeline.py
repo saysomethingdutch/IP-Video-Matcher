@@ -134,6 +134,8 @@ def screenshot_ocr(paths, case, cache_dir, pattern=None):
     result = []
     missing = []
     for path in paths:
+        if path.suffix.lower() not in {".jpg", ".jpeg", ".png", ".webp"}:
+            continue
         if screenshot_time(path, case, pattern) is None:
             continue
         signature = _signature(path, 0, None, 1)

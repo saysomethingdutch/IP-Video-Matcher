@@ -51,17 +51,42 @@ class Table:
 
 
 def load_table(path: Path, sheet: str = "比对表", output_mapping: dict[str, str] | None = None,
-               bv_column: str = "L") -> Table:
+               bv_column: str = "L", holdout_rows: set[int] | None = None,
+               sample_rows: set[int] | None = None) -> Table:
+    """Read A–T for blind rows; fetch output cells only for explicit outside style examples."""
     import openpyxl
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
         wb = openpyxl.load_workbook(path, read_only=True, data_only=True)
-    ws = wb[sheet]
-    rows = ws.iter_rows(values_only=True)
-    headers = [str(h) if h is not None else "" for h in next(rows)]
-    table = Table(headers, output_mapping=output_mapping or {}, bv_column=bv_column)
-    for r in rows:
-        if isinstance(r[0], (int, float)):
-            table.by_no[int(r[0])] = list(r)
-    wb.close()
-    return table
+    try:
+        ws = wb[sheet]
+        if holdout_rows is None:
+            rows = ws.iter_rows(values_only=True)
+            headers = [str(h) if h is not None else "" for h in next(rows)]
+            table = Table(headers, output_mapping=output_mapping or {}, bv_column=bv_column)
+            for r in rows:
+                if isinstance(r[0], (int, float)):
+                    table.by_no[int(r[0])] = list(r)
+            return table
+
+        # The blind run never asks openpyxl for held-out U–AJ row values.
+        output_end = max(col_index(v) for v in (output_mapping or {c: c for c in OUTPUT_COLS}).values())
+        headers = [str(h) if h is not None else "" for h in
+                   next(ws.iter_rows(min_row=1, max_row=1, max_col=output_end, values_only=True))]
+        table = Table(headers, output_mapping=output_mapping or {}, bv_column=bv_column)
+        source_rows = {}
+        for excel_row, values in enumerate(ws.iter_rows(min_row=2, max_col=20, values_only=True), 2):
+            if isinstance(values[0], (int, float)):
+                rid = int(values[0])
+                table.by_no[rid] = list(values) + [None] * (output_end - 20)
+                if sample_rows and rid in sample_rows:
+                    if rid in holdout_rows:
+                        raise ValueError(f"style example {rid} overlaps the blind batch")
+                    source_rows[rid] = excel_row
+        for rid, excel_row in source_rows.items():
+            values = next(ws.iter_rows(min_row=excel_row, max_row=excel_row,
+                                       min_col=21, max_col=output_end, values_only=True))
+            table.by_no[rid][20:output_end] = values
+        return table
+    finally:
+        wb.close()
