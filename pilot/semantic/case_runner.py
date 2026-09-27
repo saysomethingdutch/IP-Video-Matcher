@@ -6,12 +6,13 @@ import time
 
 from . import llm
 from .fields import load_rules
-from .pipeline import consistency, run
+from .pipeline import consistency, presume_skipped_reactions, run
 from .report import summary, write_consistency, write_pages, write_rows
 from .table import load_table
 
 
-def run_case(config, rows: list[str], force: bool = False) -> dict:
+def run_case(config, rows: list[str], force: bool = False, fields_only: bool = False) -> dict:
+    """fields_only: keep every saved classification even when its facts changed (no model call, WO-004b-R3)."""
     workbook = config.raw["workbook"]
     style_rows = {int(rid) for values in config.raw["client"]["style_examples"].get("table_rows", {}).values()
                   for rid in values}
@@ -27,7 +28,7 @@ def run_case(config, rows: list[str], force: bool = False) -> dict:
     started = time.monotonic()
     new = run(config.case_dir, config.vlm_dir, table, rules, backend, set(rows),
               reuse_dir=None if force else out, save_dir=out, workers=4 if backend != "local" else 1,
-              visual_files=visual)
+              visual_files=visual, fields_only=fields_only)
     existing = {p.stem: json.loads(p.read_text(encoding="utf-8")) for p in out.glob("*.json")
                 if p.stem in config.row_ids}
     existing.update({r["row_id"]: r for r in new})
@@ -35,6 +36,7 @@ def run_case(config, rows: list[str], force: bool = False) -> dict:
     # Same-uploader flags depend on the entire batch. Remove the old derived flags before recomputing.
     for item in all_rows:
         item["flags"] = [f for f in item.get("flags", []) if not f.get("reason", "").startswith("一致性：")]
+    presume_skipped_reactions(all_rows, rules)          # WO-004b-R3: needs the uploader's other rows
     warnings = consistency(all_rows)
     write_rows(all_rows, out, table)
     write_consistency(warnings, out)

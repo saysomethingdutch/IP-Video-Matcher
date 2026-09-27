@@ -95,6 +95,11 @@ def _ep_list(evidence: list[dict]) -> str:
     return "、".join((["第" + "、".join(plain) + "集"] if plain else []) + guessed)
 
 
+def parse_claim(raw):
+    from pilot.content.evidence import parse_claim as parse
+    return parse(raw)
+
+
 def episode_column(d: dict) -> tuple[dict, list]:
     """AE 对应集数是否正确，按字幕模块结论（WO-004b §3.2）。"""
     e = d["episodes"]
@@ -102,8 +107,19 @@ def episode_column(d: dict) -> tuple[dict, list]:
     src = e["source"]
     eps = _ep_list(e["evidenced"])
     te = e.get("title_episode")
+    gap = e.get("claim_missing") or {}
+    missing = "、".join(str(x) for x in gap.get("missing", []))
     if verdict == "SUPPORTED":
         return col("是", src, e["statement"]), []
+    if verdict == "PARTLY_UNVERIFIED":           # WO-004b-R3: no "否" where our own copies are missing
+        return (col(f"是（部分未能核实：第{missing}集本地缺片）；已取证部分可核实为{eps}", src, e["statement"]),
+                [flag("yellow", f"对应集数：声称范围含本地缺片的第{missing}集，部分未能核实")])
+    if verdict == "MISSING_UNVERIFIED":
+        return (col(f"是（未能核实：声称集本地缺片，相邻集命中 {gap.get('other_lines', 0)} 句）", src, e["statement"]),
+                [flag("yellow", f"对应集数：声称的第{missing}集本地缺片，其他集命中不足以否定声称")])
+    if verdict == "CONTRADICTED" and gap.get("kept"):
+        return (col(f"否，{eps}", src, e["statement"]),
+                [flag("yellow", f"对应集数与原告声称冲突（声称的第{missing}集本地缺片，但其他集可靠命中 {gap['reliable_lines']} 句）")])
     if verdict == "NARROWER":
         return (col(f"否，已取证部分对应{eps}（原告声称{claim}）", src, e["statement"]),
                 [flag("yellow", "对应集数：已取证部分比声称范围窄，措辞由所有者决定")])
@@ -117,6 +133,9 @@ def episode_column(d: dict) -> tuple[dict, list]:
         main = te["episodes"][0]
         ref = f"；标题/台标为第{main}集" + ("，与声称一致" if te.get("agrees") else "，与声称不一致" if te.get("agrees") is False else "")
     value = f"是（未能核实{ref}）"
+    claim_eps = parse_claim(claim)
+    if gap.get("missing") and claim_eps and set(gap["missing"]) >= claim_eps:      # the whole claim is missing locally
+        value = f"是（未能核实：第{missing}集本地缺片{ref}）"
     flags = [flag("yellow", "对应集数未能用台词核实" + (f"（{ref.lstrip('；')}）" if ref else ""))]
     if te and te.get("agrees") is False:
         flags.append(flag("yellow", f"标题/台标集数与原告声称不一致：画面为第{te['episodes'][0]}集，原告声称 {claim}"))

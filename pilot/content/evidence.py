@@ -11,6 +11,11 @@ from pilot.textindex.text import normalize
 SOURCE, NON_SOURCE, UNCERTAIN = "原剧台词", "非原剧文字", "待定"
 SUPPORTED, NARROWER, CONTRADICTED, UNVERIFIED = "SUPPORTED", "NARROWER", "CONTRADICTED", "UNVERIFIED"
 CLAIM_UNPARSEABLE = "CLAIM_UNPARSEABLE"
+# WO-004b-R3 (D-046): the claim covers episodes missing locally (20, 21, 22, 26, 29, 34), so no "否" without strong evidence
+PARTLY_UNVERIFIED = "PARTLY_UNVERIFIED"     # was NARROWER: the rest of the claim cannot be checked
+MISSING_UNVERIFIED = "MISSING_UNVERIFIED"   # was CONTRADICTED on weak evidence
+KEEP_MIN_LINES = 5              # a contradiction stands only on >= 5 lines of other episodes that are
+FLASHBACK_SPAN = 90.0           # outside the recap window and spread over more than 90 s of that episode
 
 TOTAL_EPISODES = 38
 RECAP_WINDOW = (100.0, 160.0)   # seconds from file start; measured recap spans are 109-156 s
@@ -166,6 +171,37 @@ def verdict(evidence: list[dict], claim: set[int] | None) -> str:
     return SUPPORTED if found == claim else NARROWER
 
 
+def conservative(result: str, evidence: list[dict], links: list[dict], claim: set[int] | None,
+                 missing: set[int]) -> tuple[str, dict]:
+    """WO-004b-R3 §1.2: where the claim covers episodes we do not have, a NARROWER verdict becomes
+    PARTLY_UNVERIFIED, and a CONTRADICTED one stands only on >= 5 lines of other episodes that are neither in
+    the next episode's recap window nor packed into a short stretch (a flashback or a preview); otherwise it
+    becomes MISSING_UNVERIFIED. Claims fully covered by local episodes are untouched."""
+    gap = sorted(claim & missing) if claim else []
+    if not gap:
+        return result, {}
+    info: dict = {"missing": gap}
+    if result == NARROWER:
+        return PARTLY_UNVERIFIED, info
+    if result != CONTRADICTED:
+        return result, info
+    lines: dict[int, dict] = defaultdict(dict)
+    for r in links:
+        if r["status"] == LINKED and not is_lyric(r) and not r.get("suspected") and r["episode"] not in claim \
+                and r.get("t_source") is not None:
+            key = r["entry_id"] if r.get("entry_id") is not None else normalize(r["source_text"])
+            lines[r["episode"]][key] = r["t_source"]
+    reliable = 0
+    for ep, by_line in lines.items():
+        ts = [t for t in by_line.values() if not RECAP_WINDOW[0] <= t <= RECAP_WINDOW[1]]
+        if ts and max(ts) - min(ts) > FLASHBACK_SPAN:
+            reliable += len(ts)
+    info.update(other_lines=sum(len(v) for v in lines.values()), reliable_lines=reliable)
+    if reliable >= KEEP_MIN_LINES:
+        return CONTRADICTED, {**info, "kept": True}
+    return MISSING_UNVERIFIED, info
+
+
 def _eps_text(evidence: list[dict]) -> str:
     return "、".join(f"{e['label']}（{e['lines']} 句）" for e in evidence)
 
@@ -186,12 +222,21 @@ def unverified_reason(events: list[dict], claim: set[int] | None, missing: set[i
 
 
 def statement(evidence: list[dict], claim_raw: str, claim: set[int] | None, result: str,
-              weak: list[dict] = (), reason: str = "") -> str:
+              weak: list[dict] = (), reason: str = "", gap: dict | None = None) -> str:
     """The reviewer-facing sentence; always about the captured part only."""
     tail = ("另有未达证据门槛的线索：" + "、".join(f"EP{w['episode']:02d}（{w['lines']} 句）" for w in weak) + "。") if weak else ""
+    missing = "、".join(str(e) for e in (gap or {}).get("missing", []))
     if result == UNVERIFIED:
         return f"已取证部分显示：{reason or '未见可与原剧对上的台词'}，无法用台词核验集数。" + tail
     head = f"已取证部分显示：台词对应 {_eps_text(evidence)}。"
+    if result == PARTLY_UNVERIFIED:
+        return head + f"均在原告声称 {claim_raw} 范围内；声称中的第{missing}集本地缺片，这部分无法核实。" + tail
+    if result == MISSING_UNVERIFIED:
+        return head + (f"原告声称 {claim_raw}，其中第{missing}集本地缺片；其他集只命中 {gap['other_lines']} 句"
+                       f"（可靠的 {gap['reliable_lines']} 句，不足 {KEEP_MIN_LINES} 句或像回忆、前情），不据此否定声称。") + tail
+    if result == CONTRADICTED and gap and gap.get("kept"):
+        return head + (f"原告声称 {claim_raw}，其中第{missing}集本地缺片；但其他集可靠命中 {gap['reliable_lines']} 句，"
+                       "仍判与声称不符。") + tail
     if result == CLAIM_UNPARSEABLE:
         return head + f"原告声称“{claim_raw}”无法解析，需人工核对。" + tail
     outside = sorted({e["episode"] for e in evidence} - claim)

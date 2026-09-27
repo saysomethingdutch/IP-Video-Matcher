@@ -44,6 +44,11 @@ class ProportionTest(unittest.TestCase):
         self.assertIn("原告主张，未核实，不算百分比", reasons)
         self.assertIn("第4集本地缺片", reasons)
 
+    def test_weak_evidence_against_a_missing_claim_is_not_used(self):
+        d = digest(evidence=[3], claim="2")
+        d["episodes"]["verdict"] = "MISSING_UNVERIFIED"
+        self.assertTrue(proportion(d, EPS)["text"].startswith("对应剧集为原告主张的第2集"))
+
     def test_unknown_duration(self):
         p = proportion(digest(evidence=[2], video="未知"), EPS)
         self.assertEqual(p["text"], "对应剧集为第2集，约长41分钟，占原作品比例较少，足以构成适当引用。")

@@ -3,6 +3,7 @@ plus repeated-capture handling (§3.2) and the same-uploader consistency check (
 from __future__ import annotations
 
 import json
+import re
 import time
 from collections import Counter, defaultdict
 from concurrent.futures import ThreadPoolExecutor
@@ -72,6 +73,8 @@ def process_row(row: dict, d: dict, rules: dict, table: Table | None, repeat_of:
 
     if reuse:                                   # a saved classification: re-derive the columns without the model
         cls = {**reuse["classification"], "flags": [f for f in reuse["classification_flags"]], "calls": []}
+        if cls.get("presumed_from"):            # a presumption is re-decided on the batch every run
+            cls["nature"] = cls.pop("presumed_from")
     else:
         cls = classify(d, backend, rules, corpus=corpus)
     cls_flags = cls.pop("flags")
@@ -145,6 +148,52 @@ def carry_opinion(r: dict, prev: dict | None) -> None:
     new = ((r.get("classification") or {}).get("nature"), [r["fields"][c]["value"] for c in ("AG", "AH", "AI", "AJ")])
     if old != new:
         r["flags"].append(F.flag("yellow", f"意见：分类已变（{old[0]} → {new[0]}），意见待重写"))
+
+
+def _no_comment(r: dict) -> bool:
+    """No commentary found in the captured part: no line tagged as an opinion, no uploader speech (WO-008) and
+    no foreign speech (the Thai hosts cannot be counted, so their silence is not established)."""
+    d, cls = r["digest"], r["classification"]
+    comments = sum(1 for t in (cls.get("tags") or {}).values() if t == "评论观点")
+    return comments == 0 and not ((d.get("audio") or {}).get("up_speech")) \
+        and not (d.get("up_text_extra") or {}).get("foreign_speech_segments")
+
+
+def presume_skipped_reactions(results: list[dict], rules: dict) -> list[str]:
+    """WO-004b-R3 §1.1 (rules: skip_reaction_presumption): a skipped reaction whose captured part happens to hold
+    no commentary is not held against the defendant. Needs the whole batch (the uploader's other rows)."""
+    spec = rules.get("skip_reaction_presumption")
+    if not spec:
+        return []
+    words = re.compile("|".join(map(re.escape, spec["title_words"])), re.I)
+    groups = defaultdict(list)
+    for r in results:
+        if r.get("classification"):
+            r["flags"] = [f for f in r["flags"] if f["reason"] not in (spec["flag"], spec["no_presumption_flag"])]
+            groups[r["digest"]["uploader"]["value"]].append(r)
+    changed = []
+    for rs in groups.values():
+        reactions = {r["row_id"] for r in rs if r["classification"]["nature"] == "reaction"}
+        silent_all = all(_no_comment(r) for r in rs)
+        for r in rs:
+            cls, d = r["classification"], r["digest"]
+            seeks = d["ledger"]["seeks"]["value"]
+            if r["fields"]["AG"]["value"] == "是" or not (isinstance(seeks, list) and seeks) or not _no_comment(r):
+                continue
+            if not (words.search(d["title"]["value"] or "") or reactions - {r["row_id"]}):
+                continue
+            if silent_all:
+                r["flags"].append(F.flag("yellow", spec["no_presumption_flag"]))
+                continue
+            grid, _ = F.four_grid("reaction", None, None, True, rules)
+            cls["presumed_from"], cls["nature"] = cls["nature"], "reaction"
+            for c, value in zip(("AG", "AH", "AI", "AJ"), grid):
+                r["fields"][c] = F.col(value, "客户规则：跳播 reaction 推定", spec["flag"])
+            r["fields"]["Y"] = F.col("/", "性质规则", "非纯切条类")
+            r["flags"] = [f for f in r["flags"] if not f["reason"].startswith(("原片搬运：", "性质为", "混剪但再创作很少"))] \
+                + [F.flag("yellow", spec["flag"])]
+            changed.append(r["row_id"])
+    return changed
 
 
 def consistency(results: list[dict]) -> list[dict]:
@@ -236,7 +285,7 @@ def run(case_dir: Path, vlm_dir: Path, table: Table | None, rules: dict, backend
             else None                                          # redo failed calls and rows whose facts changed
         if reuse and not same:
             reuse = {**reuse, "classification_flags": [f for f in reuse["classification_flags"] if not f["reason"].startswith("事实已更新")]
-                     + [{"level": "yellow", "reason": "事实已更新（画面等），性质沿用上次判断，未重判"}]}
+                     + [{"level": "yellow", "reason": "事实已更新（画面/声音等），性质沿用上次判断，未重判"}]}
         jobs.append((row, d, corpus, reuse))
 
     def one(job) -> dict:
