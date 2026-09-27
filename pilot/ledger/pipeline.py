@@ -684,7 +684,7 @@ def has_playback_evidence(obs, video_path, left, right):
                for a, b in zip(patches, patches[1:]))
 
 
-def playback(readings, total, seek_playback_evidence=None):
+def playback(readings, total, seek_playback_evidence=None, rate_overrides=None):
     if len(readings) < 2:
         return {"capture_seconds": None, "complete": None, "seeks": [], "pauses": [],
                 "replays": [], "max_position": max((r["position"] for r in readings), default=None),
@@ -746,7 +746,7 @@ def playback(readings, total, seek_playback_evidence=None):
         dt = right["t"] - left["t"]
         if dt <= 0:
             continue
-        rate = speed
+        rate = (rate_overrides or {}).get((left["frame"], right["frame"]), speed)
         delta = right["position"] - left["position"]
         expected = rate * dt
         if delta < -4:
