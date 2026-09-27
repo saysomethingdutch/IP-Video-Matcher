@@ -1,0 +1,110 @@
+# WO-006: one case, one entry point. Relative paths are resolved from the repository root.
+schema_version: 1
+case_id: qsjx_e18
+
+workbook:
+  path: /Volumes/Element/ip-video-matching-repo_de_material/七时吉祥/七时吉祥-比对总表 - 副本.xlsx
+  sheet: 比对表
+  row_ids: {first: 1051, last: 1219}
+  columns:
+    row_id: 总编号
+    video: 录像名称
+    bv: BV号
+    title: 播放/下载视频或操作信息
+    uploader: 上传者
+    duration: 时长
+    views_claimed: 播放量
+    part_claimed: 侵权视频对应权利作品集数
+    video_type: 视频类型
+    capture_date: 取证日期
+  capture_date: '2023-10-12'
+  duration_encoding: excel_mss
+  bv_column: L
+  output_columns:
+    U: U
+    V: V
+    W: W
+    X: X
+    Y: Y
+    Z: Z
+    AA: AA
+    AB: AB
+    AC: AC
+    AD: AD
+    AE: AE
+    AF: AF
+    AG: AG
+    AH: AH
+    AI: AI
+    AJ: AJ
+
+evidence:
+  video_dir: /Volumes/Element/ip-video-matching-repo_de_material/七时吉祥/231012-哔哩哔哩-爱奇艺（安卓手机）
+  screenshot_dir: /Volumes/Element/ip-video-matching-repo_de_material/七时吉祥/231012-哔哩哔哩-爱奇艺（安卓手机）/截图
+  download_dir: /Volumes/Element/ip-video-matching-repo_de_material/七时吉祥/231012-哔哩哔哩-爱奇艺（安卓手机）/下载文件
+  videos:
+    MVI_0001: {}
+    MVI_0002: {}
+    MVI_0003: {}
+    MVI_0004: {}
+    MVI_0005: {}
+    MVI_0006: {}
+    MVI_0007: {}
+    MVI_0008: {}
+
+source:
+  enabled: true
+  episode_dir: /Users/lestersun/IP-Video-Matcher/real_test
+  episode_pattern: 'qsjx_ep(\d+)\.ts$'
+  index_name: qsjx
+  boundaries: /Users/lestersun/IP-Video-Matcher/experiments/phase3a0/cases/source_boundaries.json
+
+client:
+  story_edit_policy: strict  # D-041：字幕讲剧情、几乎没有观点判剧情解说；lenient = 有配乐/主题化剪辑时按混剪类（标黄）
+  work_title: 七时吉祥
+  rules: pilot/semantic/rules_qsjx.yaml
+  opinion_format:
+    headings: [【使用的性质和目的】, 【使用的比例】, 【对原作品的替代可能性】]
+    conclusion: 因此该视频构成“介绍、评论、说明”目的的合理使用。
+    characters: {hard_min: 150, target_min: 220, target_max: 300, hard_max: 330}
+    prompt_rules: pilot/opinion/rules_qsjx.txt  # Approved WO-004c client wording.
+    validation_profile: qsjx
+  style_examples:
+    workbook: /Volumes/Element/ip-video-matching-repo_de_material/七时吉祥/七时吉祥-比对总表 - 副本.xlsx
+    requirements: /Volumes/Element/ip-video-matching-repo_de_material/七时吉祥/七时吉祥比对要求.docx
+    table_rows:
+      reaction: [851, 272]
+      混剪: [153, 1602]
+      夹叙夹议解说: [9, 2]
+      观点评析: [1591, 640]
+    exclude_current_rows: true
+
+models:
+  audio:
+    enabled: true  # WO-008 D-043 pilot validation; audio remains local.
+    model: models/sensevoice/models/iic--SenseVoiceSmall/snapshots/master
+  visual:
+    protocol: player_canvas_r3
+    cloud: [glm-5.3-flash, deepseek-flash]
+    local_fallback: qwen3-vl:8b-instruct-q4_K_M
+    allow_image_upload: true  # Owner D-032: only cropped player canvases.
+  text: deepseek-flash  # Existing classification; D-037 leaves this batch unchanged.
+  opinion: glm-5.3-flash  # D-037 and WO-004c-R2.
+  speech:
+    enabled: false  # Owner D-020 stopped the full ASR run; keep existing 1051–1127 results.
+    model: models/whisper/ggml-large-v3.bin
+
+output:
+  dir: workspace/pilot/qsjx_e18
+  visual_dir: workspace/pilot/vlm  # Reuse the existing WO-004a R3 cache.
+  export_name: 七时吉祥-比对总表-机器填写
+
+ledger:
+  case: qsjx
+  fps: 1
+  probe_full_and_crop: false
+  repair_nearby_identity: true
+  repair_truncated_readings: true
+
+cache:
+  adopt_existing: true  # This already processed batch predates the integration manifest.

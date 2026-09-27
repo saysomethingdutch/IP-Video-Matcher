@@ -1,0 +1,145 @@
+cache:
+  adopt_existing: true
+case_id: qsjx_2591
+client:
+  story_edit_policy: strict  # D-041：字幕讲剧情、几乎没有观点判剧情解说；lenient = 有配乐/主题化剪辑时按混剪类（标黄）
+  opinion_format:
+    characters:
+      hard_max: 330
+      hard_min: 150
+      target_max: 300
+      target_min: 220
+    conclusion: 因此该视频构成“介绍、评论、说明”目的的合理使用。
+    headings:
+    - 【使用的性质和目的】
+    - 【使用的比例】
+    - 【对原作品的替代可能性】
+    prompt_rules: pilot/opinion/rules_qsjx.txt
+    validation_profile: qsjx
+  rules: pilot/semantic/rules_qsjx.yaml
+  style_examples:
+    exclude_current_rows: true
+    requirements: /Volumes/Element/ip-video-matching-repo_de_material/七时吉祥/七时吉祥比对要求.docx
+    table_rows:
+      reaction:
+      - 851
+      - 272
+      夹叙夹议解说:
+      - 9
+      - 2
+      混剪:
+      - 153
+      - 1602
+      观点评析:
+      - 1591
+      - 640
+    workbook: /Volumes/Element/ip-video-matching-repo_de_material/七时吉祥/七时吉祥-比对总表 -
+      副本.xlsx
+  work_title: 七时吉祥
+evidence:
+  download_dir: null
+  screenshot_dir: /Volumes/Element/ip-video-matching-repo_de_material/七时吉祥/230824-哔哩哔哩（七时吉祥）-爱奇艺（安卓手机）/安卓截图
+  video_dir: /Volumes/Element/ip-video-matching-repo_de_material/七时吉祥/230824-哔哩哔哩（七时吉祥）-爱奇艺（安卓手机）
+  videos:
+    MAH00733: {}
+    MAH00734: {}
+    MAH00735: {}
+    MAH00736: {}
+    MAH00737: {}
+    MAH00738: {}
+ledger:
+  case: qsjx
+  fps: 1
+  probe_full_and_crop: false
+  repair_nearby_identity: true
+  repair_truncated_readings: true
+models:
+  audio:
+    enabled: true
+    model: models/sensevoice/models/iic--SenseVoiceSmall/snapshots/master
+  opinion: glm-5.3-flash
+  speech:
+    enabled: false
+    model: models/whisper/ggml-large-v3.bin
+  text: glm-5.3-flash
+  visual:
+    allow_image_upload: true
+    cloud:
+    - glm-5.3-flash
+    - deepseek-flash
+    local_fallback: qwen3-vl:8b-instruct-q4_K_M
+    protocol: player_canvas_r3
+output:
+  dir: workspace/pilot/qsjx_2591
+  export_name: 七时吉祥-2591-机器填写
+  visual_dir: workspace/pilot/qsjx_2591/vlm_wo008
+schema_version: 1
+source:
+  boundaries: /Users/lestersun/IP-Video-Matcher/experiments/phase3a0/cases/source_boundaries.json
+  enabled: true
+  episode_dir: /Users/lestersun/IP-Video-Matcher/real_test
+  episode_pattern: qsjx_ep(\d+)\.ts$
+  index_name: qsjx
+workbook:
+  bv_column: L
+  capture_date: '2023-08-24'
+  columns:
+    bv: BV号
+    capture_date: 取证日期
+    duration: 时长
+    part_claimed: 侵权视频对应权利作品集数
+    row_id: 总编号
+    title: 播放/下载视频或操作信息
+    uploader: 上传者
+    video: 录像名称
+    video_type: 视频类型
+    views_claimed: 播放量
+  blind_holdout: true  # Do not read U–AJ in target rows during machine inference.
+  duration_encoding: excel_mss
+  output_columns:
+    AA: AA
+    AB: AB
+    AC: AC
+    AD: AD
+    AE: AE
+    AF: AF
+    AG: AG
+    AH: AH
+    AI: AI
+    AJ: AJ
+    U: U
+    V: V
+    W: W
+    X: X
+    Y: Y
+    Z: Z
+  path: /Volumes/Element/ip-video-matching-repo_de_material/七时吉祥/七时吉祥-比对总表 - 副本.xlsx
+  row_ids:
+    first: 469
+    last: 548
+  sheet: 比对表
+
+visual:
+  # Evidence-frame player canvases, measured from this case’s recordings (1280×720).
+  canvas_boxes:
+    MAH00734:
+      landscape: [250, 60, 1080, 500]
+      portrait: [465, 60, 755, 225]
+      rotated_portrait: [195, 100, 470, 570]
+    MAH00735:
+      landscape: [265, 75, 1060, 520]
+      portrait: [450, 60, 755, 225]
+      rotated_portrait: [430, 100, 750, 570]
+    MAH00736:
+      landscape: [205, 85, 1040, 525]
+      portrait: [455, 60, 755, 225]
+      rotated_portrait: [430, 100, 750, 570]
+    MAH00737:
+      landscape: [130, 115, 1120, 560]
+      portrait: [455, 60, 755, 225]
+      rotated_portrait: [420, 100, 730, 570]
+    MAH00738:
+      # Checked at recording seconds 60, 1650, 4300, 5620 after WO-008 linked this file.
+      landscape: [180, 70, 1040, 580]
+      portrait: [420, 60, 780, 225]
+      rotated_portrait: [80, 80, 395, 550]

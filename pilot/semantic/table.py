@@ -1,0 +1,92 @@
+"""The plaintiff's comparison table (read-only): headers, BVs in other notarial batches, and rows the
+original table already marks as repeated captures."""
+from __future__ import annotations
+
+import re
+import warnings
+from dataclasses import dataclass, field
+from pathlib import Path
+
+OUTPUT_COLS = ["U", "V", "W", "X", "Y", "Z", "AA", "AB", "AC", "AD", "AE", "AF", "AG", "AH", "AI", "AJ"]
+REPEAT_RE = re.compile(r"同序号\s*\d+\s*[，,]\s*重复取证")
+
+
+def col_index(letter: str) -> int:
+    n = 0
+    for ch in letter:
+        n = n * 26 + ord(ch) - 64
+    return n
+
+
+@dataclass
+class Table:
+    headers: list[str]
+    by_no: dict[int, list] = field(default_factory=dict)
+    output_mapping: dict[str, str] = field(default_factory=dict)
+    bv_column: str = "L"
+
+    def physical(self, letter: str) -> str:
+        return self.output_mapping.get(letter, letter)
+
+    def header(self, letter: str) -> str:
+        return self.headers[col_index(self.physical(letter)) - 1]
+
+    def value(self, no: int, letter: str):
+        row = self.by_no.get(no)
+        return None if row is None else row[col_index(self.physical(letter)) - 1]
+
+    def other_batches(self, no: int, batch: range) -> list[int]:
+        """Row numbers outside this batch with the same BV."""
+        bv = self.value(no, self.bv_column)
+        if not bv:
+            return []
+        return sorted(n for n, r in self.by_no.items() if n not in batch and r[col_index(self.bv_column) - 1] == bv)
+
+    def original_repeat(self, no: int) -> dict[str, str] | None:
+        """U-AJ exactly as the original table writes them, when it already says "同序号…，重复取证"."""
+        values = {c: self.value(no, c) for c in OUTPUT_COLS}
+        if any(isinstance(x, str) and REPEAT_RE.search(x) for x in values.values()):
+            return {c: "" if x is None else str(x) for c, x in values.items()}
+        return None
+
+
+def load_table(path: Path, sheet: str = "比对表", output_mapping: dict[str, str] | None = None,
+               bv_column: str = "L", holdout_rows: set[int] | None = None,
+               sample_rows: set[int] | None = None) -> Table:
+    """Read A–T for blind rows; fetch output cells only for explicit outside style examples."""
+    import openpyxl
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        wb = openpyxl.load_workbook(path, read_only=True, data_only=True)
+    try:
+        ws = wb[sheet]
+        if holdout_rows is None:
+            rows = ws.iter_rows(values_only=True)
+            headers = [str(h) if h is not None else "" for h in next(rows)]
+            table = Table(headers, output_mapping=output_mapping or {}, bv_column=bv_column)
+            for r in rows:
+                if isinstance(r[0], (int, float)):
+                    table.by_no[int(r[0])] = list(r)
+            return table
+
+        # The blind run never asks openpyxl for held-out U–AJ row values.
+        output_end = max(col_index(v) for v in (output_mapping or {c: c for c in OUTPUT_COLS}).values())
+        headers = [str(h) if h is not None else "" for h in
+                   next(ws.iter_rows(min_row=1, max_row=1, max_col=output_end, values_only=True))]
+        table = Table(headers, output_mapping=output_mapping or {}, bv_column=bv_column)
+        source_rows = {}
+        for excel_row, values in enumerate(ws.iter_rows(min_row=2, max_col=20, values_only=True), 2):
+            if isinstance(values[0], (int, float)):
+                rid = int(values[0])
+                table.by_no[rid] = list(values) + [None] * (output_end - 20)
+                if sample_rows and rid in sample_rows:
+                    if rid in holdout_rows:
+                        raise ValueError(f"style example {rid} overlaps the blind batch")
+                    source_rows[rid] = excel_row
+        for rid, excel_row in source_rows.items():
+            values = next(ws.iter_rows(min_row=excel_row, max_row=excel_row,
+                                       min_col=21, max_col=output_end, values_only=True))
+            table.by_no[rid][20:output_end] = values
+        return table
+    finally:
+        wb.close()

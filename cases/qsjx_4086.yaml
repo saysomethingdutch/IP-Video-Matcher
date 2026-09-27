@@ -1,0 +1,138 @@
+cache:
+  adopt_existing: true
+case_id: qsjx_4086
+client:
+  story_edit_policy: strict  # D-041：字幕讲剧情、几乎没有观点判剧情解说；lenient = 有配乐/主题化剪辑时按混剪类（标黄）
+  opinion_format:
+    characters:
+      hard_max: 330
+      hard_min: 150
+      target_max: 300
+      target_min: 220
+    conclusion: 因此该视频构成“介绍、评论、说明”目的的合理使用。
+    headings:
+    - 【使用的性质和目的】
+    - 【使用的比例】
+    - 【对原作品的替代可能性】
+    prompt_rules: pilot/opinion/rules_qsjx.txt
+    validation_profile: qsjx
+  rules: pilot/semantic/rules_qsjx.yaml
+  style_examples:
+    exclude_current_rows: true
+    requirements: /Volumes/Element/ip-video-matching-repo_de_material/七时吉祥/七时吉祥比对要求.docx
+    table_rows:
+      reaction:
+      - 851
+      - 272
+      夹叙夹议解说:
+      - 9
+      - 2
+      混剪:
+      - 153
+      - 1602
+      观点评析:
+      - 1591
+      - 640
+    workbook: /Volumes/Element/ip-video-matching-repo_de_material/七时吉祥/七时吉祥-比对总表 -
+      副本.xlsx
+  work_title: 七时吉祥
+evidence:
+  download_dir: /Volumes/Element/ip-video-matching-repo_de_material/七时吉祥/250826-哔哩哔哩-爱奇艺（华为手机）/截图、下载文件
+  screenshot_dir: /Volumes/Element/ip-video-matching-repo_de_material/七时吉祥/250826-哔哩哔哩-爱奇艺（华为手机）/截图、下载文件
+  video_dir: /Volumes/Element/ip-video-matching-repo_de_material/七时吉祥/250826-哔哩哔哩-爱奇艺（华为手机）
+  videos:
+    MVI_0001: {}
+    MVI_0002: {}
+    MVI_0003: {}
+    MVI_0004: {}
+    MVI_0005: {}
+    MVI_0006: {}
+    MVI_0007: {}
+ledger:
+  case: qsjx
+  fps: 1
+  probe_full_and_crop: false
+  repair_nearby_identity: true
+  repair_truncated_readings: true
+  screenshot_time_pattern: Screenshot_\d{8}_(\d\d)(\d\d)(\d\d)_
+models:
+  audio:
+    enabled: true
+    model: models/sensevoice/models/iic--SenseVoiceSmall/snapshots/master
+  opinion: glm-5.3-flash
+  speech:
+    enabled: false
+    model: models/whisper/ggml-large-v3.bin
+  text: glm-5.3-flash
+  visual:
+    allow_image_upload: true
+    cloud:
+    - glm-5.3-flash
+    - deepseek-flash
+    local_fallback: qwen3-vl:8b-instruct-q4_K_M
+    protocol: player_canvas_r3
+output:
+  dir: workspace/pilot/qsjx_4086
+  export_name: 七时吉祥-4086-机器填写
+  visual_dir: workspace/pilot/qsjx_4086/vlm_wo008
+schema_version: 1
+source:
+  boundaries: /Users/lestersun/IP-Video-Matcher/experiments/phase3a0/cases/source_boundaries.json
+  enabled: true
+  episode_dir: /Users/lestersun/IP-Video-Matcher/real_test
+  episode_pattern: qsjx_ep(\d+)\.ts$
+  index_name: qsjx
+workbook:
+  bv_column: L
+  capture_date: '2025-08-26'
+  columns:
+    bv: BV号
+    capture_date: 取证日期
+    duration: 时长
+    part_claimed: 侵权视频对应权利作品集数
+    row_id: 总编号
+    title: 播放/下载视频或操作信息
+    uploader: 上传者
+    video: 录像名称
+    video_type: 视频类型
+    views_claimed: 播放量
+  blind_holdout: true  # Do not read U–AJ in target rows during machine inference.
+  duration_encoding: hms
+  output_columns:
+    AA: AA
+    AB: AB
+    AC: AC
+    AD: AD
+    AE: AE
+    AF: AF
+    AG: AG
+    AH: AH
+    AI: AI
+    AJ: AJ
+    U: U
+    V: V
+    W: W
+    X: X
+    Y: Y
+    Z: Z
+  path: /Volumes/Element/ip-video-matching-repo_de_material/七时吉祥/七时吉祥-比对总表 - 副本.xlsx
+  row_ids:
+    first: 1663
+    last: 1706
+  sheet: 比对表
+
+visual:
+  # Evidence-frame player canvases, measured from this case’s recordings (1280×720).
+  canvas_boxes:
+    MVI_0002:
+      landscape: [175, 80, 1040, 605]
+      portrait: [470, 65, 820, 260]
+    MVI_0003:
+      landscape: [165, 55, 1190, 625]
+      portrait: [470, 65, 820, 260]
+    MVI_0004:
+      landscape: [150, 65, 1080, 610]
+      portrait: [470, 65, 820, 260]
+    MVI_0007:
+      landscape: [150, 65, 1100, 610]
+      portrait: [470, 65, 820, 260]
