@@ -1,0 +1,178 @@
+"""WO-102 §1, §3, §4: rules file, code-decided columns, the reply checks, AC assembly, the check list and the
+scoring script — synthetic data only (no workbook, no model call)."""
+import unittest
+
+from pilot.timeline import local as Lc
+from pilot.tsxk import ac as A
+from pilot.tsxk import check as CK
+from pilot.tsxk import classify as K
+from pilot.tsxk import fields as FD
+from pilot.tsxk import samples as SM
+
+RULES = Lc.load_rules()
+
+
+def timeline(segs, traffic=(), forms=(), unknown=0):
+    seconds = {}
+    for s in segs:
+        seconds[s["content"]] = seconds.get(s["content"], 0) + s["end"] - s["start"] + 1
+    platforms = sorted({p for t in traffic for p in t["platforms"]})
+    return {"segments": segs, "traffic": list(traffic), "flags": [], "frames": [],
+            "ac": {"traffic": [f"{t['start']}出现网盘二维码" for t in traffic]},
+            "summary": {"seconds": seconds, "forms": list(forms), "has_tsxk": any(s["content"] == "tsxk" for s in segs),
+                        "has_film": "动画剧场版" in forms, "traffic_platforms": platforms, "unknown_frames": unknown,
+                        "face_frames": 0, "text_frames": 0}}
+
+
+def seg(start, end, content, form=""):
+    return {"start": start, "end": end, "content": content, "form": form, "frames": 1, "sources": ["本地"]}
+
+
+class RulesFileTest(unittest.TestCase):
+    def test_every_column_has_a_source_and_who_decides(self):
+        for col in ("D", "F", "L", "Q", "R", "S", "T", "U", "V", "W", "X", "Y", "Z", "AA", "AB", "AC"):
+            spec = RULES["columns"][col]
+            self.assertTrue(spec.get("source"), col)
+            self.assertTrue(spec.get("by"), col)
+        self.assertEqual(RULES["columns"]["AA"]["values"], ["无法判断"])          # D-056 ④
+
+    def test_prompts_are_target_blind(self):
+        text = K.SYSTEM + K.standards(RULES)
+        for word in ("被告", "原告", "辩护", "本案以论证合理使用为目标"):
+            self.assertNotIn(word, text)
+
+
+class FieldsTest(unittest.TestCase):
+    def test_witness_time_format(self):
+        self.assertEqual(FD.witness_time("2026年8月12日10时46分6秒"), "2026/8/12 10:46:06")
+        self.assertEqual(FD.witness_time("2026-04-01 09:05:00"), "2026/4/1 09:05:00")
+        self.assertIsNone(FD.witness_time(""))
+
+    def test_ledger_columns_wait_for_wo101(self):
+        fields, flags = FD.ledger_fields({"C": "标题"}, None)
+        self.assertIsNone(fields["D"]["value"])
+        self.assertIn("WO-101", flags[0]["reason"])
+        led = {"title": "吞噬星空108（五）", "address": None, "complete": True, "finished_witness_time": "2024-04-18 16:42:57"}
+        fields, _ = FD.ledger_fields({"C": "studio_video_1708954227622.mp4", "E": "https://b"}, led)
+        self.assertEqual((fields["D"]["value"], fields["F"]["value"], fields["L"]["value"], fields["R"]["value"]),
+                         ("吞噬星空108（五）", "未显示", "2024/4/18 16:42:57", "是"))
+
+    def test_areas_not_shown_mean_none_and_an_ac_note(self):
+        fields, notes, _ = FD.page_fields(None, RULES)
+        self.assertEqual((fields["S"]["value"], fields["AB"]["value"]), ("无", "无"))
+        self.assertEqual(notes, ["录屏未显示标签区", "录屏未显示简介区"])
+        led = {"tags": {"visible": True, "items": ["吞噬星空", "国漫"], "activity": "动画短片群星计划"},
+               "intro": {"visible": True, "text": "罗峰的高光时刻"}, "collection": {"visible": True, "title": "吞噬星空"}}
+        fields, notes, _ = FD.page_fields(led, RULES)
+        self.assertEqual(fields["S"]["value"], "动画短片群星计划")
+        self.assertEqual(fields["AB"]["value"], "标签（吞噬星空）、简介（罗峰）、合集（吞噬星空）")
+        self.assertEqual(notes, [])
+
+    def test_series_with_a_code_and_filler(self):
+        tl = timeline([seg(40, 150, "tsxk"), seg(151, 707, "unrelated")],
+                      [{"start": 81, "end": 91, "platforms": ["other"], "kinds": ["网盘二维码"]}])
+        fields, hints, _ = FD.timeline_fields(tl, None, "吞噬星空236", RULES)
+        self.assertEqual((fields["Q"]["value"], fields["W"]["value"], fields["X"]["value"]), ("否", "是", "是（其他）"))
+        self.assertIsNone(hints["y_fixed"])
+        lines = FD.time_lines(tl, fields, "偷渡")
+        self.assertEqual(lines[0], "81出现网盘二维码")
+        self.assertEqual(lines[1], "00:40-02:30为《吞噬星空》动画画面；02:31-11:47为无关内容")
+
+    def test_no_animation_fixes_y_and_z(self):
+        drive = timeline([seg(35, 60, "traffic"), seg(61, 649, "unrelated")],
+                         [{"start": 35, "end": 60, "platforms": ["other"], "kinds": ["网盘二维码"]}])
+        f, h, _ = FD.timeline_fields(drive, None, "吞噬星空236", RULES)
+        self.assertEqual((f["Q"]["value"], f["Y"]["value"], f["Z"]["value"]), ("是", "引流", "低"))
+        film = timeline([seg(0, 90, "tsxk_other", "动画剧场版")], forms=["动画剧场版"])
+        f, h, flags = FD.timeline_fields(film, None, "决战原始星PV", RULES)
+        self.assertEqual((f["Q"]["value"], f["Y"]["value"], f["Z"]["value"]), ("否", "错权", "低"))   # 示例 16047
+        self.assertTrue(any("指引没有给错权" in x["reason"] for x in flags))
+        other = timeline([seg(0, 300, "unrelated")])
+        f, h, flags = FD.timeline_fields(other, None, "谆提身陨", RULES)
+        self.assertEqual((f["Y"]["value"], f["Z"]["value"]), ("完全无关内容", "高"))              # 示例 11802
+
+    def test_other_forms_do_not_count_as_unrelated_but_are_flagged(self):
+        tl = timeline([seg(0, 33, "tsxk_other", "手游"), seg(34, 400, "tsxk")], forms=["手游"])
+        f, h, flags = FD.timeline_fields(tl, None, "吞噬星空动漫吐槽", RULES)
+        self.assertEqual((f["W"]["value"], h["forms"]), ("否", ["手游"]))
+        self.assertTrue(any("W 按" in x["reason"] for x in flags))
+        self.assertEqual(FD.time_lines(tl, f, "二创（其他类）"), ["00:00-00:33为《吞噬星空》手游内容"])
+
+    def test_episode_note(self):
+        self.assertEqual(FD.episode_note("吞噬星空第52集看点"), "标题标注第52集")
+        self.assertIsNone(FD.episode_note("吞噬星空236"))
+
+
+class ReplyCheckTest(unittest.TestCase):
+    def reply(self, **kw):
+        base = {"Y": "二创（解说类）", "U": "是", "V": "否", "Z": "中", "T_extra": [],
+                "AC": {"主题概括": "本视频对剧情进行讲解。", "段落情节": "罗峰获得宝物。", "新增创作要素": ["增加解说配音"],
+                       "比对意见": "解说以剧情复述为主，合理使用可能性中等。", "其他": []}}
+        base.update(kw)
+        return base
+
+    def test_a_good_reply_passes(self):
+        self.assertEqual(K.check(self.reply(), None, {"W": {"value": "否"}}, None), [])
+
+    def test_numbers_quotes_and_inconsistent_choices_fail(self):
+        fixed = {"W": {"value": "否"}}
+        ac = dict(self.reply()["AC"], 段落情节="第52集罗峰获得宝物。")
+        self.assertIn("不要写数字", "".join(K.check(self.reply(AC=ac), None, fixed, None)))
+        ac = dict(self.reply()["AC"], 主题概括="UP主说“太强了”“真燃”。")
+        self.assertIn("引号", "".join(K.check(self.reply(AC=ac), None, fixed, None)))
+        self.assertIn("W=否", "".join(K.check(self.reply(Y="偷渡"), None, fixed, None)))
+        self.assertIn("纯cut", "".join(K.check(self.reply(Y="纯cut"), None, fixed, None)))
+        self.assertIn("U：解说类", "".join(K.check(self.reply(U="否"), None, fixed, None)))
+        ac = dict(self.reply()["AC"], 比对意见="一。二。三。四。")
+        self.assertIn("最多 3 句", "".join(K.check(self.reply(AC=ac), None, fixed, None)))
+
+    def test_a_fixed_y_is_not_rechecked(self):
+        self.assertEqual(K.check(self.reply(Y="随便"), "引流", {"W": {"value": "是"}}, None), [])
+
+
+class AcTest(unittest.TestCase):
+    def test_sections_lists_and_code_lines(self):
+        text = A.assemble({"主题概括": "概括。", "段落情节": "情节。", "新增创作要素": ["背景音乐", "转场特效"],
+                           "比对意见": "意见。", "其他": ["画面加了透明度"]},
+                          ["01:27-01:37出现网盘二维码", "录屏未显示标签区"])
+        self.assertEqual(text, "【主题概括】\n概括。\n\n【段落情节】\n情节。\n\n【新增创作要素情况】\n1.背景音乐\n2.转场特效\n\n"
+                               "【比对意见】\n意见。\n\n【其他】\n1.画面加了透明度\n2.01:27-01:37出现网盘二维码\n3.录屏未显示标签区")
+        self.assertTrue(A.assemble({}, []).endswith("【其他】"))
+
+
+class CheckListTest(unittest.TestCase):
+    def rows(self):
+        titles = ["【吞噬星空reaction】48", "吞噬星空等级解说", "吞噬星空踩点混剪", "吞噬星空236", "决战原始星PV", "罗峰日常"]
+        return [{"序号": str(8213 + i), "标题": titles[i % 6] + str(i), "BV": f"BV{i:010d}",
+                 "UP主": f"up{i % 9}", "发布时间": "", "取证完成时间": "", "取证视频链接": ""} for i in range(120)]
+
+    def test_draw_is_stratified_capped_per_uploader_and_repeatable(self):
+        picked = CK.draw(self.rows(), 30, 1)
+        self.assertEqual(len(picked), 18)                  # 9 uploaders × 2
+        self.assertTrue(all(n <= 2 for n in __import__("collections").Counter(r["UP主"] for r in picked).values()))
+        self.assertEqual(picked, CK.draw(self.rows(), 30, 1))
+        self.assertEqual(CK.stratum("【吞噬星空reaction】48"), "reaction")
+        self.assertEqual(CK.stratum("吞噬星空236"), "集数标题")
+
+    def test_score_counts_agreement_and_lists_guidance_columns(self):
+        machine = {"1": {"Q": "否", "Y": "偷渡", "X": "是（其他）", "AA": "无法判断", "T": "是（手游）"},
+                   "2": {"Q": "否", "Y": "二创（单IP混剪类）", "X": "否", "AA": "无法判断", "T": "否"}}
+        human = {"1": {"Q": "否", "Y": "二创（混剪类）", "X": "否", "AA": "第236集", "T": "是（游戏）"},
+                 "2": {"Q": "否", "Y": "二创（混剪类）", "X": "否", "AA": "无法判断", "T": "否"}}
+        r = CK.score(machine, human)
+        self.assertEqual(r["scored"]["Q"]["agree"], 2)
+        self.assertEqual(r["scored"]["Y"]["agree"], 1)          # 混剪类 is read as 单IP混剪类
+        self.assertEqual(r["scored"]["T"]["agree"], 2)          # 游戏 is read as 手游
+        self.assertEqual(len(r["guidance_over_human"]["X"]["differ"]), 1)
+        self.assertEqual(r["tou_du"], [{"row": "1", "human_Y": "二创（混剪类）"}])
+        self.assertIn("计分列", CK.markdown(r))
+
+
+class SamplesTest(unittest.TestCase):
+    def test_scrub_takes_out_times_episodes_and_shares(self):
+        text = "【其他】\n1.02:47-5:17无关内容\n2.第108集的内容\n3.80%以上为无关内容"
+        self.assertEqual(SM.scrub(text), "【其他】\n1.相关集数的内容\n2.大部分为无关内容")
+
+
+if __name__ == "__main__":
+    unittest.main()
