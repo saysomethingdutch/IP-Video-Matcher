@@ -9,6 +9,7 @@ from __future__ import annotations
 import argparse
 import csv
 from datetime import datetime, timezone
+import fcntl
 from functools import lru_cache
 import hashlib
 import http.client
@@ -343,6 +344,13 @@ def run():
         parser.error('Some requested rows are absent from the selected dataset')
     metadata_dir = STATE / ('metadata_check30' if CHECK_MODE else 'metadata')
     STATE.mkdir(parents=True, exist_ok=True)
+    lock = (STATE / 'run.lock').open('w')
+    try:
+        fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except BlockingIOError:
+        lock.close()
+        print('STOPPED_ALREADY_RUNNING: another evidence fetch holds the shared lock', flush=True)
+        return 7
     records = {}
     if manifest_path().exists():
         with manifest_path().open(newline='') as handle:
@@ -510,6 +518,8 @@ def run():
         return 6
     finally:
         browser.close()
+        fcntl.flock(lock, fcntl.LOCK_UN)
+        lock.close()
 
 
 if __name__ == '__main__':

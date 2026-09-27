@@ -306,7 +306,8 @@ def analyze(path, source_row=None):
         'uploader_text': winner(up_candidates)[0] or None,
         'flags': flags,
         'sources': {'recording': path.name, 'sampled_frames': len(records),
-                    'recording_seconds': round(seconds, 2)},
+                    'recording_seconds': round(seconds, 2),
+                    'title_votes': title_votes, 'bv_votes': bv_votes},
     }
     return {
         'sample': path.name, 'row': source['row'] if source else '',
