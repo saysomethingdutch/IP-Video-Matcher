@@ -1,0 +1,177 @@
+"""The GLM call (WO-102 §3, D-037): Y (when 吞噬星空 animation is shown), U, V, Z, other forms heard or read,
+and the wording of the AC sections — with checks, one retry, then a red flag.
+
+Target-blind: the prompt gives the guidance's standards and the facts, never which side the comparison
+serves. The model writes no numbers (times, episodes, shares are code's) and quotes nothing verbatim (D-049).
+"""
+from __future__ import annotations
+
+import json
+import re
+
+from pilot.semantic import llm
+
+from .fields import NO, YES
+
+SECTIONS = ("主题概括", "段落情节", "新增创作要素", "比对意见", "其他")
+ANIME_Y = ("纯cut", "偷渡", "二创（解说类）", "二创（单IP混剪类）", "二创（多IP混剪类）", "二创（reaction类）", "二创（其他类）")
+FORMS = ("漫画", "动画剧场版", "手游", "小说", "有声书")
+QUOTE = re.compile(r"“([^”]+)”|\"([^\"]+)\"|「([^」]+)」")
+SENTENCE = re.compile(r"[^。！？!?]+[。！？!?]?")
+LABEL = {"tsxk": "《吞噬星空》动画画面", "tsxk_other": "《吞噬星空》{form}", "creator": "UP主自制画面", "unrelated": "无关内容",
+         "traffic": "引流画面", "blank": "黑屏或无画面", "unknown": "画面未能判定"}
+
+SYSTEM = """你为短视频比对表填写几项判断和"视频说明"。判断标准摘自比对说明：
+
+{standards}
+
+写"视频说明"：
+1. 分五段：主题概括、段落情节、新增创作要素、比对意见、其他。主题概括、段落情节、比对意见每段 1–3 句，简明扼要，不堆砌。
+2. 不写任何数字：时间段、时间点、集数、时长、比例都由程序另行填写。
+3. 不直接引用视频里的原话，用概括转述。
+4. 只写事实里有的东西：画面依据【画面时间线】【画面描述】，文字依据【画面文字】。事实不够时写得概括些，不要编造情节或人物。
+5. 新增创作要素、其他两段写成列表，每条一句；没有就给空列表。【其他】只写前面没有涵盖、可能影响认定的特殊情况。
+6. 比对意见结合各项判断和视频内容，说明合理使用可能性高、中或低的理由。
+
+示例（程序填写的时间和集数已去掉）：
+{examples}
+
+只输出一个 JSON 对象：
+{{"Y": "…", "U": "是或否", "V": "是或否", "Z": "高、中或低", "T_extra": [], "AC": {{"主题概括": "…", "段落情节": "…", "新增创作要素": ["…"], "比对意见": "…", "其他": []}}, "evidence": [{{"point": "判断要点", "basis": "依据的事实"}}]}}"""
+
+
+def standards(rules: dict) -> str:
+    c = rules["columns"]
+    lines = [f"U 是否为解说：{c['U']['rule']}", f"V 是否仅增加背景音乐：{c['V']['rule']}",
+             "Y 类别（有吞噬星空动画画面时，在下面几类里选）："]
+    lines += [f"- {k}：{v}" for k, v in c["Y"]["categories"].items() if k in ANIME_Y]
+    lines += ["Z 合理使用可能性："] + [f"- {k}：{v}" for k, v in c["Z"]["levels"].items()]
+    lines += [f"T 其他形式：{c['T']['rule']} 画面能看出的形式由程序填；解说或文字结合了原著小说、有声书的，在 T_extra 里写\"小说\"或\"有声书\"。"]
+    lines += ["补充：" + n for n in c["Y"]["notes"]]
+    return "\n".join(lines)
+
+
+def examples_text(guide: list[dict], colleague: list[str]) -> str:
+    parts = [f"【示例 {i}】标题：{g['title']}\nY：{g['Y']}　U：{g['U']}　V：{g['V']}　Z：{g['Z']}\n{g['AC']}"
+             for i, g in enumerate(guide, 1)]
+    parts += [f"【文风参考 {i}】\n{t}" for i, t in enumerate(colleague, 1)]
+    return "\n\n".join(parts)
+
+
+def facts_text(inputs: dict, led: dict | None, tl: dict | None, fixed: dict, hints: dict) -> str:
+    title = (led or {}).get("title") or inputs.get("C") or ""
+    lines = [f"【视频标题】{title}", f"【UP主】{inputs.get('G') or '未知'}"]
+    led = led or {}
+    page = []
+    for key, name in (("tags", "标签区"), ("intro", "简介区"), ("collection", "合集")):
+        area = led.get(key) or {}
+        if not area.get("visible"):
+            page.append(f"{name}未显示")
+        else:
+            page.append(f"{name}：{'、'.join(area.get('items') or []) or area.get('text') or area.get('title') or '无'}")
+    lines.append("【页面】" + "；".join(page))
+    lines.append("【程序已定】" + "；".join(f"{k}={v['value']}" for k, v in fixed.items() if v.get("value") is not None)
+                 + (f"；画面里能看出的吞噬星空其他形式：{'、'.join(hints['forms'])}" if hints.get("forms") else ""))
+    if tl:
+        from pilot.timeline.cloud import mmss
+        segs = "；".join(f"{mmss(s['start'])}-{mmss(s['end'])} {LABEL[s['content']].format(form=s['form'] or '其他形式')}"
+                         for s in tl["segments"])
+        lines.append(f"【画面时间线】{segs}")
+        if tl["traffic"]:
+            lines.append("【引流】" + "；".join(f"{mmss(t['start'])}-{mmss(t['end'])} {'、'.join(t['kinds'])}" for t in tl["traffic"]))
+        notes, seen = [], set()
+        for f in tl["frames"]:
+            answers = ((f.get("cloud") or {}).get("answers") or {}).values()
+            why = "；".join(dict.fromkeys(a["why"] for a in answers if a and a.get("why")))
+            if why and why not in seen:
+                seen.add(why)
+                notes.append(f"{mmss(f['t'])} {why}")
+        if notes:
+            lines.append("【画面描述】" + " | ".join(notes[:30]))
+        s = tl["summary"]
+        lines.append(f"【真人出镜】{s['face_frames']} 帧；【作者字幕或大段文字】{s['text_frames']} 帧（共 {len(tl['frames'])} 帧）")
+        texts = []
+        for f in tl["frames"]:                     # text on the series, other forms and the uploader's own frames
+            if f.get("content") not in ("tsxk", "tsxk_other", "creator", "unknown"):
+                continue
+            for t in f.get("ocr") or []:
+                t = t.strip()
+                if len(t) >= 4 and t not in texts and not re.search(r"bilibili|登录|试看|弹幕", t, re.I):
+                    texts.append(t)
+        lines.append("【画面文字】" + (" / ".join(texts[:60]) if texts else "无"))
+    lines.append("【声音】未提供（音频不上传，本机声音这一路本单未跑）")
+    return "\n".join(lines)
+
+
+def user_prompt(facts: str, y_fixed: str | None) -> str:
+    ask = (f"Y 已由程序定为\"{y_fixed}\"（没有吞噬星空动画画面），Y 照填；请判断 U、V、Z，" if y_fixed else
+           f"请按比对说明判断 Y（只能在 {'、'.join(ANIME_Y)} 中选）、U、V、Z，")
+    return f"{facts}\n\n{ask}如果解说或文字结合了原著小说、有声书，在 T_extra 里写出；然后写视频说明。"
+
+
+def _strings(ac: dict) -> list[str]:
+    out = []
+    for k in SECTIONS:
+        v = ac.get(k)
+        out += [str(x) for x in v] if isinstance(v, list) else [str(v or "")]
+    return out
+
+
+def check(data: dict | None, y_fixed: str | None, fixed: dict, tl: dict | None) -> list[str]:
+    """Problems with a reply; empty when it can be used."""
+    if not isinstance(data, dict):
+        return ["回复不是 JSON 对象"]
+    errors = []
+    y = data.get("Y")
+    if not y_fixed and y not in ANIME_Y:
+        errors.append(f"Y：{y!r} 不在可选类别里")
+    for k in ("U", "V"):
+        if data.get(k) not in (YES, NO):
+            errors.append(f"{k}：只能填是或否")
+    if data.get("Z") not in ("高", "中", "低"):
+        errors.append("Z：只能填高、中、低")
+    if any(t not in FORMS for t in data.get("T_extra") or []):
+        errors.append("T_extra：只能写漫画、动画剧场版、手游、小说、有声书")
+    ac = data.get("AC")
+    if not isinstance(ac, dict) or any(k not in ac for k in SECTIONS):
+        return errors + ["AC：五段不全"]
+    for k in ("主题概括", "比对意见"):
+        if not str(ac.get(k) or "").strip():
+            errors.append(f"AC：{k}不能为空")
+    for k in ("主题概括", "段落情节", "比对意见"):
+        n = len([s for s in SENTENCE.findall(str(ac.get(k) or "")) if s.strip("。！？!? ")])
+        if n > 3:
+            errors.append(f"AC：{k}写了 {n} 句，最多 3 句")
+    for k in ("新增创作要素", "其他"):
+        if not isinstance(ac.get(k), list) or len(ac[k]) > 6:
+            errors.append(f"AC：{k}要写成列表，最多 6 条")
+    text = "".join(_strings(ac))
+    if re.search(r"\d", text):
+        errors.append("AC：不要写数字（时间、集数、比例由程序填）")
+    if len(QUOTE.findall(text)) > 1:
+        errors.append("AC：不直接引用原话，最多 1 处引号")
+    w = (fixed.get("W") or {}).get("value")
+    if not y_fixed and y in ("偷渡", "二创（多IP混剪类）") and w == NO:
+        errors.append(f"Y：{y}要有无关或其他 IP 的内容，但时间线里没有（W=否）")
+    if not y_fixed and y == "纯cut" and (data.get("U") == YES or data.get("V") == YES):
+        errors.append("Y：纯cut 不能同时是解说或加了背景音乐（纯cut 的 V 填否）")
+    if not y_fixed and y == "二创（解说类）" and data.get("U") != YES:
+        errors.append("U：解说类的 U 应为是")
+    return errors
+
+
+def classify(inputs: dict, led: dict | None, tl: dict | None, fixed: dict, hints: dict, system: str,
+             backend: str = "zhipu") -> dict:
+    """{"data", "errors", "calls", "prompt"}: the reply after at most one retry."""
+    prompt = user_prompt(facts_text(inputs, led, tl, fixed, hints), hints.get("y_fixed"))
+    calls, errors, data = [], [], None
+    for attempt in range(2):
+        p = prompt if not errors else prompt + "\n\n上一次的回答有这些问题，请改正后重新输出完整 JSON：\n- " + "\n- ".join(errors)
+        reply = llm.ask(backend, p, system=system, required=("AC",), timeout=900)
+        calls.append({"backend": reply.backend, "model": reply.model, "seconds": reply.seconds, "usage": reply.usage,
+                      "error": reply.error, "fallback": reply.fallback})
+        data = reply.data
+        errors = [reply.error] if reply.error and data is None else check(data, hints.get("y_fixed"), fixed, tl)
+        if not errors:
+            break
+    return {"data": data, "errors": errors, "calls": calls, "prompt": prompt}

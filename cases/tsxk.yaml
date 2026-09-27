@@ -1,0 +1,56 @@
+# 吞噬星空（WO-101、WO-102；DECISIONS D-056、D-057）。
+# 网页录屏案件，列的布局与七时吉祥不同（产出列是 D、F、L、Q–AC），由 pilot/tsxk/config.py 读取，
+# 不走七时吉祥的 CaseConfig。
+schema: tsxk-web-1
+case_id: tsxk
+
+workbook:
+  path: /Volumes/Element/ip-video-matcher-field-test/field-test/【G组】吞噬星空视频比对.xlsx   # 原表只读
+  sheet: 沈瑞曦
+  rows: {first: 7813, last: 8212}          # 序号（B 列）：该 sheet 的后 400 行（D-056）
+  id_column: B
+  input_columns: [A, B, C, E, G, H, I, J, K, M, N, O, P]
+  output_columns: [D, F, L, Q, R, S, T, U, V, W, X, Y, Z, AA, AB, AC]
+
+check_set:                                  # WO-102 §4。人工结论只有检验脚本在 Owner 放行后才读
+  sheet: 张亚晨
+  filled_column: Y                          # 只判断是否已填，不看内容
+  size: 30
+  seed: 20260927
+  list: cases/tsxk_check30.csv
+
+evidence:
+  dir: /Volumes/Element/ip-video-matcher-field-test/evidence        # WO-101 的下载目录
+  pattern: "{row}.mp4"
+  samples: /Volumes/Element/ip-video-matcher-field-test/field-test/videos   # 示例录屏；13–17 是易存云格式
+
+guidance:
+  dir: /Volumes/Element/ip-video-matcher-field-test/guidance
+  docx: 吞噬星空视频对比说明_文字还原版.docx
+  examples: expamle/【附件】吞噬星空视频比对示例.xlsx
+  sample_rows: {"13": 187, "14": 8799, "15": 11802, "16": 12429, "17": 12490}   # 示例录屏 → 示例表序号
+
+rules: pilot/semantic/rules_tsxk.yaml
+
+webledger:
+  dir: workspace/tsxk/webledger            # WO-101 的台账输出：每行一个 <序号>.json，接口见 pilot/tsxk/config.py
+
+output:
+  dir: workspace/tsxk
+
+timeline:
+  step: 10
+  allow_image_upload: true                 # D-057 ③：所有者授权本项目画面上云，长期有效；默认只发播放器区域
+  backends: [zhipu, deepseek]              # GLM-5.3-Flash 与 DeepSeek-Flash 交叉，一致才采用（D-033）
+  workers: 4                               # 同时 4 组拼图；每组 GLM 与 DeepSeek 并行
+  series_refs:                             # 参考图板上的正片帧（带官方台标）：6 号罗峰特写，16 号人物、能量球
+    - {video: 6.mp4, t: 60, box: [40, 244, 1120, 628]}
+    - {video: 16.mp4, t: 121.27, box: [168, 258, 1122, 632]}
+    - {video: 16.mp4, t: 71.27, box: [168, 258, 1122, 632]}
+
+models:
+  text: zhipu                              # 分类与 AC 用 GLM-5.3-Flash（D-037）
+
+style_examples:
+  guidance_rows: 8                         # 示例表 18 行里按类别挑的条数
+  colleague_rows: 4                        # "张亚晨"已填行里随机取几条，只学 AC 文风；排除检验名单（WO-102 §3）
