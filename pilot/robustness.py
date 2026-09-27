@@ -32,8 +32,12 @@ def normalize_blind_opinion(text: str) -> str:
         aliases = {"使用的方式和目的": labels[0], "对原作品的使用比例": labels[1]}
         for i, line in enumerate(lines):
             for old, label in aliases.items():
-                lines[i] = line.replace(f"【{old}】", label, 1)
+                lines[i] = lines[i].replace(f"【{old}】", label, 1)
     body = "\n".join(lines)
+    first_heading = body.find(labels[0])
+    if first_heading > 0 and body[:first_heading].strip():
+        # Keep the introductory words in place; move only the format label.
+        body = labels[0] + body[:first_heading] + body[first_heading + len(labels[0]):]
     # Match a terminal conclusion only; the preceding reasons remain byte for byte.
     terminal = re.search(r"(?s)([^。！？\n]{0,160}[。！？])\s*$", body)
     if not terminal:
