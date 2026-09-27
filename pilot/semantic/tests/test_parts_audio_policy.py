@@ -155,6 +155,20 @@ class PolicyTest(unittest.TestCase):
         self.assertEqual(grid(r), "是 / 是 / 夹叙夹议类解说 / 夹叙夹议解说")
         self.assertTrue(any(f["reason"].startswith("观点偏少") for f in r["flags"]))
 
+    def test_a_titled_reaction_with_watch_along_comments_is_a_reaction(self):
+        tags = {str(i): ("评论观点" if i in (1, 4, 7, 10) else "叙述剧情") for i in range(1, 11)}   # 夹叙夹议 by the team line
+        d = digest()
+        d["title"] = {"value": "【玛丽阿姨reaction】七时吉祥17 初空大惊"}
+        r = self.run_row(d, saved("不确定", "夹叙夹议解说", tags), "strict")
+        self.assertEqual(grid(r), "是 / 是 / Reaction类 / Reaction类")
+        self.assertEqual(r["classification"]["retyped_from"], "夹叙夹议解说")
+        self.assertTrue(any(f["reason"].startswith("标题自称 reaction") for f in r["flags"]))
+        silent = {str(i): "叙述剧情" for i in range(1, 11)}                                      # no comment, no voice, no face
+        self.assertNotEqual(grid(self.run_row(d, saved("剧情解说", "剧情解说", silent), "strict")), "是 / 是 / Reaction类 / Reaction类")
+        again = self.run_row(d, {**saved("不确定", "夹叙夹议解说", tags),
+                                 "classification": {**r["classification"]}}, "strict")          # a saved retype re-decides
+        self.assertEqual(grid(again), "是 / 是 / Reaction类 / Reaction类")
+
     def test_uploader_music_is_recreation(self):
         audio = {"up_speech": [], "speech_ratio": 0.05, "bgm_ratio": 0.9, "laughter_ratio": 0.0,
                  "uploader_music": True, "music_basis": "", "source": "audio/1.json"}

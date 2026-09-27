@@ -14,7 +14,7 @@ from pilot.textindex.text import normalize
 PURPOSE, PROPORTION, SUBSTITUTION = "【使用的性质和目的】", "【使用的比例】", "【对原作品的替代可能性】"
 CONCLUSION = "因此该视频构成“介绍、评论、说明”目的的合理使用。"
 MIN_CHARS, MAX_CHARS = 150, 330          # R1 §2: aim at 220–300, never above 330
-MAX_QUOTES = 2
+MAX_QUOTES = 1          # WO-004c-R3 (D-049): no verbatim quotes by default; at most one, never in bold
 WORK = "七时吉祥"
 CLIENT_PHRASES = ("介绍、评论、说明", "嗑CP", "获得陪伴感", "学习解读视角", "反应+评论", "适当引用")   # 客户示例用语
 BANNED = [(re.compile(p), why) for p, why in (
@@ -105,7 +105,11 @@ def validate(text: str, parts: dict, ctx: dict) -> list[str]:
         if not normalize(q) or normalize(q) not in up_norm:
             errors.append(f"引号：“{q}”没有逐字出现在 UP 主文字里（意见尽量概括，少引用）")
     if len(quoted) > MAX_QUOTES:
-        errors.append(f"引号：引用了 {len(quoted)} 处，最多 {MAX_QUOTES} 处；要概括，少引用（常见错误 10）")
+        errors.append(f"引号：引用了 {len(quoted)} 处，最多 {MAX_QUOTES} 处；默认用转述，不直接引用原话（常见错误 10）")
+    for b in BOLD.findall(text):
+        if QUOTE.search(b):
+            errors.append("引号：加粗的句子里不放引号，引用不能加粗")
+            break
 
     # 4 work titles
     known = normalize(picture + up)

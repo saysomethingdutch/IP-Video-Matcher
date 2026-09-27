@@ -100,6 +100,14 @@ class ValidateTest(unittest.TestCase):
         many = GOOD_PURPOSE.replace("认为两人", "称“两人斗嘴”“互相关心”“初空嘴硬心软”，认为两人")
         self.assertTrue(any(e.startswith("引号：引用了 3 处") for e in validate(*opinion(many), CTX)))
 
+    def test_one_quote_at_most_and_never_in_bold(self):
+        two = GOOD_PURPOSE.replace("认为两人", "称“两人斗嘴”“互相关心”，认为两人")
+        self.assertTrue(any(e.startswith("引号：引用了 2 处") for e in validate(*opinion(two), CTX)))
+        one = GOOD_PURPOSE.replace("认为两人", "称“两人斗嘴”，认为两人")
+        self.assertFalse(any(e.startswith("引号") for e in validate(*opinion(one), CTX)))
+        bold_quote = GOOD_PURPOSE.replace("**将原作中的零散情节", "**以“两人斗嘴”将原作中的零散情节")
+        self.assertIn("引号：加粗的句子里不放引号，引用不能加粗", validate(*opinion(bold_quote), CTX))
+
     def test_length_limits(self):
         long = GOOD_PURPOSE.replace("进行评论", "进行评论" + "，两人斗嘴其实是在互相关心" * 20)
         self.assertTrue(any(e.startswith("字数") for e in validate(*opinion(long), CTX)))

@@ -28,6 +28,18 @@ def repeated_captures(rows: dict[str, dict]) -> dict[str, str]:
     return analyse(rows)[1]
 
 
+def reaction_titled(d: dict, cls: dict, rules: dict) -> bool:
+    """A title that calls itself a reaction, with watch-along commentary in the captured part (opinion lines,
+    filtered uploader speech or the uploader on camera): the type is reaction, not commentary (rules: reaction_title)."""
+    spec = rules.get("reaction_title")
+    if not spec or cls["nature"] not in spec["from_natures"]:
+        return False
+    if not re.search("|".join(map(re.escape, spec["title_words"])), d["title"]["value"] or "", re.I):
+        return False
+    comments = sum(1 for t in (cls.get("tags") or {}).values() if t == "评论观点")
+    return comments > 0 or bool((d.get("audio") or {}).get("up_speech")) or (d.get("visual") or {}).get("uploader_on_camera") == "是"
+
+
 def lenient_reasons(d: dict, cls: dict) -> str:
     """Why a subtitle edit told as plot may count as a mix under story_edit_policy: lenient (WO-004b-R2 §1.3)."""
     audio = d.get("audio") or {}
@@ -75,6 +87,8 @@ def process_row(row: dict, d: dict, rules: dict, table: Table | None, repeat_of:
         cls = {**reuse["classification"], "flags": [f for f in reuse["classification_flags"]], "calls": []}
         if cls.get("presumed_from"):            # a presumption is re-decided on the batch every run
             cls["nature"] = cls.pop("presumed_from")
+        if cls.get("retyped_from"):             # so is the reaction-title rule (WO-004c-R3)
+            cls["nature"] = cls.pop("retyped_from")
     else:
         cls = classify(d, backend, rules, corpus=corpus)
     cls_flags = cls.pop("flags")
@@ -82,6 +96,10 @@ def process_row(row: dict, d: dict, rules: dict, table: Table | None, repeat_of:
         cls["nature"], _, extra = commentary_nature(cls["model_nature"], {int(k): t for k, t in cls["tags"].items()}, rules)
         cls_flags = [f for f in cls_flags if not f["reason"].startswith(("解说类：", "观点偏少"))] + extra
     flags += cls_flags
+    if reaction_titled(d, cls, rules):                           # WO-004c-R3 §1.3
+        cls["retyped_from"], cls["nature"], cls["subtype"] = cls["nature"], "reaction", None
+        flags = [f for f in flags if not f["reason"].startswith(("解说类：", "观点偏少", "性质为"))]
+        flags.append(F.flag("yellow", f"{rules['reaction_title']['flag']}（原判 {cls['retyped_from']}）"))
     audio = d.get("audio") or {}
     if cls["nature"] == "混剪" and cls.get("recreation") != "明显" and audio.get("uploader_music") is True:
         cls["recreation"] = "明显"                    # 疑似UP主配乐 counts as re-creation (R2 §1.2)
