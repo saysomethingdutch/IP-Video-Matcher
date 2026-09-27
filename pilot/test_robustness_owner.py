@@ -23,10 +23,14 @@ class BlindOwnerPageTest(unittest.TestCase):
             parsed = _blind_rows(path)
         self.assertEqual(parsed["1688"][0], "测试标题")
         self.assertEqual(set(parsed["1688"][1]), set("甲乙丙"))
-        row = Candidate("qsjx_4086", "1688", "测试标题", "reaction", parsed["1688"][1],
+        opinions = dict(parsed["1688"][1])
+        opinions["甲"] = opinions["甲"].replace("评论原剧。", "**评论原剧。**", 1)
+        row = Candidate("qsjx_4086", "1688", "测试标题", "reaction", opinions,
                         {"甲": "人工", "乙": "GLM", "丙": "DeepSeek"})
         page = _page([(row, row.opinions)])
         self.assertEqual(page.count('class="opinion"'), 3)
+        self.assertNotIn("**", page)
+        self.assertNotIn("<strong>", page)
         for source in ("人工", "GLM", "DeepSeek"):
             self.assertNotIn(source, page)
         class Links(HTMLParser):

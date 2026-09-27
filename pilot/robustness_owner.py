@@ -89,8 +89,8 @@ def _candidates(config: CaseConfig) -> list[Candidate]:
 
 
 def _opinion_html(text: str) -> str:
-    safe = html.escape(text)
-    return re.sub(r"\*\*(.+?)\*\*", r"<strong>\1</strong>", safe, flags=re.S)
+    plain = re.sub(r"\*\*(.+?)\*\*", r"\1", text, flags=re.S)
+    return html.escape(plain)
 
 
 def _page(rows: list[tuple[Candidate, dict[str, str]]]) -> str:
