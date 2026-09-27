@@ -37,6 +37,10 @@ class Challenge(RuntimeError):
     pass
 
 
+class BrowserLost(RuntimeError):
+    pass
+
+
 def safe_error(exc):
     first_line = str(exc).splitlines()[0] if str(exc) else type(exc).__name__
     return re.sub(r'https?://\S+', '[URL redacted]', first_line)[:200]
@@ -107,19 +111,30 @@ def expiry_from_signed_url(url):
 
 
 class Browser:
-    def __init__(self):
+    def __init__(self, last_share_visit=0.0):
         self.playwright = sync_playwright().start()
         self.context = self.playwright.chromium.launch_persistent_context(
             str(STATE / 'chrome-profile'), channel='chrome', headless=False,
             accept_downloads=True, downloads_path=str(STATE / 'chrome-downloads'))
         self.page = self.context.pages[0] if self.context.pages else self.context.new_page()
-        self.last_share_visit = 0.0
+        self.last_share_visit = last_share_visit
 
     def close(self):
-        self.context.close()
-        self.playwright.stop()
+        try:
+            self.context.close()
+        except Exception:
+            pass
+        try:
+            self.playwright.stop()
+        except Exception:
+            pass
 
     def share_data(self, evidence_id):
+        try:
+            if self.page.is_closed():
+                self.page = self.context.new_page()
+        except Exception as exc:
+            raise BrowserLost(safe_error(exc)) from exc
         wait = MIN_GAP - (time.monotonic() - self.last_share_visit)
         if wait > 0:
             time.sleep(wait)
@@ -161,8 +176,15 @@ class Browser:
                 'encryptedMd5': son.get('encryptedMd5') or '',
                 'url_expires_at': expiry_from_signed_url(item['fileUrl']),
             }
+        except Exception as exc:
+            if 'Target page, context or browser has been closed' in str(exc):
+                raise BrowserLost(safe_error(exc)) from exc
+            raise
         finally:
-            self.page.remove_listener('response', capture)
+            try:
+                self.page.remove_listener('response', capture)
+            except Exception:
+                pass
 
     def _check_challenge(self):
         body = self.page.locator('body').inner_text(timeout=10000)[:8000]
@@ -173,20 +195,38 @@ class Browser:
     def download(self, signed_url, destination, expected_size):
         if shutil.disk_usage(TARGET.parent).free - expected_size < MIN_FREE:
             raise RuntimeError('External disk would fall below 20 GiB; stopping')
+        if shutil.disk_usage(STATE).free - expected_size < 5 * 1024**3:
+            raise RuntimeError('Internal Chrome download cache would fall below 5 GiB; stopping')
         destination.parent.mkdir(parents=True, exist_ok=True)
         partial = destination.with_suffix('.mp4.part')
         if partial.exists():
             partial.unlink()  # Retain completed files; incomplete browser downloads restart this row.
-        with self.page.expect_download(timeout=180000) as event:
+        try:
+            download_page = self.context.new_page()
+        except Exception as exc:
+            raise BrowserLost(safe_error(exc)) from exc
+        try:
+            with download_page.expect_download(timeout=60000) as event:
+                try:
+                    download_page.goto(signed_url, wait_until='commit', timeout=60000)
+                except Exception as exc:
+                    if not any(marker in str(exc) for marker in ('ERR_ABORTED', 'Download is starting')):
+                        raise
+            download = event.value
+            download.save_as(partial)
+            if download.failure():
+                raise RuntimeError(f'Browser download failed: {download.failure()}')
+            download.delete()  # Chrome downloaded into its local cache before copying out.
+        except Exception as exc:
+            if 'Target page, context or browser has been closed' in str(exc):
+                raise BrowserLost(safe_error(exc)) from exc
+            raise
+        finally:
             try:
-                self.page.goto(signed_url, wait_until='commit', timeout=60000)
-            except Exception as exc:
-                if not any(marker in str(exc) for marker in ('ERR_ABORTED', 'Download is starting')):
-                    raise
-        download = event.value
-        download.save_as(partial)
-        if download.failure():
-            raise RuntimeError(f'Browser download failed: {download.failure()}')
+                if not download_page.is_closed():
+                    download_page.close()
+            except Exception:
+                pass
         actual_size = partial.stat().st_size
         if actual_size != expected_size:
             raise RuntimeError(f'Download size {actual_size} != expected {expected_size}')
@@ -205,6 +245,29 @@ def run():
         with manifest_path().open(newline='') as handle:
             records = {int(r['row']): r for r in csv.DictReader(handle)}
     browser = Browser()
+    restarts = 0
+
+    def recover_browser():
+        nonlocal browser, restarts
+        restarts += 1
+        if restarts > 8:
+            raise BrowserLost('Chrome closed repeatedly; stopping after 8 restarts')
+        last_visit = browser.last_share_visit
+        browser.close()
+        time.sleep(2)
+        browser = Browser(last_share_visit=last_visit)
+        print(f'BROWSER_RESTART count={restarts}', flush=True)
+
+    def fresh_metadata(evidence_id):
+        for attempt in (1, 2):
+            try:
+                return browser.share_data(evidence_id)
+            except BrowserLost:
+                if attempt == 2:
+                    raise
+                recover_browser()
+        raise AssertionError('unreachable')
+
     try:
         for index, item in enumerate(items, 1):
             number = item['row']
@@ -212,12 +275,14 @@ def run():
                 continue
             record = {k: item[k] for k in ('row', 'sheet_row', 'evidenceId')}
             try:
-                meta = browser.share_data(item['evidenceId'])
+                meta = fresh_metadata(item['evidenceId'])
                 record.update({k: meta[k] for k in FIELDS if k in meta})
                 record['status'] = 'ok'
                 safe_write_json(STATE / 'metadata' / f'{number}.json',
                                 {k: v for k, v in meta.items() if k != 'file_url'})
             except Challenge:
+                raise
+            except BrowserLost:
                 raise
             except Exception as exc:
                 record.update(status='error', error=safe_error(exc))
@@ -232,12 +297,14 @@ def run():
                 number = item['row']
                 record = {k: item[k] for k in ('row', 'sheet_row', 'evidenceId')}
                 try:
-                    meta = browser.share_data(item['evidenceId'])
+                    meta = fresh_metadata(item['evidenceId'])
                     record.update({k: meta[k] for k in FIELDS if k in meta})
                     record['status'] = 'ok'
                     safe_write_json(STATE / 'metadata' / f'{number}.json',
                                     {k: v for k, v in meta.items() if k != 'file_url'})
                 except Challenge:
+                    raise
+                except BrowserLost:
                     raise
                 except Exception as exc:
                     record.update(status='error', error=safe_error(exc))
@@ -270,17 +337,32 @@ def run():
             if previous.get('status') == 'ok' and destination.is_file() and destination.stat().st_size == int(records[number]['file_size_bytes']):
                 continue
             try:
-                meta = browser.share_data(item['evidenceId'])
-                size = int(meta['file_size_bytes'])
-                partial, digest = browser.download(meta['file_url'], destination, size)
-                matched = [name for name in ('originalMd5', 'encryptedMd5') if
-                           meta[name] and digest.lower() == meta[name].lower()]
-                if not matched:
-                    raise RuntimeError('Downloaded MD5 matches neither original nor encrypted MD5')
-                partial.replace(destination)
-                row = {'row': number, 'status': 'ok', 'bytes': size,
-                       'md5': digest, 'matched_md5': '+'.join(matched)}
+                for trial in (1, 2):
+                    try:
+                        meta = fresh_metadata(item['evidenceId'])
+                        size = int(meta['file_size_bytes'])
+                        partial, digest = browser.download(meta['file_url'], destination, size)
+                        matched = [name for name in ('originalMd5', 'encryptedMd5') if
+                                   meta[name] and digest.lower() == meta[name].lower()]
+                        if not matched:
+                            raise RuntimeError('Downloaded MD5 matches neither original nor encrypted MD5')
+                        partial.replace(destination)
+                        row = {'row': number, 'status': 'ok', 'bytes': size,
+                               'md5': digest, 'matched_md5': '+'.join(matched)}
+                        break
+                    except BrowserLost:
+                        if trial == 2:
+                            raise
+                        recover_browser()
+                    except Challenge:
+                        raise
+                    except Exception:
+                        if trial == 2:
+                            raise
+                        print(f'DOWNLOAD_RETRY row={number}', flush=True)
             except Challenge:
+                raise
+            except BrowserLost:
                 raise
             except Exception as exc:
                 row = {'row': number, 'status': 'error', 'error': safe_error(exc)}
@@ -300,6 +382,9 @@ def run():
     except Challenge as exc:
         print(f'STOPPED_CHALLENGE {exc}', flush=True)
         return 5
+    except BrowserLost as exc:
+        print(f'STOPPED_BROWSER {safe_error(exc)}', flush=True)
+        return 6
     finally:
         browser.close()
 
