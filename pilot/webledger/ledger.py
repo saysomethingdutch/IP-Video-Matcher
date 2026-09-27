@@ -17,7 +17,7 @@ import re
 import subprocess
 import tempfile
 
-from pilot.ezcun.fetch import entries, STATE as EZCUN_STATE
+from pilot.ezcun.fetch import entries, check_entries, STATE as EZCUN_STATE
 
 ROOT = Path(__file__).resolve().parents[2]
 STATE = ROOT / 'workspace/tsxk/webledger'
@@ -87,7 +87,9 @@ def extract_ocr(path, seconds):
                 raise RuntimeError(f'OCR returned {len(parsed)}/{len(group)} frames: {process.stderr[:500]}')
             for t, file in group:
                 records.append({'t': t, 'items': parsed[file.name]['items']})
-    cache.write_text(''.join(json.dumps(r, ensure_ascii=False) + '\n' for r in records))
+    temp_cache = cache.with_suffix('.jsonl.tmp')
+    temp_cache.write_text(''.join(json.dumps(r, ensure_ascii=False) + '\n' for r in records))
+    temp_cache.replace(cache)
     return records
 
 
@@ -177,11 +179,11 @@ def part_information(records, title):
 
 
 def resolve_row(recording, source_row=None):
-    if source_row is None and recording.stem.isdigit() and 7813 <= int(recording.stem) <= 8212:
+    if source_row is None and recording.stem.isdigit():
         source_row = int(recording.stem)
     if source_row is None:
         return None
-    return next(item for item in entries() if item['row'] == source_row)
+    return next((item for item in entries() + check_entries() if item['row'] == source_row), None)
 
 
 def format_finished(value):
@@ -198,12 +200,15 @@ def analyze(path, source_row=None):
     records = extract_ocr(path, seconds)
     title_candidates, url_candidates, view_candidates, dates, up_candidates = [], [], [], [], []
     page_times = []
-    tag_seen = desc_seen = False
+    title_observations = []
+    tag_seen = desc_seen = collection_seen = False
+    tag_text, desc_text, collections = [], [], []
     for frame in records:
         visible_titles = [s for s in positioned(frame, .07, .68, .14, .195)
                           if '公证云' not in s and '见证实录' not in s
                           and not DATE_PATTERN.search(s) and not s.startswith(('口', '0'))]
         title_candidates.extend(visible_titles)
+        title_observations.extend((frame['t'], value) for value in visible_titles)
         address = positioned(frame, .045, .8, .035, .085)
         for line in address:
             match = BV_PATTERN.search(line)
@@ -220,10 +225,21 @@ def analyze(path, source_row=None):
         lower = positioned(frame, .06, .7, .7, 1.0)
         if any('标签' in line or line.startswith('#') for line in lower):
             tag_seen = True
+            tag_text.extend(line for line in lower if line.startswith('#') or '标签' in line)
         if any('简介' in line or '展开更多' in line for line in lower):
             desc_seen = True
+            desc_text.extend(lower)
+        sidebar = positioned(frame, .68, .95, .18, .7)
+        if any('视频选集' in line or '合集' in line for line in sidebar):
+            collection_seen = True
+            collections.extend(line for line in sidebar if '视频选集' in line or '合集' in line)
     title, title_votes = winner(title_candidates)
     bv, bv_votes = winner(url_candidates)
+    span_basis = '地址栏 BV OCR'
+    if len(page_times) < 2 and title:
+        page_times = [t for t, value in title_observations
+                      if SequenceMatcher(None, re.sub(r'\s+', '', value), title).ratio() >= .7]
+        span_basis = '网页标题 OCR'
     url = f'https://www.bilibili.com/video/{bv}' if bv else '未显示'
     if source:
         input_title = str(source['input_title']).strip()
@@ -237,6 +253,8 @@ def analyze(path, source_row=None):
         flags.append('标题 OCR 证据不足')
     if not bv or bv_votes < 2:
         flags.append('地址栏 BV OCR 证据不足')
+    if len(page_times) < 2:
+        flags.append('播放区间起止画面证据不足')
     readouts = player_readouts(records)
     parts, selected_duration = part_information(records, title)
     page_span = max(page_times) - min(page_times) if len(page_times) >= 2 else None
@@ -246,8 +264,50 @@ def analyze(path, source_row=None):
         flags.append('录屏标题与原表 C 不同')
     if source and source['input_url'] and url != str(source['input_url']).strip():
         flags.append('录屏地址与原表 E 不同')
-    metadata_path = EZCUN_STATE / 'metadata' / f'{source_row or (source["row"] if source else "")}.json'
+    row_number = source_row or (source['row'] if source else '')
+    metadata_folder = 'metadata_check30' if source and source['row'] > 8212 else 'metadata'
+    metadata_path = EZCUN_STATE / metadata_folder / f'{row_number}.json'
     metadata = json.loads(metadata_path.read_text()) if source and metadata_path.exists() else {}
+    certificate_check = None
+    check_path = EZCUN_STATE / 'certificate_check5.json'
+    if source and check_path.exists():
+        certificate_check = next((item for item in json.loads(check_path.read_text())
+                                  if item['row'] == source['row']), None)
+    if certificate_check and certificate_check['difference_seconds']:
+        flags.append(f"证书取证结束时间与接口相差{certificate_check['difference_seconds']:+d}秒")
+    page_start = min(page_times) if page_times else None
+    page_end = max(page_times) if page_times else None
+    if page_end is not None and seconds - page_end <= 12:
+        page_end = seconds
+    total_from_readouts = Counter(x[2] for x in readouts).most_common(1)[0][0] if readouts else None
+    video_duration = total_from_readouts or selected_duration
+    structured = {
+        'row': str(source['row']) if source else path.stem,
+        'title': title or None, 'address': url if url != '未显示' else None,
+        'bv': bv or None,
+        'play_start': round(page_start, 2) if page_start is not None else None,
+        'play_end': round(page_end, 2) if page_end is not None else None,
+        'play_span_basis': span_basis if page_start is not None else None,
+        'anchors': [[round(t, 2), current] for t, current, total in readouts
+                    if video_duration is None or abs(total - video_duration) <= 2],
+        'duration': video_duration,
+        'duration_basis': '播放器读数' if total_from_readouts else '选集时长 OCR' if selected_duration else None,
+        'complete': {'是': True, '否': False}.get(r_value),
+        'tags': {'visible': tag_seen, 'items': list(dict.fromkeys(tag_text)), 'activity': None},
+        'intro': {'visible': desc_seen, 'text': '；'.join(dict.fromkeys(desc_text)) if desc_seen else ''},
+        'collection': {'visible': collection_seen, 'title': winner(collections)[0] or None,
+                       'parts': [{'title': name, 'duration': length} for name, length in parts]},
+        'comments': {'visible': False, 'traffic': []},
+        'finished_witness_time': format_finished(metadata.get('finishedWitnessTime')) or None,
+        'certificate_finished_time': format_finished(certificate_check['certificate_finished'])
+                                     if certificate_check else None,
+        'views_text': winner(view_candidates)[0] or None,
+        'published_at': winner(dates)[0] or None,
+        'uploader_text': winner(up_candidates)[0] or None,
+        'flags': flags,
+        'sources': {'recording': path.name, 'sampled_frames': len(records),
+                    'recording_seconds': round(seconds, 2)},
+    }
     return {
         'sample': path.name, 'row': source['row'] if source else '',
         'D': title, 'F': url, 'L': format_finished(metadata.get('finishedWitnessTime')),
@@ -262,7 +322,7 @@ def analyze(path, source_row=None):
         'description_visibility': '已见简介区' if desc_seen else '录屏未显示简介区',
         'flags': '；'.join(flags), 'sampled_frames': len(records),
         'recording_seconds': round(seconds, 2), 'title_votes': title_votes,
-        'bv_votes': bv_votes,
+        'bv_votes': bv_votes, '_structured': structured,
     }
 
 
@@ -270,17 +330,35 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('videos', nargs='*', type=Path)
     parser.add_argument('--examples', action='store_true')
+    parser.add_argument('--check30', action='store_true')
+    parser.add_argument('--all', action='store_true', help='Process every downloaded file in the selected set')
     parser.add_argument('--output', type=Path, default=STATE / 'sample_ledger.csv')
     args = parser.parse_args()
     videos = args.videos or ([EXAMPLES / f'{n}.mp4' for n in range(13, 18)] if args.examples else [])
+    if args.all:
+        dataset = check_entries() if args.check30 else entries()
+        base = Path('/Volumes/Element/ip-video-matcher-field-test/evidence_check30' if args.check30
+                    else '/Volumes/Element/ip-video-matcher-field-test/evidence')
+        videos = [base / f'{item["row"]}.mp4' for item in dataset]
     if not videos:
         parser.error('Pass videos or --examples')
     rows = []
     for path in videos:
+        if not path.is_file():
+            print(f'WEBLEDGER_MISSING {path.name}', flush=True)
+            continue
         row = analyze(path)
+        structured = row.pop('_structured')
+        output = STATE / ('samples' if args.examples or not path.stem.isdigit() or int(path.stem) < 7813 else '') / f'{path.stem}.json'
+        output.parent.mkdir(parents=True, exist_ok=True)
+        temp = output.with_suffix('.json.tmp')
+        temp.write_text(json.dumps(structured, ensure_ascii=False, indent=2), encoding='utf-8')
+        temp.replace(output)
         rows.append(row)
         print(f'WEBLEDGER {path.name} frames={row["sampled_frames"]} D={row["D"]!r} '
               f'F={row["F"]} R={row["R"]} flags={row["flags"]}', flush=True)
+    if not rows:
+        parser.error('No recordings were available')
     args.output.parent.mkdir(parents=True, exist_ok=True)
     with args.output.open('w', newline='') as handle:
         writer = csv.DictWriter(handle, fieldnames=list(rows[0]))
