@@ -76,6 +76,12 @@ python3 -m pilot export cases/<案件>.yaml               # 导出 Excel 副本�
 3. 用该客户的要求文件写规则文件，并请所有者确认口径。
 4. 找一批有人工结论的数据，做一次盲评检验（参照 WO-007），再全量跑。
 
+## 其他说明
+
+- `src/ipvm`、`tests/`、`benchmark/` 是早期"时间轴匹配"路线的代码，现有工具不依赖它们。早期实验目录和实验产物已删除（D-053）；要查看的话，git 历史里还有。
+- OCR 程序 `pilot/bin/ocr_vision` 不进 git。缺失时，台账会用 `swiftc` 从 `pilot/tools/ocr_vision.swift` 自动编译，需要装好 Xcode 命令行工具。
+- 迁移到别的电脑：见外置盘上的发布包 `IP-Video-Matcher-release-*/MIGRATION.md`。
+
 ## 已知局限
 
 - 每遇到一种新的证据形式，都会冒出新问题。例如竖屏播放、分P写法、原表录像名写错、不出镜只出声的 reaction。

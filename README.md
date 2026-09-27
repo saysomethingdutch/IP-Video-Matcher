@@ -1,5 +1,9 @@
 # IP Video Matcher
 
+> **2026-09-27 起，当前可用的工具是 `pilot/`（比对表机器填写 + 比对意见起草 + 本地核对页）。**
+> 接手请先读 [`AGENTS.md`](AGENTS.md)；运行步骤见 [`pilot/README.md`](pilot/README.md)；决策记录见 [`docs/workorders/DECISIONS.md`](docs/workorders/DECISIONS.md)。
+> 下面是早期"视频时间轴匹配"路线（`src/ipvm`）的历史说明；该路线的实验目录已按所有者授权删除（D-053）。
+
 给知识产权律师使用的本地视频时间轴匹配工具。当前状态：
 
 ```text
