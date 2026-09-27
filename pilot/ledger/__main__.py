@@ -12,6 +12,7 @@ from .pipeline import (assign_screenshots, build_rows, build_sessions, compile_o
                        quality_audit, resolve_nearby_identity_readings,
                        resolve_truncated_readings, screenshot_ocr, video_duration)
 from .report import write_outputs, write_r2_changes
+from .residuals import apply_qsjx_e18_r3
 from .workbook import read_configured, read_qsjx, read_zhuyu
 
 
@@ -83,6 +84,8 @@ def run_case(config_path, only_videos=None):
         linked, unmatched = match_sessions(sessions, rows, cross_video=bool(config.get("workbook_spec")))
         ledger = build_rows(rows, linked, output, video_paths, fps=fps, video_obs=obs_by_video)
         link_without_readings(ledger, mapped, obs_by_video, output, video_paths)
+        if case_id == "qsjx_e18" and not only_videos:
+            apply_qsjx_e18_r3(ledger, obs_by_video, video_paths, output)
         audit = quality_audit(ledger, obs_by_video)
         summary = write_outputs(output, ledger, unmatched, names, durations,
                                 time.monotonic() - started, frame_count, case_id, fps, audit,
