@@ -31,7 +31,7 @@
 2. **先只抓元数据**，400 行全部抓，写 `manifest.csv`：
    - 行号、evidenceId、文件大小、时长、`startWitnessTime`、`finishedWitnessTime`、链接过期时间；
    - 报告总大小。
-3. **所有者同意后再下载**（D-056 待确认）：
+3. **下载已获所有者同意**（D-057）。元数据抓完后接着做：
    - 先试下 5 个，核对大小和 md5：`originalMd5`、`encryptedMd5` 各对一下，写明哪个对得上；
    - 5 个都对了，再下全部。
    - 下载目标：外置盘 `/Volumes/Element/ip-video-matcher-field-test/evidence/<序号>.mp4`。
