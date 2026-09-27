@@ -7,7 +7,7 @@ import time
 from pathlib import Path
 
 from .fields import load_rules
-from .pipeline import consistency, presume_skipped_reactions, run
+from .pipeline import consistency, mark_stale_opinions, presume_skipped_reactions, run
 from .report import summary, write_consistency, write_pages, write_rows
 from .table import load_table
 
@@ -68,6 +68,7 @@ def main(argv=None) -> None:
     results = run(a.case_dir, a.vlm, table, rules, a.backend, only, reuse_dir=out if a.reuse else None, save_dir=out,
                   workers=workers, visual_files=a.visual, fields_only=a.fields_only)
     presume_skipped_reactions(results, rules)          # WO-004b-R3: batch-level, before the consistency check
+    mark_stale_opinions(results)
     warnings = consistency(results)
     write_rows(results, out, table)
     write_consistency(warnings, out)

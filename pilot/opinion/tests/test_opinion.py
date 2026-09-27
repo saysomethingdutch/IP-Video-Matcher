@@ -146,6 +146,9 @@ class RouteTest(unittest.TestCase):
         self.assertEqual(PL.route(row(red=True)), "skip")
         self.assertEqual(PL.route(row(ag="否")), "slash")
         self.assertEqual(PL.route(row(ag="不确定", nature="不确定")), "draft")
+        stale = row()
+        stale["flags"] = [{"level": "red", "reason": "意见：疑似故意跳播：不起草；候选文字取自客户要求原文，请所有者决定"}]
+        self.assertEqual(PL.route(stale), "draft")               # the opinion's own old flag does not count
         op = PL.opinion_for(row(red=True), None, {}, "", "deepseek", None)
         self.assertEqual((op["text"], op["flags"][0]["level"]), (PL.SKIP_PLACEHOLDER, "red"))
         self.assertIn("故意跳播", op["candidate"])

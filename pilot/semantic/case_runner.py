@@ -6,13 +6,15 @@ import time
 
 from . import llm
 from .fields import load_rules
-from .pipeline import consistency, presume_skipped_reactions, run
+from .pipeline import consistency, mark_stale_opinions, presume_skipped_reactions, run
 from .report import summary, write_consistency, write_pages, write_rows
 from .table import load_table
 
 
-def run_case(config, rows: list[str], force: bool = False, fields_only: bool = False) -> dict:
-    """fields_only: keep every saved classification even when its facts changed (no model call, WO-004b-R3)."""
+def run_case(config, rows: list[str], force: bool = False, fields_only: bool = False, reuse_from=None) -> dict:
+    """fields_only: keep every saved classification even when its facts changed (no model call, WO-004b-R3).
+    reuse_from: compare facts against the digests of this folder instead of semantic/ (R4: the pilot's kept
+    classifications were made from the snapshot's digests)."""
     workbook = config.raw["workbook"]
     style_rows = {int(rid) for values in config.raw["client"]["style_examples"].get("table_rows", {}).values()
                   for rid in values}
@@ -27,7 +29,7 @@ def run_case(config, rows: list[str], force: bool = False, fields_only: bool = F
     out = config.case_dir / "semantic"
     started = time.monotonic()
     new = run(config.case_dir, config.vlm_dir, table, rules, backend, set(rows),
-              reuse_dir=None if force else out, save_dir=out, workers=4 if backend != "local" else 1,
+              reuse_dir=None if force else (reuse_from or out), save_dir=out, workers=4 if backend != "local" else 1,
               visual_files=visual, fields_only=fields_only)
     existing = {p.stem: json.loads(p.read_text(encoding="utf-8")) for p in out.glob("*.json")
                 if p.stem in config.row_ids}
@@ -37,6 +39,7 @@ def run_case(config, rows: list[str], force: bool = False, fields_only: bool = F
     for item in all_rows:
         item["flags"] = [f for f in item.get("flags", []) if not f.get("reason", "").startswith("一致性：")]
     presume_skipped_reactions(all_rows, rules)          # WO-004b-R3: needs the uploader's other rows
+    mark_stale_opinions(all_rows)                        # R4: only after the batch decisions
     warnings = consistency(all_rows)
     write_rows(all_rows, out, table)
     write_consistency(warnings, out)

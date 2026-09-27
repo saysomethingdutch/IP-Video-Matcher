@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from pilot.textindex.text import normalize
 
-from .audio import describe as describe_audio
+from .audio import describe as describe_audio, reliable as reliable_audio
 from .llm import ask
 
 NATURES = ["观点评析", "混剪", "夹叙夹议解说", "剧情解说", "reaction", "原片搬运", "其他", "不确定"]
@@ -20,7 +20,7 @@ FORBIDDEN = ("合理使用", "辩护", "被告", "本案")   # never in a prompt
 
 DEFINITIONS = """性质定义（只能选一个）：
 - reaction：UP主观看原剧并实时反应、点评，通常能看到UP主本人或听到其实时评论；没有出镜、但有持续的UP主口播点评，也可以是 reaction。
-- 混剪：剪辑原剧片段，配音乐、字幕或特效来表达某个主题（人物向、CP向、恶搞向），基本没有讲解；疑似UP主配乐是再创作的证据之一。
+- 混剪：剪辑原剧片段，配音乐、字幕或特效来表达某个主题（人物向、CP向、恶搞向），基本没有讲解；【声音】里"疑似UP主配乐：是"是再创作的证据之一（原剧自带的配乐不算）。
 - 剧情解说：主要是复述、讲解剧情，几乎没有个人观点。
 - 夹叙夹议解说：叙述剧情和个人观点、评论大约各占一半。
 - 观点评析：以UP主的观点、分析、评论为主，剧情只是素材（子类：深度解读、拉片解读、细节分析、人物小传、服化道盘点、文化科普、恶搞讽刺）。
@@ -55,7 +55,7 @@ def facts_text(d: dict, vision_note: str = "", with_image: bool = False) -> str:
         parts.append(f"【外文字幕】{extra['foreign_captions']} 条（原剧的外语配音版字幕）")
     if extra.get("foreign_speech_segments"):
         parts.append(f"【外语语音】{extra['foreign_speech_segments']} 段（语言：{extra['foreign_speech_language']}，未转成文字）")
-    if d.get("audio"):                                # only with WO-008 sound facts, so older digests read the same
+    if reliable_audio(d.get("audio")):                # only corroborated sound facts (R4); otherwise the prompt reads as before
         parts.append(f"【声音】{describe_audio(d['audio'])}")
     if d["music"]["value"]:
         parts.append(f"【背景音乐】{'、'.join(d['music']['value'])}")

@@ -68,11 +68,14 @@ class CarryTest(unittest.TestCase):
         prev = {"opinion": {"text": "意见"}, "classification": {"nature": "不确定"},
                 "fields": {"AF": {"value": "意见"}, **{c: {"value": "不确定"} for c in ("AG", "AH", "AI", "AJ")}},
                 "flags": [{"level": "yellow", "reason": "意见：外语转写，请核对大意"}]}
-        new = {"classification": {"nature": "夹叙夹议解说"}, "flags": [],
+        new = {"row_id": "1", "classification": {"nature": "夹叙夹议解说"}, "flags": [],
                "fields": {"AF": {"value": ""}, **{c: {"value": "是"} for c in ("AG", "AH", "AI", "AJ")}}}
         carry_opinion(new, prev)
         self.assertEqual(new["fields"]["AF"]["value"], "意见")
+        from pilot.semantic.pipeline import mark_stale_opinions
+        self.assertEqual(mark_stale_opinions([new]), ["1"])
         self.assertEqual([f["reason"][:12] for f in new["flags"]], ["意见：外语转写，请核对大意"[:12], "意见：分类已变（不确定 → 夹叙"[:12]])
+        self.assertNotIn("_prev_state", new)
 
 
 class AudioTest(unittest.TestCase):
@@ -91,7 +94,7 @@ class AudioTest(unittest.TestCase):
             "events": {"speech_ratio": 0.62, "bgm": 0.3}, "uploader_music": False})
         self.assertEqual([s["text"] for s in a["up_speech"]], ["这个剧情我真的笑死", "他俩太好嗑了"])
         self.assertEqual((a["speech_ratio"], a["bgm_ratio"], a["uploader_music"]), (0.62, 0.3, False))
-        self.assertIn("说话约占 62%", describe(a))
+        self.assertEqual(describe(a), "UP主口播 2 句（已并入【UP主文字】）；疑似UP主配乐：否")    # no raw shares (R4)
         self.assertIsNone(load_audio(Path(tempfile.gettempdir()), "no-such-row"))
 
     def test_uploader_speech_joins_the_uploader_text(self):
@@ -153,9 +156,12 @@ class PolicyTest(unittest.TestCase):
 
     def test_no_sound_file_leaves_the_prompt_unchanged(self):
         self.assertNotIn("【声音】", facts_text(digest()))
-        audio = {"up_speech": [{"t": 1, "text": "x"}], "speech_ratio": 0.6, "bgm_ratio": 0.2, "laughter_ratio": 0.0,
-                 "uploader_music": None, "source": "audio/1.json"}
-        self.assertIn("【声音】说话约占 60%", facts_text(digest(audio=audio)))
+        audio = {"up_speech": [{"t": 1, "text": "x"}], "speech_ratio": 0.6, "bgm_ratio": 0.9, "laughter_ratio": 0.0,
+                 "uploader_music": None, "music_label": "无旁证", "source": "audio/1.json"}
+        self.assertIn("【声音】UP主口播 1 句（已并入【UP主文字】）；疑似UP主配乐：无旁证", facts_text(digest(audio=audio)))
+        self.assertNotIn("BGM", facts_text(digest(audio=audio)))                       # raw BGM share never reaches the model
+        bgm_only = {**audio, "up_speech": []}                                          # nothing corroborated: no 【声音】
+        self.assertEqual(facts_text(digest(audio=bgm_only)), facts_text(digest()))
 
 
 if __name__ == "__main__":
