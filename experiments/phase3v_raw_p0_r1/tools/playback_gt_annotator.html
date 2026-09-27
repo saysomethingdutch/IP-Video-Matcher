@@ -1,0 +1,135 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Human playback GT annotator</title>
+<style>
+*{box-sizing:border-box}body{margin:0;background:#15181c;color:#e9edf2;font:15px system-ui,sans-serif}header{padding:14px 20px;border-bottom:1px solid #444;display:flex;gap:20px;align-items:center;flex-wrap:wrap}h1{font-size:20px;margin:0}h2{font-size:17px}button,input,select,textarea{font:inherit;color:inherit;background:#282e36;border:1px solid #657080;border-radius:4px;padding:8px}button{cursor:pointer}button:disabled{opacity:.4;cursor:default}button:hover:enabled{background:#3b4655}button.primary{background:#235784}main{display:grid;grid-template-columns:230px minmax(420px,1fr) 340px;gap:16px;padding:16px}aside,section{min-width:0}.capture{display:block;width:100%;text-align:left;margin-bottom:9px;line-height:1.7}.capture.active,.unit.active{border:2px solid #77b9ef}.small{font-size:12px;color:#b9c3cf}.status{font-size:12px}.row{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin:10px 0}video{width:100%;max-height:62vh;background:black}#clock{font:24px ui-monospace,monospace;margin:12px 0}#pending{padding:12px;background:#343329;border:1px solid #ad965e;min-height:46px}#message{min-height:25px;color:#ffca82}#saveState{margin-left:auto}#units{max-height:40vh;overflow:auto}.unit{display:block;width:100%;text-align:left;margin-bottom:6px;font-size:13px}.boundary{width:130px}textarea{width:100%;height:65px}fieldset{border:1px solid #475361;margin:12px 0;padding:10px}label{display:block;margin:8px 0}details{margin-top:18px;line-height:1.5}summary{cursor:pointer}progress{width:100%}#frozen{background:#224d3a;padding:12px;margin-bottom:12px;overflow-wrap:anywhere}#editor[hidden],#frozen[hidden]{display:none}.nudge{padding:5px;font-size:12px}@media(max-width:1100px){main{grid-template-columns:200px 1fr}#right{grid-column:2}}@media(max-width:700px){main{display:block}aside{margin-bottom:15px}}
+</style></head>
+<body>
+<header><h1>Human playback GT</h1><span id="version"></span><span id="saveState" role="status">Connecting…</span></header>
+<main>
+<aside><h2>Complete captures</h2><div id="captures"></div><button id="finalize" class="primary">FINALIZE &amp; FREEZE</button><p class="small">Available after all five captures are explicitly COMPLETE. Finalization locks annotations.</p><button id="newVersion" hidden>CREATE NEW VERSION</button></aside>
+<section>
+<div id="frozen" hidden></div><h2 id="assetTitle"></h2>
+<video id="video" controls preload="metadata" playsinline></video>
+<div id="clock">00:00:00.000 / 00:00:00.000</div>
+<progress id="progress" max="100" value="0"></progress>
+<div class="row"><button id="play">Play / pause</button><button id="back">−5 s</button><button id="forward">+5 s</button><label>Speed <select id="speed"><option value="0.5">0.5×</option><option value="1" selected>1×</option><option value="2">2×</option><option value="4">4×</option><option value="8">8×</option></select></label><span id="speedText">1×</span></div>
+<div id="pending" role="status">No open interval</div>
+<div class="row"><button id="start" class="primary">S · START</button><button id="end" class="primary">E · END</button><button id="cancel">Cancel START</button><button id="undo">Undo</button></div>
+<div class="row"><label>Next interval layout <select id="defaultLayout"><option>DOMINANT_VIDEO</option><option>REACTION_PIP</option><option>OTHER</option></select></label><label>Confidence <select id="defaultConfidence"><option>HIGH</option><option>MEDIUM</option><option>LOW</option></select></label></div>
+<div class="row"><button id="complete">MARK CAPTURE COMPLETE</button><button id="reopen" hidden>Reopen capture</button></div>
+<div id="message" role="alert"></div>
+<p class="small">Space: play/pause · [ / ]: ±5 s · Shift+[ / Shift+]: ±30 s · S/E: start/end · 1/2/3: layout (selected interval, otherwise next interval) · Ctrl/Cmd+Z: undo. Shortcuts are inactive while typing in fields.</p>
+<details><summary>What to label · read before review</summary>
+<p><b>PLAYBACK_CONTENT:</b> actual video/programme/content is being presented in a player.</p>
+<p>Do not mark search pages, comments, feeds, menus, profile pages, static navigation, or loading/non-playing pages.</p>
+<p>Do not split for subtitle changes, programme cuts, brief player controls, very brief buffering, or ordinary seeking while staying in the same player/content context.</p>
+<p>Split when leaving the player, entering a clear non-playback section, opening another distinct video, or changing playback context materially.</p>
+<p>Seeking inside the same player may remain within one unit. This is capture-side playback presence; do not reconstruct source-video continuity or record source identities.</p>
+<p><b>DOMINANT_VIDEO:</b> programme occupies the dominant region. <b>REACTION_PIP:</b> a person or major overlay shares substantial screen area. <b>OTHER:</b> another playback layout.</p>
+<p>Watch the complete capture. The progress bar is your saved cursor, not proof of continuous viewing. Completion is your explicit attestation. Use 8× to discover, then pause and refine boundaries at 1×.</p>
+<p>Boundaries are saved as seconds on the browser media timeline. Intrinsic PTS is left null until a verified mapping is supplied. Unmarked gaps are not automatically labeled.</p>
+</details>
+</section>
+<aside id="right"><h2>Playback intervals <span id="count"></span></h2><button id="deselect">Deselect interval</button><div id="units"></div>
+<fieldset id="editor" hidden><legend id="unitTitle">Selected interval</legend>
+<label>Start (seconds) <input id="editStart" class="boundary" type="number" min="0" step="0.1"></label><div class="row" id="startNudges"></div>
+<label>End (seconds) <input id="editEnd" class="boundary" type="number" min="0" step="0.1"></label><div class="row" id="endNudges"></div>
+<label>Layout <select id="editLayout"><option>DOMINANT_VIDEO</option><option>REACTION_PIP</option><option>OTHER</option></select></label>
+<label>Confidence <select id="editConfidence"><option>HIGH</option><option>MEDIUM</option><option>LOW</option></select></label>
+<label>Notes (optional)<textarea id="editNotes"></textarea></label><button id="delete">Delete interval</button><p class="small">Changes autosave. Invalid or overlapping boundaries are rejected. Undo restores the last annotation edit.</p>
+</fieldset></aside>
+</main>
+<script>
+'use strict';
+const $=id=>document.getElementById(id), video=$('video');
+let state, asset, selected=null, chain=Promise.resolve(), requests=0, failed=false, loading=true, editorSignature='', lastPositionSave=0, noteTimer;
+const capture=()=>state.captures.find(c=>c.opaque_asset_id===asset);
+const locked=()=>state.finalized||state.finalizing;
+const editable=()=>!locked()&&capture().review_status!=='COMPLETE';
+const now=()=>Math.min(capture().duration_seconds,Math.max(0,video.currentTime||0));
+function fmt(n){let ms=Math.round(n*1000),h=Math.floor(ms/3600000),m=Math.floor(ms/60000)%60,s=Math.floor(ms/1000)%60;return `${String(h).padStart(2,'0')}:${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}.${String(ms%1000).padStart(3,'0')}`;}
+function message(text){$('message').textContent=text;}
+function saveIndicator(){ $('saveState').textContent=failed?'NOT SAVED · reload to reconnect':requests?'Saving…':locked()?'READ-ONLY FINALIZED':'Saved locally'; }
+function enqueue(path,payload){
+ if(failed)return Promise.reject(new Error('Save failed. Reload to reconnect before editing.'));
+ requests++;saveIndicator();
+ const job=chain.then(async()=>{
+  const response=await fetch(path,{method:'POST',headers:{'Content-Type':'application/json','X-Annotator-Token':state.token},body:JSON.stringify({...payload,revision:state.revision}),keepalive:true});
+  const result=await response.json();
+  if(!response.ok){ if(response.status>=500||result.error.includes('another tab')||result.error.includes('Session changed'))failed=true;throw new Error(result.error); }
+  state=result;message('');render();return result;
+ }).catch(error=>{if(error instanceof TypeError)failed=true;message(error.message);if(failed)video.pause();throw error;}).finally(()=>{requests--;saveIndicator();});
+ chain=job.catch(()=>{});return job;
+}
+function action(kind,extra={}){return enqueue('/api/update',{asset,action:kind,...extra});}
+function invoke(promise){promise.catch(()=>{});}
+function render(){
+ $('version').textContent=`Version ${state.version}`;
+ $('captures').replaceChildren();
+ for(const c of state.captures){const b=document.createElement('button');b.className='capture'+(c.opaque_asset_id===asset?' active':'');
+ const name=document.createElement('strong');name.textContent=c.opaque_asset_id;
+ const info=document.createElement('div');info.className='small';info.textContent=`${c.review_status} · ${c.intervals.length} intervals`;
+ const pos=document.createElement('div');pos.className='small';pos.textContent=`${fmt(c.last_review_position_seconds)} / ${fmt(c.duration_seconds)} · ${(100*c.last_review_position_seconds/c.duration_seconds).toFixed(1)}%`;
+ b.append(name,info,pos);b.onclick=()=>invoke(switchAsset(c.opaque_asset_id));$('captures').append(b);}
+ const c=capture();$('assetTitle').textContent=asset;$('count').textContent=`(${c.intervals.length})`;
+ $('pending').textContent=c.pending_start_seconds===null?'No open interval':`OPEN START · ${fmt(c.pending_start_seconds)} — press E to finish`;
+ $('start').disabled=!editable()||c.pending_start_seconds!==null;
+ $('end').disabled=!editable()||c.pending_start_seconds===null;
+ $('cancel').disabled=!editable()||c.pending_start_seconds===null;
+ $('undo').disabled=!editable()||!c.undo_count;
+ $('complete').disabled=!editable()||c.pending_start_seconds!==null;
+ $('reopen').hidden=c.review_status!=='COMPLETE'||locked();
+ $('finalize').disabled=locked()||state.captures.some(x=>x.review_status!=='COMPLETE'||x.pending_start_seconds!==null);
+ $('newVersion').hidden=!state.finalized;
+ $('frozen').hidden=!locked();$('frozen').textContent=state.finalized?`READ-ONLY FINALIZED · PLAYBACK_GT_FREEZE_SHA256: ${state.freeze.PLAYBACK_GT_FREEZE_SHA256}`:'Finalization pending. Restart the server to recover the saved transaction.';
+ $('units').replaceChildren();
+ for(const u of c.intervals){const b=document.createElement('button');b.className='unit'+(selected===u.gt_unit_id?' active':'');b.textContent=`${u.gt_unit_id}\n${fmt(u.start_seconds)} → ${fmt(u.end_seconds)} · ${u.layout} · ${u.confidence}`;b.onclick=()=>{flushNotes();selected=u.gt_unit_id;editorSignature='';video.currentTime=u.start_seconds;render();};$('units').append(b);}
+ const u=c.intervals.find(x=>x.gt_unit_id===selected);$('editor').hidden=!u;
+ if(u){const signature=JSON.stringify(u);if(signature!==editorSignature){$('unitTitle').textContent=u.gt_unit_id;$('editStart').value=u.start_seconds;$('editEnd').value=u.end_seconds;$('editLayout').value=u.layout;$('editConfidence').value=u.confidence;$('editNotes').value=u.notes;editorSignature=signature;}
+ for(const el of $('editor').querySelectorAll('input,select,textarea,button'))el.disabled=!editable();}
+ updateClock();saveIndicator();
+}
+function updateClock(){if(!state)return;$('clock').textContent=`${fmt(now())} / ${fmt(capture().duration_seconds)}`;$('progress').value=100*now()/capture().duration_seconds;}
+async function savePosition(began=false){if(!state||locked()||loading||failed)return;const seconds=now();if(Math.abs(seconds-capture().last_review_position_seconds)<.005&&!began)return;await action('position',{seconds,began_review:began});}
+async function switchAsset(id){if(id===asset)return;flushNotes();video.pause();await savePosition();await chain;asset=id;selected=null;editorSignature='';loadVideo();render();}
+function loadVideo(){loading=true;video.src=`/media/${asset}`;video.load();}
+video.addEventListener('loadedmetadata',()=>{video.currentTime=Math.min(capture().last_review_position_seconds,video.duration);video.playbackRate=Number($('speed').value);loading=false;updateClock();if(Math.abs(video.duration-capture().duration_seconds)>.5)message('Browser and manifest duration differ. Verify the bundle metadata before completion.');});
+video.addEventListener('error',()=>message('Video could not be played. Check that the opaque capture is available and its codec is supported by this browser.'));
+video.addEventListener('timeupdate',()=>{updateClock();if(Date.now()-lastPositionSave>2000){lastPositionSave=Date.now();invoke(savePosition());}});
+video.addEventListener('pause',()=>invoke(savePosition()));
+video.addEventListener('seeked',()=>invoke(savePosition()));
+video.addEventListener('play',()=>invoke(savePosition(true)));
+video.addEventListener('ended',()=>{invoke(savePosition());message('End reached. Review completion must still be marked explicitly.');});
+function togglePlay(){if(video.paused)invoke(video.play());else video.pause();}
+function seek(delta){video.currentTime=Math.max(0,Math.min(capture().duration_seconds,now()+delta));}
+$('play').onclick=togglePlay;$('back').onclick=()=>seek(-5);$('forward').onclick=()=>seek(5);
+$('speed').onchange=()=>{video.playbackRate=Number($('speed').value);$('speedText').textContent=$('speed').value+'×';};
+$('start').onclick=()=>invoke(action('start',{seconds:now()}));
+$('end').onclick=()=>{const aid=asset;invoke(action('end',{seconds:now(),layout:$('defaultLayout').value,confidence:$('defaultConfidence').value}).then(()=>{if(asset===aid){selected=`${aid}-GT-${String(capture().next_unit_number-1).padStart(3,'0')}`;editorSignature='';render();}}));};
+$('cancel').onclick=()=>invoke(action('cancel'));
+$('undo').onclick=()=>{flushNotes();invoke(action('undo').then(()=>{editorSignature='';render();}));};
+$('reopen').onclick=()=>invoke(action('reopen'));
+$('complete').onclick=()=>{video.pause();flushNotes();const early=now()<capture().duration_seconds-Math.min(10,capture().duration_seconds*.01);if(!confirm((early?'WARNING: the current review position is not near EOF.\n\n':'')+'Confirm that you have reviewed this COMPLETE capture and finished its annotations.'))return;invoke(action('complete',{seconds:now(),confirm_early:early}));};
+$('finalize').onclick=()=>{video.pause();flushNotes();if(confirm('Freeze all five completed captures and export JSON, CSV, manifest, and summary? The finalized version will become read-only.'))invoke(enqueue('/api/finalize',{}));};
+$('newVersion').onclick=()=>{if(confirm('Archive the frozen files unchanged and create a new editable version? All five completion markers will need to be confirmed again.'))invoke(enqueue('/api/new-version',{confirmation:'CREATE NEW VERSION'}));};
+$('deselect').onclick=()=>{flushNotes();selected=null;render();};
+function edit(values){if(!selected)return;return action('edit',{unit:selected,...values});}
+for(const [id,key] of [['editStart','start_seconds'],['editEnd','end_seconds'],['editLayout','layout'],['editConfidence','confidence']])$(id).onchange=()=>{const value=key.endsWith('seconds')?Number($(id).value):$(id).value;invoke(edit({[key]:value}).catch(e=>{editorSignature='';render();throw e;}));};
+let notesPayload=null;
+function flushNotes(){clearTimeout(noteTimer);if(notesPayload){const payload=notesPayload;notesPayload=null;invoke(enqueue('/api/update',payload));}}
+$('editNotes').oninput=()=>{notesPayload={asset,action:'edit',unit:selected,notes:$('editNotes').value};$('saveState').textContent='Unsaved notes…';clearTimeout(noteTimer);noteTimer=setTimeout(flushNotes,400);};
+$('editNotes').onblur=flushNotes;
+for(const [id,key] of [['startNudges','start_seconds'],['endNudges','end_seconds']])for(const delta of [-1,-.1,.1,1]){const b=document.createElement('button');b.className='nudge';b.textContent=`${delta>0?'+':''}${delta.toFixed(1)} s`;b.onclick=()=>{const u=capture().intervals.find(x=>x.gt_unit_id===selected);invoke(edit({[key]:Math.round((u[key]+delta)*1e6)/1e6}));};$(id).append(b);}
+$('delete').onclick=()=>{flushNotes();if(confirm('Delete this interval? You can undo this edit.'))invoke(action('delete',{unit:selected}).then(()=>{selected=null;render();}));};
+document.addEventListener('keydown',event=>{if(event.repeat||event.altKey||['INPUT','TEXTAREA','SELECT'].includes(event.target.tagName))return;
+ const key=event.key.toLowerCase();if((event.ctrlKey||event.metaKey)&&key==='z'){event.preventDefault();$('undo').click();return;}if(event.ctrlKey||event.metaKey)return;
+ if(event.code==='Space'){event.preventDefault();togglePlay();}
+ else if(event.code==='BracketLeft'||event.code==='BracketRight'){event.preventDefault();seek((event.code==='BracketLeft'?-1:1)*(event.shiftKey?30:5));}
+ else if(key==='s'||key==='e'){event.preventDefault();$(key==='s'?'start':'end').click();}
+ else if(['1','2','3'].includes(key)){event.preventDefault();const layout=['DOMINANT_VIDEO','REACTION_PIP','OTHER'][Number(key)-1];if(selected&&editable())invoke(edit({layout}));else $('defaultLayout').value=layout;}
+});
+document.addEventListener('visibilitychange',()=>{if(document.hidden){flushNotes();invoke(savePosition());}});
+window.addEventListener('beforeunload',event=>{flushNotes();invoke(savePosition());if(requests||notesPayload||failed){event.preventDefault();event.returnValue='';}});
+fetch('/api/state').then(r=>r.json()).then(data=>{state=data;asset=state.captures.find(c=>c.review_status!=='COMPLETE')?.opaque_asset_id||state.captures[0].opaque_asset_id;render();loadVideo();}).catch(()=>message('Cannot connect to local annotator. Reload after starting the server.'));
+</script></body></html>
