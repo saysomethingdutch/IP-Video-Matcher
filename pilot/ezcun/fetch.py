@@ -181,7 +181,7 @@ class Browser:
                 self._check_challenge()
             self._check_challenge()
             if not responses:
-                raise RuntimeError('Share page generated no preview response')
+                raise Challenge('Share page generated no preview response; stopping for inspection')
             response = responses[-1]
             if response.status == 418:
                 raise Challenge('CloudWAF 418; stopping')
@@ -220,6 +220,9 @@ class Browser:
         if any(word in body.lower() for word in ('验证码', '人机验证', '访问被拦截',
                                                '安全验证', 'captcha', 'verify you are human')):
             raise Challenge('Verification or block page detected; stopping')
+        if any(any(word in (frame.url or '').lower() for word in ('captcha', 'verify', 'challenge'))
+               for frame in self.page.frames[1:]):
+            raise Challenge('Verification frame detected; stopping')
 
     def download(self, signed_url, destination, expected_size):
         if shutil.disk_usage(TARGET.parent).free - expected_size < MIN_FREE:
