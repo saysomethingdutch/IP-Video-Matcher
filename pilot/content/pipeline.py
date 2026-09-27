@@ -131,6 +131,7 @@ def process_row(row: dict, frames: dict[int, list[dict]], index: Index, episodes
 
     found = ev.evidenced_episodes(links)
     result = ev.verdict(found, claim)
+    result, gap = ev.conservative(result, found, links, claim, episodes.missing)     # WO-004b-R3
     evidence = [{"rec_start": x["rec_start"], "rec_end": x["rec_end"], "content_start": x["content_start"],
                  "episode": x["episode"], "t_source": x["t_source"], "text": x["text"],
                  "source_text": x["source_text"], "sim": x["sim"], "conf": x["conf"],
@@ -144,10 +145,11 @@ def process_row(row: dict, frames: dict[int, list[dict]], index: Index, episodes
               "player_frames": len(rf.player)}
     weak = ev.weak_leads(links, found)
     text = ev.statement(found, claim_raw, claim, result, weak,
-                        ev.unverified_reason(out_events, claim, episodes.missing) if result == ev.UNVERIFIED else "")
+                        ev.unverified_reason(out_events, claim, episodes.missing) if result == ev.UNVERIFIED else "", gap)
     if result == ev.UNVERIFIED and title_ep:
         text += "参考：" + titles.describe(title_ep, claim_raw)
     return {**base, "verdict": result, "statement": text, "evidenced_episodes": found, "weak_episodes": weak,
+            "claim_missing": gap,
             "title_episode": title_ep, "evidence": evidence, "events": out_events, "counts": counts,
             "dropped": dict(rf.dropped)}
 

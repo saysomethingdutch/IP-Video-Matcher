@@ -50,7 +50,8 @@ def usd(usage: dict, when: datetime) -> float:
 def route(r: dict) -> str:
     if r["classification"] is None:
         return "repeat"
-    if any(f["level"] == "red" and "疑似故意跳播" in f["reason"] for f in r["flags"]):
+    if any(f["level"] == "red" and "疑似故意跳播" in f["reason"] and not f["reason"].startswith(TAG) for f in r["flags"]):
+        # only the classification's candidate counts; the opinion's own earlier placeholder flag must not keep itself alive
         return "skip"
     if r["fields"]["AG"]["value"] == "否":
         return "slash"

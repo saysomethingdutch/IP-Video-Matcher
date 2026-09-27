@@ -44,6 +44,11 @@ class ProportionTest(unittest.TestCase):
         self.assertIn("原告主张，未核实，不算百分比", reasons)
         self.assertIn("第4集本地缺片", reasons)
 
+    def test_weak_evidence_against_a_missing_claim_is_not_used(self):
+        d = digest(evidence=[3], claim="2")
+        d["episodes"]["verdict"] = "MISSING_UNVERIFIED"
+        self.assertTrue(proportion(d, EPS)["text"].startswith("对应剧集为原告主张的第2集"))
+
     def test_unknown_duration(self):
         p = proportion(digest(evidence=[2], video="未知"), EPS)
         self.assertEqual(p["text"], "对应剧集为第2集，约长41分钟，占原作品比例较少，足以构成适当引用。")
@@ -141,6 +146,9 @@ class RouteTest(unittest.TestCase):
         self.assertEqual(PL.route(row(red=True)), "skip")
         self.assertEqual(PL.route(row(ag="否")), "slash")
         self.assertEqual(PL.route(row(ag="不确定", nature="不确定")), "draft")
+        stale = row()
+        stale["flags"] = [{"level": "red", "reason": "意见：疑似故意跳播：不起草；候选文字取自客户要求原文，请所有者决定"}]
+        self.assertEqual(PL.route(stale), "draft")               # the opinion's own old flag does not count
         op = PL.opinion_for(row(red=True), None, {}, "", "deepseek", None)
         self.assertEqual((op["text"], op["flags"][0]["level"]), (PL.SKIP_PLACEHOLDER, "red"))
         self.assertIn("故意跳播", op["candidate"])

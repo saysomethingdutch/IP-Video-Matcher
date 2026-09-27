@@ -51,16 +51,25 @@ def load_audio(case_dir: Path, rid: str) -> dict | None:
     events = raw.get("events") or {}
     music = raw.get("uploader_music")
     suspected = music.get("suspected") if isinstance(music, dict) else music if isinstance(music, bool) else None
+    label = {True: "是", False: "否"}.get(suspected, "无旁证")   # D-043: only corroborated music counts (R4)
     return {"up_speech": speech, "speech_ratio": _ratio(events, "speech", "speech_ratio"),
             "bgm_ratio": _ratio(events, "bgm", "bgm_ratio"), "laughter_ratio": _ratio(events, "laughter", "laughter_ratio"),
-            "uploader_music": suspected, "music_basis": music.get("basis", "") if isinstance(music, dict) else "",
+            "uploader_music": suspected, "music_label": label,
+            "music_basis": music.get("basis", "") if isinstance(music, dict) else "",
             "engine": raw.get("engine"), "played_seconds": raw.get("played_seconds"),
             "source": f"audio/{rid}.json（WO-008 {raw.get('engine') or '声音'}）"}
 
 
+def reliable(a: dict | None) -> bool:
+    """A sound fact the classification may see (WO-004b-R4): filtered uploader speech, or music whose
+    attribution is corroborated either way. Raw BGM / speech shares stay in the RowDigest for people only."""
+    return bool(a) and (bool(a.get("up_speech")) or a.get("music_label", "无旁证") != "无旁证")
+
+
 def describe(a: dict) -> str:
-    """The 【声音】 line of the classification prompt (facts only)."""
-    pct = lambda x: "未知" if x is None else f"{round(x * 100)}%"
-    music = {True: "是", False: "否"}.get(a.get("uploader_music"), "不确定")
-    return (f"说话约占 {pct(a.get('speech_ratio'))}，BGM 约占 {pct(a.get('bgm_ratio'))}，笑声约占 {pct(a.get('laughter_ratio'))}；"
-            f"UP主口播 {len(a.get('up_speech') or [])} 句；疑似UP主配乐：{music}")
+    """The 【声音】 line of the classification prompt: two items only (WO-004b-R4 §1.3)."""
+    n = len(a.get("up_speech") or [])
+    speech = f"UP主口播 {n} 句（已并入【UP主文字】）" if n else "UP主口播：未检出（检出率有限，不代表没有口播）"
+    label = a.get("music_label", "无旁证")
+    music = f"疑似UP主配乐：{label}" + (f"（旁证：{a['music_basis']}）" if label == "是" and a.get("music_basis") else "")
+    return f"{speech}；{music}"

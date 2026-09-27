@@ -46,6 +46,8 @@ def episode_seconds(episodes_dir: Path, cache: Path, pattern: str = r"qsjx_ep(\d
 def corresponding_episodes(d: dict) -> tuple[list[int], str, list[dict]]:
     """(episodes, where they come from, flags)."""
     ev = d["episodes"]["evidenced"]
+    if d["episodes"].get("verdict") == "MISSING_UNVERIFIED":     # WO-004b-R3: that evidence was judged too weak for a "否"
+        ev = []
     firm = sorted({e["episode"] for e in ev if not e.get("suspected")})
     if firm:
         return firm, "台词证据", []

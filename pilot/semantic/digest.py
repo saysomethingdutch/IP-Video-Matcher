@@ -186,6 +186,7 @@ def build_digest(row: dict, content: dict | None, asr: dict | None, visual_row: 
             "evidenced": (content or {}).get("evidenced_episodes") or [],
             "weak": (content or {}).get("weak_episodes") or [],
             "title_episode": (content or {}).get("title_episode"),
+            "claim_missing": (content or {}).get("claim_missing") or {},      # WO-004b-R3: claimed episodes missing locally
             "source": f"content/{row['row_id']}.json（WO-003a-R1）" if content else "无字幕模块输出",
         },
         "source_lines": {"count": len(src_events),

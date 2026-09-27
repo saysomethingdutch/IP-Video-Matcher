@@ -3,6 +3,7 @@ plus repeated-capture handling (§3.2) and the same-uploader consistency check (
 from __future__ import annotations
 
 import json
+import re
 import time
 from collections import Counter, defaultdict
 from concurrent.futures import ThreadPoolExecutor
@@ -72,6 +73,8 @@ def process_row(row: dict, d: dict, rules: dict, table: Table | None, repeat_of:
 
     if reuse:                                   # a saved classification: re-derive the columns without the model
         cls = {**reuse["classification"], "flags": [f for f in reuse["classification_flags"]], "calls": []}
+        if cls.get("presumed_from"):            # a presumption is re-decided on the batch every run
+            cls["nature"] = cls.pop("presumed_from")
     else:
         cls = classify(d, backend, rules, corpus=corpus)
     cls_flags = cls.pop("flags")
@@ -80,7 +83,7 @@ def process_row(row: dict, d: dict, rules: dict, table: Table | None, repeat_of:
         cls_flags = [f for f in cls_flags if not f["reason"].startswith(("解说类：", "观点偏少"))] + extra
     flags += cls_flags
     audio = d.get("audio") or {}
-    if cls["nature"] == "混剪" and cls.get("recreation") != "明显" and audio.get("uploader_music"):
+    if cls["nature"] == "混剪" and cls.get("recreation") != "明显" and audio.get("uploader_music") is True:
         cls["recreation"] = "明显"                    # 疑似UP主配乐 counts as re-creation (R2 §1.2)
         flags.append(F.flag("yellow", "混剪：声音里疑似UP主配乐，按有明显再创作计"))
     if rules.get("story_edit_policy", "strict") == "lenient" and cls["nature"] == "剧情解说" and (why := lenient_reasons(d, cls)):
@@ -141,10 +144,117 @@ def carry_opinion(r: dict, prev: dict | None) -> None:
         return
     r["opinion"], r["fields"]["AF"] = prev["opinion"], prev["fields"]["AF"]
     r["flags"] += [f for f in prev.get("flags", []) if f["reason"].startswith("意见：") and "意见待重写" not in f["reason"]]
-    old = ((prev.get("classification") or {}).get("nature"), [prev["fields"][c]["value"] for c in ("AG", "AH", "AI", "AJ")])
-    new = ((r.get("classification") or {}).get("nature"), [r["fields"][c]["value"] for c in ("AG", "AH", "AI", "AJ")])
-    if old != new:
-        r["flags"].append(F.flag("yellow", f"意见：分类已变（{old[0]} → {new[0]}），意见待重写"))
+    r["_prev_state"] = ((prev.get("classification") or {}).get("nature"),
+                        [prev["fields"][c]["value"] for c in ("AG", "AH", "AI", "AJ")])
+
+
+def mark_stale_opinions(results: list[dict]) -> list[str]:
+    """After the batch-level passes (presumption): an opinion whose row ended with another nature or grid than
+    when it was drafted is flagged for redrafting. Comparing earlier would flag every presumed row."""
+    stale = []
+    for r in results:
+        old = r.pop("_prev_state", None)
+        if old is None:
+            continue
+        new = ((r.get("classification") or {}).get("nature"), [r["fields"][c]["value"] for c in ("AG", "AH", "AI", "AJ")])
+        if tuple(old[1]) != tuple(new[1]) or old[0] != new[0]:
+            r["flags"].append(F.flag("yellow", f"意见：分类已变（{old[0]} → {new[0]}），意见待重写"))
+            stale.append(r["row_id"])
+    return stale
+
+
+def _few_comments(r: dict, spec: dict) -> bool:
+    """Little or no commentary in the captured part (R4): <= few_comments_max opinion lines and no filtered
+    uploader speech (D-043). Foreign speech cannot be counted, so such a row is never "few"."""
+    d, cls = r["digest"], r["classification"]
+    comments = sum(1 for t in (cls.get("tags") or {}).values() if t == "评论观点")
+    return comments <= spec.get("few_comments_max", 0) and not ((d.get("audio") or {}).get("up_speech")) \
+        and not (d.get("up_text_extra") or {}).get("foreign_speech_segments")
+
+
+def _short_capture(d: dict, spec: dict) -> bool:
+    cap, total = d["ledger"]["capture_seconds"]["value"], d["ledger"]["video_duration"]["value"]
+    if not isinstance(cap, (int, float)):
+        return False
+    return cap < spec.get("short_capture_seconds", 0) or \
+        (isinstance(total, (int, float)) and total > 0 and cap < spec.get("short_capture_share", 0) * total)
+
+
+def _set_nature(r: dict, nature: str, jump: bool, rules: dict, source: str, basis: str) -> None:
+    cls = r["classification"]
+    cls.setdefault("presumed_from", cls["nature"])
+    cls["nature"] = nature
+    grid, _ = F.four_grid(nature, None, None, jump, rules)
+    for c, value in zip(("AG", "AH", "AI", "AJ"), grid):
+        r["fields"][c] = F.col(value, source, basis)
+    r["fields"]["Y"] = F.col("/", "性质规则", "非纯切条类")
+    r["flags"] = [f for f in r["flags"] if not f["reason"].startswith(("原片搬运：", "性质为", "混剪但再创作很少"))]
+
+
+def _revert(r: dict, rules: dict) -> None:
+    """Undo an earlier presumption so the batch is decided afresh (rows loaded from disk carry it)."""
+    cls, d = r["classification"], r["digest"]
+    cls["nature"] = cls.pop("presumed_from")
+    seeks = d["ledger"]["seeks"]["value"]
+    grid, grid_flags = F.four_grid(cls["nature"], cls.get("subtype"), cls.get("recreation"),
+                                   isinstance(seeks, list) and bool(seeks), rules)
+    for c, value in zip(("AG", "AH", "AI", "AJ"), grid):
+        r["fields"][c] = F.col(value, f"客户规则：{cls['nature']}", r["fields"][c].get("basis", ""))
+    raw = cls["nature"] == "原片搬运"
+    r["fields"]["Y"] = F.col(r["fields"]["U"]["value"] if raw else "/", "性质规则",
+                             "原片搬运：权利作品画面时长按视频时长计" if raw else "非纯切条类")
+    r["flags"] += [f for f in grid_flags if f not in r["flags"]]
+
+
+def presume_skipped_reactions(results: list[dict], rules: dict) -> list[str]:
+    """WO-004b-R3/R4 (rules: skip_reaction_presumption), on the whole batch (it needs the uploader's other rows):
+    a reaction whose captured part holds little or no commentary, captured with skips or very briefly, is not
+    held against the defendant; and a reaction series whose other rows have commentary is never 原片搬运."""
+    spec = rules.get("skip_reaction_presumption")
+    if not spec:
+        return []
+    words = re.compile("|".join(map(re.escape, spec["title_words"])), re.I)
+    own = {spec[k] for k in ("flag", "short_flag", "no_presumption_flag", "commented_flag", "undecided_flag") if k in spec}
+    groups = defaultdict(list)
+    for r in results:
+        if r.get("classification"):
+            r["flags"] = [f for f in r["flags"] if f["reason"] not in own]
+            if r["classification"].get("presumed_from"):
+                _revert(r, rules)
+            groups[r["digest"]["uploader"]["value"]].append(r)
+    changed = []
+    for rs in groups.values():
+        reactions = {r["row_id"] for r in rs if r["classification"]["nature"] == "reaction"}
+        commented = {r["row_id"] for r in rs if not _few_comments(r, spec)}
+        all_few = not commented
+        for r in rs:
+            cls, d = r["classification"], r["digest"]
+            if r["fields"]["AG"]["value"] == "是":
+                continue
+            if not (words.search(d["title"]["value"] or "") or reactions - {r["row_id"]}):
+                continue
+            seeks = d["ledger"]["seeks"]["value"]
+            skipped = isinstance(seeks, list) and bool(seeks)
+            short = _short_capture(d, spec)
+            siblings_comment = bool(commented - {r["row_id"]})
+            if not _few_comments(r, spec):
+                if cls["nature"] == "原片搬运" and siblings_comment:          # R4 §1.1: commentary here -> reaction
+                    _set_nature(r, "reaction", skipped, rules, "客户规则：reaction 系列不判原片搬运", spec["commented_flag"])
+                    r["flags"].append(F.flag("yellow", spec["commented_flag"]))
+                    changed.append(r["row_id"])
+                continue
+            if all_few:
+                r["flags"].append(F.flag("yellow", spec["no_presumption_flag"]))
+                continue
+            if skipped or short:
+                _set_nature(r, "reaction", True, rules, "客户规则：跳播 reaction 推定", spec["flag"])
+                r["flags"] += [F.flag("yellow", spec["flag"])] + ([F.flag("yellow", spec["short_flag"])] if short and not skipped else [])
+                changed.append(r["row_id"])
+            elif cls["nature"] == "原片搬运" and siblings_comment:
+                _set_nature(r, "不确定", False, rules, "客户规则：reaction 系列不判原片搬运", spec["undecided_flag"])
+                r["flags"].append(F.flag("yellow", spec["undecided_flag"]))
+                changed.append(r["row_id"])
+    return changed
 
 
 def consistency(results: list[dict]) -> list[dict]:
@@ -236,7 +346,7 @@ def run(case_dir: Path, vlm_dir: Path, table: Table | None, rules: dict, backend
             else None                                          # redo failed calls and rows whose facts changed
         if reuse and not same:
             reuse = {**reuse, "classification_flags": [f for f in reuse["classification_flags"] if not f["reason"].startswith("事实已更新")]
-                     + [{"level": "yellow", "reason": "事实已更新（画面等），性质沿用上次判断，未重判"}]}
+                     + [{"level": "yellow", "reason": "事实已更新（画面/声音等），性质沿用上次判断，未重判"}]}
         jobs.append((row, d, corpus, reuse))
 
     def one(job) -> dict:
