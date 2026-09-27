@@ -56,7 +56,8 @@ def load_audio(case_dir: Path, rid: str) -> dict | None:
             "bgm_ratio": _ratio(events, "bgm", "bgm_ratio"), "laughter_ratio": _ratio(events, "laughter", "laughter_ratio"),
             "uploader_music": suspected, "music_label": label,
             "music_basis": music.get("basis", "") if isinstance(music, dict) else "",
-            "engine": raw.get("engine"), "played_seconds": raw.get("played_seconds"),
+            "engine": raw.get("engine"), "status": raw.get("status"), "reason": raw.get("reason"),
+            "played_seconds": raw.get("played_seconds"),
             "source": f"audio/{rid}.json（WO-008 {raw.get('engine') or '声音'}）"}
 
 

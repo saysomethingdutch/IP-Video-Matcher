@@ -53,10 +53,16 @@ def test_review_and_export_respect_case_column_mapping(tmp_path):
     semantic = output / "semantic"
     semantic.mkdir()
     (semantic / "17.json").write_text(json.dumps({"fields": {
-        letter: {"value": f"machine {letter}", "basis": "test"} for letter in LOGICAL_OUTPUTS}}))
+        letter: {"value": f"machine {letter}", "basis": "test"} for letter in LOGICAL_OUTPUTS},
+        "flags": [{"level": "yellow", "reason": "无 ASR（D-020 中止）"}]}))
+    audio = output / "audio"
+    audio.mkdir()
+    (audio / "17.json").write_text(json.dumps({"status": "ok", "engine": "SenseVoice-Small", "segments": []}))
 
     store = ReviewStore(output, config)
     assert store.detail("17")["fields"][36]["value"] == "machine U"
+    assert store.detail("17")["audio"]["status"] == "ok"
+    assert all("无 ASR" not in flag["reason"] for flag in store.detail("17")["flags"])
     exported = export_case(store)
     filled = openpyxl.load_workbook(exported, read_only=True, data_only=True)
     assert filled["Case Sheet"]["U2"].value == "original U"

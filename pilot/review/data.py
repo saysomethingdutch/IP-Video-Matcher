@@ -231,7 +231,16 @@ class ReviewStore:
         elif content.get("verdict") == "NARROWER":
             raw.append("字幕核验范围比原告声称更窄")
         asr = load_json(self.case / "asr" / f"{rid}.json")
-        if not asr:
+        audio = load_json(self.case / "audio" / f"{rid}.json")
+        if audio:
+            raw = [flag for flag in raw if
+                   (str(flag.get("reason") or "") if isinstance(flag, dict) else str(flag))
+                   not in ("无 ASR", "无 ASR（D-020 中止）")]
+            if audio.get("status") == "skipped":
+                raw.append("声音：" + str(audio.get("reason") or "无已播放录音区间"))
+            elif audio.get("status") not in ("ok", "whisper_thai"):
+                raw.append({"level": "red", "reason": "声音处理失败：" + str(audio.get("reason") or audio.get("status") or "未知状态")})
+        elif not asr:
             raw.append("无 ASR")
         elif asr.get("status") == "NO_PLAYBACK":
             raw.append("ASR 无播放片段")
@@ -263,6 +272,7 @@ class ReviewStore:
         ledger = self.rows[rid]
         content = load_json(self.case / "content" / f"{rid}.json")
         asr = load_json(self.case / "asr" / f"{rid}.json")
+        audio = load_json(self.case / "audio" / f"{rid}.json")
         semantic = load_json(self.case / "semantic" / f"{rid}.json")
         evidence = list(ledger.get("evidence") or [])
         if (ledger.get("screenshot") or {}).get("evidence_frame"):
@@ -272,7 +282,7 @@ class ReviewStore:
         match = REPEAT.search(original)
         repeat_main = match.group(1) if match else None
         return {**self.summary(rid), "fields": self._machine_fields(rid), "output_indices": self.output_columns,
-                "flags": self._flags(rid), "evidence": evidence, "playback_map": ledger.get("playback_map") or [], "video_duration": ledger.get("video_duration"), "content": content, "asr": asr, "semantic": semantic, "claim": {"bv": ledger["plaintiff"].get("bv") or ledger.get("observed_bv"), "episode": ledger["plaintiff"].get("part_claimed"), "views": ledger["plaintiff"].get("views_claimed"), "video_type": ledger["plaintiff"].get("video_type")}, "repeat_main": repeat_main if repeat_main in self.rows else None}
+                "flags": self._flags(rid), "evidence": evidence, "playback_map": ledger.get("playback_map") or [], "video_duration": ledger.get("video_duration"), "content": content, "asr": asr, "audio": audio, "semantic": semantic, "claim": {"bv": ledger["plaintiff"].get("bv") or ledger.get("observed_bv"), "episode": ledger["plaintiff"].get("part_claimed"), "views": ledger["plaintiff"].get("views_claimed"), "video_type": ledger["plaintiff"].get("video_type")}, "repeat_main": repeat_main if repeat_main in self.rows else None}
 
     def decide(self, rid: str, action: str, edits: dict | None = None) -> dict:
         if rid not in self.rows or action not in ("approve", "modify_approve", "hold"):

@@ -7,7 +7,7 @@ from pathlib import Path
 from pilot.semantic import fields as F
 from pilot.semantic.audio import describe, load_audio
 from pilot.semantic.classify import facts_text
-from pilot.semantic.digest import up_texts
+from pilot.semantic.digest import sound_status, up_texts
 from pilot.semantic.parts import analyse, parse_part
 from pilot.semantic.pipeline import process_row
 
@@ -102,6 +102,13 @@ class AudioTest(unittest.TestCase):
                         "events": {"speech": 0.5, "bgm": 0.1}, "uploader_music": {"suspected": False}})
         lines, _ = up_texts({"events": []}, None, audio=a)
         self.assertEqual([(l["kind"], l["text"]) for l in lines], [("口播", "我觉得男主演得太好了")])
+
+    def test_local_sound_replaces_stopped_asr_status(self):
+        audio = self.audio({"engine": "SenseVoice-Small", "status": "ok", "segments": []})
+        self.assertEqual(sound_status(None, audio, "1183"), "声音：SenseVoice-Small 已转写")
+        self.assertEqual(sound_status({"status": "OK"}, audio, "1127"), "声音：SenseVoice-Small 已转写")
+        self.assertEqual(sound_status(None, {**audio, "status": "skipped"}, "1183"), "声音：无已播放录音区间")
+        self.assertEqual(sound_status(None, None, "1183"), "无 ASR（D-020 中止）")
 
 
 def digest(nature_tags=None, music=(), audio=None):

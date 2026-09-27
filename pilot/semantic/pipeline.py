@@ -126,7 +126,7 @@ def process_row(row: dict, d: dict, rules: dict, table: Table | None, repeat_of:
         flags.append(F.flag("yellow", f"同 BV 在本批以外另有取证（序号 {'、'.join(map(str, others))}）"))
     if not d["visual"]:                          # one flag for Z / AA / AB instead of one per column
         flags.append(F.flag("yellow", "无画面事实：真人出镜、其他作品、贴纸/边框、画面大小未核（Z、AA、AB 列）"))
-    if d["asr"] != "有":
+    if d["asr"] != "有" and not d["asr"].endswith("已转写"):
         flags.append(F.flag("yellow", d["asr"]))
     return {"row_id": rid, "digest": d, "classification": cls, "classification_flags": cls_flags, "fields": fields,
             "flags": flags, "calls": cls.pop("calls") or (reuse or {}).get("calls", [])}

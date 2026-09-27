@@ -200,10 +200,24 @@ def build_digest(row: dict, content: dict | None, asr: dict | None, visual_row: 
                            for k in ("底部解说字幕", "竖排或特效花字", "其他")},
         "up_texts": lines,
         "up_text_extra": extra,
-        "asr": "有" if asr else ("无 ASR（D-020 中止）" if int(row["row_id"]) > 1127 else "无 ASR"),
+        "asr": sound_status(asr, audio, row["row_id"]),
         "visual": _visual(visual_row, visual_source),
         "music": v(music, "录像 OCR：B 站识别音乐标签"),
         "music_counted": music_counted,          # "发现N首音乐" without the names
         "other_batches": v(other_batches, "原告总表：同 BV 的其他公证批次行"),
         "audio": audio,                          # WO-008 sound facts, None without them (R2)
     }
+
+
+def sound_status(asr: dict | None, audio: dict | None, rid: str) -> str:
+    if audio:
+        engine = audio.get("engine") or "本地声音"
+        status = audio.get("status")
+        if status in ("ok", "whisper_thai"):
+            return f"声音：{engine} 已转写"
+        if status == "skipped":
+            return "声音：无已播放录音区间"
+        return f"声音：{engine} {status or '状态未知'}"
+    if asr:
+        return "有"
+    return "无 ASR（D-020 中止）" if int(rid) > 1127 else "无 ASR"
