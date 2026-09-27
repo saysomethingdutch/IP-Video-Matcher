@@ -18,7 +18,7 @@ import time
 
 from PIL import Image, ImageChops, ImageOps, ImageStat
 
-from .parse import edit_distance, parse_items, parse_reading, title_score, uploader_score
+from .parse import edit_distance, parse_items, parse_reading, part_identifier, title_score, uploader_score
 from .workbook import read_qsjx, read_zhuyu
 
 REPO = Path(__file__).resolve().parents[2]
@@ -240,7 +240,7 @@ def resolve_nearby_identity_readings(obs, rows):
     return adopted
 
 
-def resolve_truncated_readings(obs, rows, linked):
+def resolve_truncated_readings(obs, rows, linked, *, cross_video=False):
     """Use a BV/title-confirmed preliminary session to disambiguate /MM OCR."""
     by_id = {row["row_id"]: row for row in rows}
     confirmed = []
@@ -248,7 +248,8 @@ def resolve_truncated_readings(obs, rows, linked):
         if row_id not in by_id or ("BV" not in basis and "标题" not in basis):
             continue
         row = by_id[row_id]
-        if row["video"] != session["video"] or row["duration"] is None:
+        if row["duration"] is None or (not cross_video and row["video"] != session["video"]) or (
+                cross_video and (not obs or session["video"] != obs[0]["video"])):
             continue
         confirmed.append((session, row))
     if not confirmed:
@@ -425,28 +426,41 @@ def build_sessions(obs, fps, video):
                               "total": group[-1]["total"], "raw": "推荐视频结束页（推定）",
                               "speed": None, "frame": finish["frame"]}]
         end = min(obs[-1]["t"], group[-1]["t"] + (0 if recommendations else 15), next_start - 1)
-        nearby = [frame for frame in obs if start <= frame["t"] <= end]
-        bvs = Counter(bv for frame in nearby for bv in frame["bvs"])
-        titles = Counter(title for frame in nearby for title in frame["titles"])
-        pages = Counter(frame["page"] for frame in nearby)
-        title_sources = {text: {"t": frame["t"], "frame": frame["frame"]}
-                         for frame in nearby for text in frame["titles"]}
-        bv_sources = {bv: {"t": frame["t"], "frame": frame["frame"]}
-                      for frame in nearby for bv in frame["bvs"]}
-        metadata = [{"t": frame["t"], "frame": frame["frame"],
-                     "views": frame["views"], "parts": frame["parts"],
-                     "dates": frame["dates"], "bvs": frame["bvs"]} for frame in nearby
-                    if frame["views"] or frame["parts"] or frame["dates"]]
         result.append({"id": f"{video}-{n:03d}", "video": video, "start": start,
                        "end": end, "readings": group, "total": Counter(r["total"] for r in group).most_common(1)[0][0],
-                       "bvs": bvs, "titles": titles, "pages": pages,
-                       "title_sources": title_sources, "bv_sources": bv_sources,
-                       "metadata": metadata, "screenshots": []})
+                       "screenshots": []})
     for left, right in zip(result, result[1:]):
         if left["end"] > right["start"]:
             boundary = (left["readings"][-1]["t"] + right["readings"][0]["t"]) / 2
             left["end"] = min(left["end"], boundary)
             right["start"] = max(right["start"], boundary)
+    # Build identity evidence only after clipping neighboring sessions. The
+    # previous window could include a next-part playlist or the next player,
+    # wrongly vetoing a duplicate capture despite a matching BV and duration.
+    for session in result:
+        nearby = [frame for frame in obs if session["start"] <= frame["t"] <= session["end"]]
+        # A copied search/clipboard sheet can list many unrelated BV values
+        # inside a session window. It is not the identity of the active player.
+        identity = [frame for frame in nearby if len(set(frame["bvs"])) <= 3]
+        session["bvs"] = Counter(bv for frame in identity for bv in frame["bvs"])
+        session["titles"] = Counter(title for frame in identity for title in frame["titles"])
+        session["pages"] = Counter(frame["page"] for frame in nearby)
+        session["title_sources"] = {text: {"t": frame["t"], "frame": frame["frame"]}
+                                    for frame in identity for text in frame["titles"]}
+        session["bv_sources"] = {bv: {"t": frame["t"], "frame": frame["frame"]}
+                                 for frame in identity for bv in frame["bvs"]}
+        session["metadata"] = [{"t": frame["t"], "frame": frame["frame"],
+                                "views": frame["views"], "parts": frame["parts"],
+                                "dates": frame["dates"], "bvs": frame["bvs"]} for frame in nearby
+                               if frame["views"] or frame["parts"] or frame["dates"]]
+        # The selected part is in the player header. Other parts may appear in
+        # a detail-page playlist, so they are not playback identity.
+        session["player_parts"] = Counter(part for frame in nearby if frame["readings"]
+                                          for item in frame["items"]
+                                          if item.get("y", 1) < .30 or re.fullmatch(
+                                              r"\s*(?:合集\s*)?(?:P\s*)?\d{1,2}\s*/\s*\d{1,2}\s*",
+                                              item.get("text", ""), re.I)
+                                          if (part := part_identifier(item.get("text", ""))))
     return result
 
 
@@ -492,7 +506,92 @@ def _candidate_score(session, row, all_rows):
     return -100, "", "none"
 
 
-def match_sessions(sessions, rows):
+def _cross_video_score(session, row, rows):
+    claimed_part = part_identifier(row["title"])
+    observed = Counter({part: count for part, count in (session.get("player_parts") or {}).items()
+                        if part[0] is not None or count >= 3})
+    if claimed_part and observed and abs((row["duration"] or -10000) - session["total"]) <= 2:
+        ranked = observed.most_common()
+        # OCR may see a neighboring playlist entry for one frame. Require a
+        # repeated, dominant player-header reading before excluding a row.
+        strongest = ranked[0][1]
+        leaders = [part for part, count in ranked if count >= max(2, strongest * .6)]
+        compatible = [part for part in leaders if part[1] == claimed_part[1] and
+                      (part[0] is None or claimed_part[0] is None or part[0] == claimed_part[0])]
+        if compatible and len(leaders) == 1:
+            return 160 + min(strongest, 10), "播放器标题分P+总长", "high"
+        if leaders and not compatible:
+            return -100, "", "none"
+    score, basis, confidence = _candidate_score(session, row, rows)
+    if score < 0:
+        return score, basis, confidence
+    # A BV in a detail page can belong to a neighboring search hit. When the
+    # same session clearly names another video, BV alone is insufficient.
+    if basis == "BV闭集唯一匹配" and not claimed_part:
+        informative = [title for title in session["titles"] if
+                       len(re.findall(r"[\u4e00-\u9fff]", title)) >= 10]
+        if informative and max(title_score(title, row["title"]) for title in informative) < .5:
+            return -100, "", "none"
+    # The original recording name only resolves an otherwise equal evidence
+    # score; it cannot prevent a row from linking to another batch recording.
+    return score + (0.1 if row["video"] == session["video"] else 0), basis, confidence
+
+
+def _match_cross_video(sessions, rows):
+    from scipy.optimize import linear_sum_assignment
+    import numpy as np
+
+    candidates = [[_cross_video_score(session, row, rows) for session in sessions] for row in rows]
+    nrows, nsessions = len(rows), len(sessions)
+    weights = np.zeros((nrows, nsessions + nrows), dtype=float)
+    for i, options in enumerate(candidates):
+        for j, (score, _, _) in enumerate(options):
+            weights[i, j] = score if score >= 40 else -1000
+    row_indices, session_indices = linear_sum_assignment(weights, maximize=True)
+    linked = {}
+    used = set()
+    for i, j in zip(row_indices, session_indices):
+        if j >= nsessions or weights[i, j] < 40:
+            continue
+        session, row = sessions[j], rows[i]
+        _, basis, confidence = candidates[i][j]
+        linked[row["row_id"]] = (session, basis, confidence)
+        session["row_ids"] = [row["row_id"]]
+        used.add(j)
+        claimed_part = part_identifier(row["title"])
+        if claimed_part and "分P" not in basis:
+            alternatives = [other["row_id"] for k, other in enumerate(rows) if k != i
+                            and other["bv"] == row["bv"] and
+                            candidates[k][j][0] >= 40]
+            if alternatives:
+                session["part_ambiguity"] = sorted([row["row_id"], *alternatives], key=int)
+    unresolved = []
+    for j, session in enumerate(sessions):
+        if j in used:
+            session["disposition"] = "关联表格行"
+            continue
+        ranked = sorted(((candidates[i][j][0], rows[i]) for i in range(nrows)),
+                        key=lambda item: item[0], reverse=True)
+        score, row = ranked[0]
+        if score >= 95 and row["row_id"] in linked:
+            session["disposition"] = "重复取证同一表格行"
+            session["duplicate_of_row"] = row["row_id"]
+            linked[row["row_id"]][0].setdefault("alternate_sessions", []).append(session["id"])
+        elif score < 60 and not any(part[0] is not None and
+                                    any(part_identifier(r["title"])[0] == part[0]
+                                        for r in rows if part_identifier(r["title"]))
+                                    for part in session.get("player_parts", {})):
+            session["disposition"] = "无本批闭集身份依据"
+        else:
+            session["disposition"] = "未关联"
+            session["candidate_rows"] = [r["row_id"] for value, r in ranked[:3] if value >= 40]
+            unresolved.append(session)
+    return linked, unresolved
+
+
+def match_sessions(sessions, rows, *, cross_video=False):
+    if cross_video:
+        return _match_cross_video(sessions, rows)
     rows_by_video = defaultdict(list)
     for row in rows:
         rows_by_video[row["video"]].append(row)
@@ -739,13 +838,18 @@ def build_rows(rows, linked, output_dir, video_paths, temp_frames=None, fps=1, v
     playback_cache = {}
     for row in rows:
         session, basis, confidence = linked.get(row["row_id"], (None, "", "none"))
-        record = {"row_id": row["row_id"], "video": row["video"], "plaintiff": row,
+        video = session["video"] if session else row["video"]
+        record = {"row_id": row["row_id"], "video": video, "plaintiff": row,
                   "session_id": session["id"] if session else None,
                   "same_session_rows": session.get("row_ids", []) if session else [],
                   "association": {"basis": basis, "confidence": confidence,
                                   "source": "OCR读数/截图" if session else None},
                   "flags": [], "evidence": []}
         if session:
+            if row["video"] != video:
+                record["flags"].append(f"原表录像名为 {row['video']}，实际在 {video}")
+            if session.get("part_ambiguity"):
+                record["flags"].append("分P标识未辨明；候选行：" + "、".join(session["part_ambiguity"]))
             if session["id"] not in playback_cache:
                 readings = session["readings"]
                 evidence = {}
@@ -757,12 +861,12 @@ def build_rows(rows, linked, output_dir, video_paths, temp_frames=None, fps=1, v
                     for left, right in zip(readings, readings[1:]):
                         if (left["frame"], right["frame"]) in event_pairs and right["t"] - left["t"] > 1:
                             evidence[(left["frame"], right["frame"])] = has_playback_evidence(
-                                video_obs[row["video"]], video_paths[row["video"]], left, right)
+                                video_obs[video], video_paths[video], left, right)
                 playback_cache[session["id"]] = playback(readings, session["total"], evidence)
             result = playback_cache[session["id"]]
             record.update({"video_start": session["start"], "video_end": session["end"],
                            "video_duration": session["total"], **result})
-            nearby_obs = [frame for frame in video_obs.get(row["video"], [])
+            nearby_obs = [frame for frame in video_obs.get(video, [])
                           if session["start"] <= frame["t"] <= session["end"]] if video_obs else []
             candidates = [frame for frame in nearby_obs if frame["reading_candidate"]]
             failures = sum(not frame["readings"] for frame in candidates)
@@ -842,17 +946,17 @@ def build_rows(rows, linked, output_dir, video_paths, temp_frames=None, fps=1, v
                 points.extend([("跳转前", before_t), ("跳转后", seek["at"])])
             points.append(("结束", session["end"]))
             for label, t in points:
-                image = output_dir / "evidence" / f"{row['video']}-{int(round(t*fps)):06d}.jpg"
-                evidence_image(video_paths[row["video"]], t, image,
-                               temp_frames.get(row["video"]) if temp_frames else None, fps)
+                image = output_dir / "evidence" / f"{video}-{int(round(t*fps)):06d}.jpg"
+                evidence_image(video_paths[video], t, image,
+                               temp_frames.get(video) if temp_frames else None, fps)
                 record["evidence"].append({"label": label, "path": str(image.relative_to(output_dir)),
-                                            "video": row["video"], "t": round(t, 2),
+                                            "video": video, "t": round(t, 2),
                                             "source": "录像帧"})
             def frame_source(reading, source_type="OCR读数"):
-                image = output_dir / "evidence" / f"{row['video']}-{int(round(reading['t']*fps)):06d}.jpg"
-                evidence_image(video_paths[row["video"]], reading["t"], image,
-                               temp_frames.get(row["video"]) if temp_frames else None, fps)
-                return {"type": source_type, "video": row["video"], "t": reading["t"],
+                image = output_dir / "evidence" / f"{video}-{int(round(reading['t']*fps)):06d}.jpg"
+                evidence_image(video_paths[video], reading["t"], image,
+                               temp_frames.get(video) if temp_frames else None, fps)
+                return {"type": source_type, "video": video, "t": reading["t"],
                         "frame": reading["frame"], "evidence_frame": str(image.relative_to(output_dir))}
 
             first = frame_source(session["readings"][0])
@@ -876,7 +980,7 @@ def build_rows(rows, linked, output_dir, video_paths, temp_frames=None, fps=1, v
                     return []
                 item = origin[0]
                 if "path" in item:
-                    return [{"type": "截图", "video": row["video"], "t": item["t"],
+                    return [{"type": "截图", "video": video, "t": item["t"],
                              "screenshot": item["path"],
                              "evidence_frame": record["screenshot"]["evidence_frame"]}]
                 return [frame_source(item)]

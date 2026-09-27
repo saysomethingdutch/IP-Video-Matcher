@@ -101,8 +101,8 @@ def read_configured(path: Path, spec: dict, videos: set[str]) -> list[dict]:
                 continue
             raw_video = str(record.get(columns["video"]) or "")
             video = Path(raw_video).stem
-            if video not in videos:
-                continue
+            # The workbook's recording name is a claim, not the search boundary.
+            # Keep the row even when the claimed file is absent from this batch.
             date_key = columns.get("capture_date")
             if spec.get("capture_date") and date_key:
                 date = record.get(date_key)

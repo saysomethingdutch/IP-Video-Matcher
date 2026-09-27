@@ -11,7 +11,7 @@ from pathlib import Path
 
 from .case_config import CaseConfig, REPO
 
-STEPS = ("ledger", "captions", "speech", "visual", "classification", "opinion", "review")
+STEPS = ("ledger", "captions", "speech", "audio", "visual", "classification", "opinion", "review")
 
 
 def _stamp(path: Path) -> list:
@@ -35,9 +35,11 @@ def _fingerprint(config: CaseConfig, step: str, rows: list[str]) -> str:
                      config.index_dir / "index.sqlite", config.path_of(raw["source"].get("episode_dir"))],
         "speech": [config.case_dir / "ledger.jsonl", config.index_dir / "index.sqlite",
                    config.path_of(raw["models"]["speech"].get("model"))],
+        "audio": [config.case_dir / "ledger.jsonl", config.index_dir / "index.sqlite",
+                  config.path_of((raw["models"].get("audio") or {}).get("model"))],
         "visual": [config.case_dir / "ledger.jsonl", config.case_dir / "ocr_cache",
                    config.path_of(raw["evidence"]["video_dir"])],
-        "classification": [config.case_dir / "ledger.jsonl", config.case_dir / "content",
+        "classification": [config.case_dir / "ledger.jsonl", config.case_dir / "content", config.case_dir / "audio",
                            config.vlm_dir / "predictions_consensus_r3.csv", config.path_of(raw["client"]["rules"])],
         "opinion": [config.case_dir / "semantic", config.path_of(raw["client"]["style_examples"].get("workbook"))],
         "review": [config.case_dir / "ledger.jsonl", config.case_dir / "content", config.case_dir / "semantic",
@@ -49,6 +51,7 @@ def _fingerprint(config: CaseConfig, step: str, rows: list[str]) -> str:
         "ledger": {"workbook": raw["workbook"], "evidence": raw["evidence"], "ledger": raw["ledger"]},
         "captions": {"source": raw["source"]},
         "speech": {"speech": raw["models"]["speech"]},
+        "audio": {"audio": raw["models"].get("audio")},
         "visual": {"visual": raw["models"]["visual"], "canvas": raw.get("visual"),
                    "evidence": raw["evidence"]},
         "classification": {"rules": raw["client"]["rules"], "text": raw["models"]["text"],
@@ -58,7 +61,7 @@ def _fingerprint(config: CaseConfig, step: str, rows: list[str]) -> str:
                     "source": raw["source"], "workbook": raw["workbook"]},
         "review": {"workbook": raw["workbook"], "output": raw["output"]},
     }[step]
-    module_dir = {"ledger": "ledger", "captions": "content", "speech": "asr", "visual": "vlm",
+    module_dir = {"ledger": "ledger", "captions": "content", "speech": "asr", "audio": "audio", "visual": "vlm",
                   "classification": "semantic", "opinion": "opinion", "review": "review"}[step]
     # Per-row outputs can be numerous and contain timestamps; only the selected row inputs affect a partial run.
     data = [settings, rows, [_stamp(p) for p in inputs if p is not None],
@@ -83,6 +86,8 @@ def _ready(config: CaseConfig, step: str, rows: list[str]) -> bool:
                                                        (config.index_dir / "index.sqlite").is_file())
     if step == "speech":
         return _row_files(case / "asr", rows)
+    if step == "audio":
+        return _row_files(case / "audio", rows)
     if step == "visual":
         name = "consensus.json" if config.raw["models"]["visual"]["allow_image_upload"] else "local.json"
         return all((vlm / "r3" / rid / name).is_file() and
@@ -109,6 +114,9 @@ def _ready(config: CaseConfig, step: str, rows: list[str]) -> bool:
 def _healthy(config: CaseConfig, step: str, rows: list[str]) -> bool:
     if step == "speech":
         return all(json.loads((config.case_dir / "asr" / f"{rid}.json").read_text()).get("status") != "ERROR"
+                   for rid in rows)
+    if step == "audio":
+        return all(json.loads((config.case_dir / "audio" / f"{rid}.json").read_text()).get("status") != "error"
                    for rid in rows)
     if step == "visual":
         name = "consensus.json" if config.raw["models"]["visual"]["allow_image_upload"] else "local.json"
@@ -174,6 +182,11 @@ def _speech(config: CaseConfig, rows: list[str], force: bool = False):
     asr.run(set(rows), force=force)
 
 
+def _audio(config: CaseConfig, rows: list[str], force: bool = False):
+    from .audio.pipeline import run as audio_run
+    audio_run(config, rows, force=force)
+
+
 def _visual(config: CaseConfig, rows: list[str], force: bool = False):
     from .vlm import r3
     if config.raw["models"]["visual"]["protocol"] != "player_canvas_r3":
@@ -186,13 +199,12 @@ def _visual(config: CaseConfig, rows: list[str], force: bool = False):
                 (folder / name).unlink(missing_ok=True)
     selected = set(rows)
     r3.prepare(config.case_dir, selected)
+    r3.local(config.case_dir, selected)
     if config.raw["models"]["visual"]["allow_image_upload"]:
         r3.cloud(config.case_dir, selected)
         if _row_files(config.vlm_dir / "r3", config.row_ids, "/glm-5.3-flash.json") and \
            _row_files(config.vlm_dir / "r3", config.row_ids, "/deepseek-flash.json"):
             r3.finalize(config.case_dir)
-    else:
-        r3.local(config.case_dir, selected)
 
 
 def _classification(config: CaseConfig, rows: list[str], force: bool = False):
@@ -224,7 +236,7 @@ def _review(config: CaseConfig):
     path.write_text(json.dumps({"case_id": config.case_id, "rows": summaries}, ensure_ascii=False, indent=1))
 
 
-RUNNERS = {"ledger": _ledger, "captions": _captions, "speech": _speech, "visual": _visual,
+RUNNERS = {"ledger": _ledger, "captions": _captions, "speech": _speech, "audio": _audio, "visual": _visual,
            "classification": _classification, "opinion": _opinion, "review": _review}
 
 
@@ -242,6 +254,9 @@ def run(config: CaseConfig, from_step: str | None = None, requested_rows: str | 
     for i, step in enumerate(STEPS):
         start = time.monotonic()
         if step == "speech" and not config.raw["models"]["speech"]["enabled"]:
+            report["steps"][step] = {"status": "disabled", "seconds": 0}
+            continue
+        if step == "audio" and not (config.raw["models"].get("audio") or {}).get("enabled"):
             report["steps"][step] = {"status": "disabled", "seconds": 0}
             continue
         fingerprint = _fingerprint(config, step, rows)

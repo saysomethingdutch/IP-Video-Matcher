@@ -12,35 +12,32 @@ from pathlib import Path
 from pilot.content.extract import load_ocr
 
 from . import fields as F
-from .classify import classify, facts_text
+from .classify import COMMENTARY, classify, commentary_nature, facts_text
 from .digest import build_digest, load_visual, music_tags
+from .audio import load_audio
+from .parts import analyse
 from .table import OUTPUT_COLS, Table
 
 def _load(path: Path):
     return json.loads(path.read_text(encoding="utf-8")) if path.exists() else None
 
 
-def _part(title: str) -> tuple[int, int] | None:
-    found = [(int(a), int(b)) for a, b in F.PART_RE.findall(title or "") if 1 <= int(a) <= int(b) <= 20 and int(b) > 1]
-    return found[-1] if found else None
-
-
 def repeated_captures(rows: dict[str, dict]) -> dict[str, str]:
-    """{duplicate row: main row} for the same BV and the same part inside the batch (D-025: same BV alone is
-    usually 分P). The main row is the more complete capture."""
-    out = {}
-    for rid, row in rows.items():
-        for other in row.get("duplicate_bv_rows") or []:
-            if other not in rows or int(other) <= int(rid):
-                continue
-            a, b = row, rows[other]
-            if _part(a["plaintiff"]["title"]) != _part(b["plaintiff"]["title"]):
-                continue                        # different parts of one BV: both are compared normally
-            def fullness(r):
-                return (r.get("complete") is True, r.get("capture_seconds") if isinstance(r.get("capture_seconds"), (int, float)) else -1)
-            main, dup = (rid, other) if fullness(a) >= fullness(b) else (other, rid)
-            out[dup] = main
-    return out
+    """{duplicate row: main row}: same BV and same part only (WO-004b-R2, parts.py)."""
+    return analyse(rows)[1]
+
+
+def lenient_reasons(d: dict, cls: dict) -> str:
+    """Why a subtitle edit told as plot may count as a mix under story_edit_policy: lenient (WO-004b-R2 §1.3)."""
+    audio = d.get("audio") or {}
+    why = []
+    if d["music"]["value"] or d.get("music_counted") or audio.get("uploader_music"):
+        why.append("有配乐")
+    if cls.get("model_nature") == "混剪":
+        why.append("模型判为混剪")
+    if cls.get("recreation") == "明显":
+        why.append("有明显的主题化剪辑")
+    return "、".join(why)
 
 
 def intentional_skip_candidate(d: dict, cls: dict) -> str | None:
@@ -78,7 +75,17 @@ def process_row(row: dict, d: dict, rules: dict, table: Table | None, repeat_of:
     else:
         cls = classify(d, backend, rules, corpus=corpus)
     cls_flags = cls.pop("flags")
+    if reuse and cls.get("model_nature") in COMMENTARY:     # the commentary line is a rule: re-apply it to a saved judgment
+        cls["nature"], _, extra = commentary_nature(cls["model_nature"], {int(k): t for k, t in cls["tags"].items()}, rules)
+        cls_flags = [f for f in cls_flags if not f["reason"].startswith(("解说类：", "观点偏少"))] + extra
     flags += cls_flags
+    audio = d.get("audio") or {}
+    if cls["nature"] == "混剪" and cls.get("recreation") != "明显" and audio.get("uploader_music"):
+        cls["recreation"] = "明显"                    # 疑似UP主配乐 counts as re-creation (R2 §1.2)
+        flags.append(F.flag("yellow", "混剪：声音里疑似UP主配乐，按有明显再创作计"))
+    if rules.get("story_edit_policy", "strict") == "lenient" and cls["nature"] == "剧情解说" and (why := lenient_reasons(d, cls)):
+        cls["nature"], cls["subtype"], cls["recreation"] = "混剪", None, "明显"
+        flags.append(F.flag("yellow", f"口径：宽松（{why}，字幕剪辑按混剪类）"))
     seeks = d["ledger"]["seeks"]["value"]
     jump = isinstance(seeks, list) and bool(seeks)
     if seeks == "未知":
@@ -91,7 +98,8 @@ def process_row(row: dict, d: dict, rules: dict, table: Table | None, repeat_of:
 
     fields = {"U": F.col(F.hms(d["ledger"]["video_duration"]["value"]), "台账 video_duration"),
               "X": F.col(F.hms(d["ledger"]["capture_seconds"]["value"]), "台账 capture_seconds")}
-    fields["V"], fields["W"] = F.parts_columns(d, row.get("page_types") or {})
+    fields["V"], fields["W"] = F.parts_columns(d, row.get("page_types") or {}, row.get("_part"))
+    flags += [F.flag("yellow", f"分P：{x}") for x in (row.get("_part") or {}).get("flags", [])]
     fields["Y"] = F.col(fields["U"]["value"] if cls["nature"] == "原片搬运" else "/", "性质规则",
                         "原片搬运：权利作品画面时长按视频时长计" if cls["nature"] == "原片搬运" else "非纯切条类")
     for c, fn in (("Z", F.non_rights_column), ("AA", F.occlusion_column), ("AB", F.size_column),
@@ -124,6 +132,19 @@ def process_row(row: dict, d: dict, rules: dict, table: Table | None, repeat_of:
 def _grid_key(r: dict) -> str:
     """The four cells without the 跳播 prefix, which follows the row's own seek fact."""
     return " / ".join(str(r["fields"][c]["value"]).replace("跳播+", "") for c in ("AG", "AH", "AI", "AJ"))
+
+
+def carry_opinion(r: dict, prev: dict | None) -> None:
+    """A classification rerun keeps the row's drafted 比对意见 (WO-004c); when the nature or the grid changed,
+    the opinion is flagged for redrafting (the flag carries the opinion module's prefix, so a redraft clears it)."""
+    if not prev or not prev.get("opinion"):
+        return
+    r["opinion"], r["fields"]["AF"] = prev["opinion"], prev["fields"]["AF"]
+    r["flags"] += [f for f in prev.get("flags", []) if f["reason"].startswith("意见：") and "意见待重写" not in f["reason"]]
+    old = ((prev.get("classification") or {}).get("nature"), [prev["fields"][c]["value"] for c in ("AG", "AH", "AI", "AJ")])
+    new = ((r.get("classification") or {}).get("nature"), [r["fields"][c]["value"] for c in ("AG", "AH", "AI", "AJ")])
+    if old != new:
+        r["flags"].append(F.flag("yellow", f"意见：分类已变（{old[0]} → {new[0]}），意见待重写"))
 
 
 def consistency(results: list[dict]) -> list[dict]:
@@ -177,7 +198,12 @@ def run(case_dir: Path, vlm_dir: Path, table: Table | None, rules: dict, backend
     rows = {r["row_id"]: r for r in map(json.loads, (case_dir / "ledger.jsonl").read_text(encoding="utf-8").splitlines())}
     batch_ids = {int(key) for key in rows}
     visual, visual_sources = load_visual(vlm_dir, visual_files)
-    repeats = repeated_captures(rows)
+    part_info, repeats = analyse(rows)
+    if table:                                   # rows the original table already marks keep its wording and pair with nobody here
+        repeats = {dup: main for dup, main in repeats.items()
+                   if not table.original_repeat(int(dup)) and not table.original_repeat(int(main))}
+    for rid, info in part_info.items():
+        rows[rid]["_part"] = info
     for dup, main in repeats.items():            # 要求 L68："播放量取最终那次取证"
         a, b = rows[main], rows[dup]
         if (b.get("video") or "", b.get("video_start") or 0) > (a.get("video") or "", a.get("video_start") or 0) and b.get("views"):
@@ -195,11 +221,13 @@ def run(case_dir: Path, vlm_dir: Path, table: Table | None, rules: dict, backend
             ocr_cache[video] = load_ocr(case_dir, video)
         music = music_tags(ocr_cache.get(video, {}), row.get("video_start") or 0, row.get("video_end") or 0) if video else []
         others = table.other_batches(int(rid), batch_ids) if table else []
-        d = build_digest(row, content, asr, visual.get(rid), visual_sources.get(rid, ""), music, others)
+        audio = load_audio(case_dir, rid)
+        d = build_digest(row, content, asr, visual.get(rid), visual_sources.get(rid, ""), music, others, audio)
         if row.get("_views_note"):
             d["ledger"]["views"]["source"] += "；" + row["_views_note"]
         corpus = [e["text"] for e in (content or {}).get("events", [])] + \
-                 [s.get("text", "") for s in (asr or {}).get("segments", [])]
+                 [s.get("text", "") for s in (asr or {}).get("segments", [])] + \
+                 [s["text"] for s in (audio or {}).get("up_speech") or []]
         row["_repeats"] = repeats
         saved = _load(reuse_dir / f"{rid}.json") if reuse_dir else None
         usable = saved and saved.get("classification") and "classification_flags" in saved
@@ -214,6 +242,7 @@ def run(case_dir: Path, vlm_dir: Path, table: Table | None, rules: dict, backend
     def one(job) -> dict:
         row, d, corpus, reuse = job
         r = process_row(row, d, rules, table, repeats.get(row["row_id"]), backend, corpus, reuse)
+        carry_opinion(r, _load(save_dir / f"{row['row_id']}.json") if save_dir else None)
         if save_dir:
             save_dir.mkdir(parents=True, exist_ok=True)
             (save_dir / f"{row['row_id']}.json").write_text(json.dumps(r, ensure_ascii=False, indent=1), encoding="utf-8")

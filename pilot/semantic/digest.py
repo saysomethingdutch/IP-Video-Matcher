@@ -92,7 +92,8 @@ def _is_noise(text: str, uploader: str) -> bool:
     return len(u) >= 4 and any(u[i:i + 4] in n for i in range(len(u) - 3)) and len(n) <= len(u) + 8
 
 
-def up_texts(content: dict | None, asr: dict | None, uploader: str = "", music: list[str] = ()) -> tuple[list[dict], dict]:
+def up_texts(content: dict | None, asr: dict | None, uploader: str = "", music: list[str] = (),
+             audio: dict | None = None) -> tuple[list[dict], dict]:
     """Uploader text on the suspect video's timeline: non-source captions plus Chinese non-source speech,
     sorted and de-duplicated. Foreign speech (the Thai dubs mix dubbed dialogue with the host) and
     foreign subtitles are only counted."""
@@ -124,6 +125,14 @@ def up_texts(content: dict | None, asr: dict | None, uploader: str = "", music: 
         if not dup:
             lines.append({"t": round(t, 1), "text": text, "kind": "语音",
                           "source": f"asr 片段 {n}（录像 {s['recording_start_seconds']:.0f} s）"})
+    for n, s in enumerate((audio or {}).get("up_speech") or []):   # WO-008 "UP主口播" (R2)
+        text, t = s["text"].translate(T2S).strip(), s.get("t")
+        if t is None or not text:
+            continue
+        dup = any(abs(l["t"] - t) <= DEDUP_WINDOW_S and similarity(normalize(l["text"]), normalize(text)) >= 0.8
+                  for l in lines)
+        if not dup:
+            lines.append({"t": round(float(t), 1), "text": text, "kind": "口播", "source": f"{audio['source']} 片段 {n}"})
     lines.sort(key=lambda l: l["t"])
     seen, out = set(), []
     for l in lines:                        # the same caption repeated later (a recap card) counts once
@@ -141,13 +150,13 @@ def up_texts(content: dict | None, asr: dict | None, uploader: str = "", music: 
 
 
 def build_digest(row: dict, content: dict | None, asr: dict | None, visual_row: dict | None, visual_source: str,
-                 music: list[str], other_batches: list[int]) -> dict:
+                 music: list[str], other_batches: list[int], audio: dict | None = None) -> dict:
     p = row["plaintiff"]
     ledger_src = "台账 ledger.jsonl（R2）"
     raw_music = music + [m.group(1).strip() for e in (content or {}).get("events", [])
                          if (m := MUSIC_TAG.match(e["text"].strip()))]
     music, music_counted = song_names(raw_music)
-    lines, extra = up_texts(content, asr, p.get("uploader") or "", raw_music)
+    lines, extra = up_texts(content, asr, p.get("uploader") or "", raw_music, audio)
     src_events = [e for e in (content or {}).get("events", []) if e["status"] == "LINKED" and not e.get("lyric")]
     return {
         "row_id": row["row_id"],
@@ -195,4 +204,5 @@ def build_digest(row: dict, content: dict | None, asr: dict | None, visual_row: 
         "music": v(music, "录像 OCR：B 站识别音乐标签"),
         "music_counted": music_counted,          # "发现N首音乐" without the names
         "other_batches": v(other_batches, "原告总表：同 BV 的其他公证批次行"),
+        "audio": audio,                          # WO-008 sound facts, None without them (R2)
     }

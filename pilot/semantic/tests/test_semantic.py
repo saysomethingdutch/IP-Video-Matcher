@@ -139,9 +139,24 @@ class ClassifyTest(unittest.TestCase):
         self.assertEqual(self.run_with("剧情解说", ["评论观点", "评论观点", "叙述剧情"])["nature"], "夹叙夹议解说")
         self.assertEqual(self.run_with("观点评析", ["评论观点", "评论观点", "叙述剧情"])["nature"], "观点评析")
         self.assertEqual(self.run_with("夹叙夹议解说", ["叙述剧情"] * 9 + ["其他"])["nature"], "剧情解说")
-        r = self.run_with("夹叙夹议解说", ["评论观点", "叙述剧情", "叙述剧情"])
+        r = self.run_with("夹叙夹议解说", ["评论观点", "叙述剧情", "叙述剧情"])      # 4 opinions, share 0.4
+        self.assertEqual(r["nature"], "夹叙夹议解说")
+        self.assertTrue(any(f["reason"].startswith("观点偏少") for f in r["flags"]))
+        r = self.run_with("夹叙夹议解说", ["评论观点"] + ["叙述剧情"] * 4)            # 2 opinions, share 0.2
         self.assertEqual(r["nature"], "不确定")
-        self.assertTrue(any("评论占比" in f["reason"] for f in r["flags"]))
+
+    def test_team_thresholds(self):
+        def judge(comments, stories, model="剧情解说"):
+            tags = {i: "评论观点" for i in range(comments)} | {100 + i: "叙述剧情" for i in range(stories)}
+            return K.commentary_nature(model, tags, RULES)[0]
+        self.assertEqual(judge(2, 12), "剧情解说")        # 2 opinions, 0.143
+        self.assertEqual(judge(0, 5), "剧情解说")
+        self.assertEqual(judge(3, 17), "夹叙夹议解说")    # 3 opinions, 0.15
+        self.assertEqual(judge(3, 20), "不确定")          # 3 opinions but 0.13
+        self.assertEqual(judge(2, 8), "不确定")           # 2 opinions but 0.2
+        self.assertEqual(judge(6, 4, "观点评析"), "观点评析")
+        self.assertEqual(judge(4, 6, "观点评析"), "夹叙夹议解说")   # opinion analysis needs share >= 0.5
+        self.assertEqual(judge(1, 2), "不确定")           # fewer than 5 judged lines
 
     def test_only_verbatim_quotes_survive(self):
         r = self.run_with("reaction", ["评论观点"])

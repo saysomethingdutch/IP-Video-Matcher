@@ -53,6 +53,8 @@ class CaseConfig:
             raise ValueError("source.enabled requires the workbook episode-claim column")
         if bool(self.raw["source"].get("enabled")) and not self.raw["source"].get("episode_dir"):
             raise ValueError("source.enabled requires source.episode_dir")
+        if self.raw["client"].get("story_edit_policy", "strict") not in ("strict", "lenient"):
+            raise ValueError("client.story_edit_policy must be strict or lenient (D-041)")
         if not self.raw["client"].get("rules") or not self.raw["client"].get("opinion_format"):
             raise ValueError("client.rules and client.opinion_format are required")
         if not self.raw["client"].get("work_title") or not isinstance(self.raw["client"].get("style_examples"), dict):
@@ -87,6 +89,9 @@ class CaseConfig:
             raise ValueError("models.text must be glm-5.3-flash, deepseek-flash or local")
         if self.raw["models"].get("opinion", self.raw["models"]["text"]) not in ("deepseek-flash", "glm-5.3-flash", "local"):
             raise ValueError("models.opinion must be glm-5.3-flash, deepseek-flash or local")
+        audio = self.raw["models"].get("audio") or {}
+        if audio.get("enabled") and not audio.get("model"):
+            raise ValueError("models.audio.model is required when local audio is enabled")
         self.case_dir = self.path_of(self.raw["output"]["dir"])
         self.output_root = self.case_dir.parent
         self.vlm_dir = self.path_of(self.raw["output"].get("visual_dir")) or self.case_dir / "vlm"

@@ -2,6 +2,7 @@ cache:
   adopt_existing: true
 case_id: qsjx_2591
 client:
+  story_edit_policy: strict  # D-041：字幕讲剧情、几乎没有观点判剧情解说；lenient = 有配乐/主题化剪辑时按混剪类（标黄）
   opinion_format:
     characters:
       hard_max: 330
@@ -53,6 +54,9 @@ ledger:
   repair_nearby_identity: true
   repair_truncated_readings: true
 models:
+  audio:
+    enabled: true
+    model: models/sensevoice/models/iic--SenseVoiceSmall/snapshots/master
   opinion: glm-5.3-flash
   speech:
     enabled: false
@@ -68,7 +72,7 @@ models:
 output:
   dir: workspace/pilot/qsjx_2591
   export_name: 七时吉祥-2591-机器填写
-  visual_dir: null
+  visual_dir: workspace/pilot/qsjx_2591/vlm_wo008
 schema_version: 1
 source:
   boundaries: /Users/lestersun/IP-Video-Matcher/experiments/phase3a0/cases/source_boundaries.json
@@ -134,3 +138,8 @@ visual:
       landscape: [130, 115, 1120, 560]
       portrait: [455, 60, 755, 225]
       rotated_portrait: [420, 100, 730, 570]
+    MAH00738:
+      # Checked at recording seconds 60, 1650, 4300, 5620 after WO-008 linked this file.
+      landscape: [180, 70, 1040, 580]
+      portrait: [420, 60, 780, 225]
+      rotated_portrait: [80, 80, 395, 550]
