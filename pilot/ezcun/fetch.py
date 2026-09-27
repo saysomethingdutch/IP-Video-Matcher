@@ -182,12 +182,22 @@ class Browser:
             self._check_challenge()
             if not responses:
                 raise Challenge('Share page generated no preview response; stopping for inspection')
-            response = responses[-1]
-            if response.status == 418:
-                raise Challenge('CloudWAF 418; stopping')
-            if response.status != 200:
-                raise RuntimeError(f'Preview HTTP {response.status}')
-            payload = response.json()
+            payload = None
+            body_error = None
+            for response in reversed(responses):
+                if response.status == 418:
+                    raise Challenge('CloudWAF 418; stopping')
+                if response.status != 200:
+                    body_error = RuntimeError(f'Preview HTTP {response.status}')
+                    continue
+                try:
+                    response.finished()
+                    payload = response.json()
+                    break
+                except Exception as exc:
+                    body_error = exc
+            if payload is None:
+                raise RuntimeError(f'Preview response body unavailable: {safe_error(body_error)}')
             if not isinstance(payload, dict) or not isinstance(payload.get('data'), dict):
                 raise RuntimeError('Unexpected preview JSON')
             items = payload['data'].get('caseSonEvidenceList') or []
