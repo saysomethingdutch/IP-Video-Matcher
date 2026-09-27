@@ -21,10 +21,5 @@ build/
 *.egg-info/
 .DS_Store
 
-# Phase 3V 实验产物：体积大、可重新生成。文件保留在硬盘，不进 git（2026-09-27）
-experiments/phase3v_*/**/*.png
-experiments/phase3v_*/**/*.npz
-experiments/phase3v_*/**/*.parquet
-experiments/phase3v_e1_1/source_grid.jsonl
 # 本地备份目录里的缓存
 _attic/**/__pycache__/
