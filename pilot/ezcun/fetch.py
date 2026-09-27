@@ -498,7 +498,7 @@ def run():
                 row = {'row': number, 'status': 'error', 'error': safe_error(exc)}
                 download_rows[number] = row
                 save_results()
-                print(f'DOWNLOAD {index}/400 row={number} error={row["error"]}', flush=True)
+                print(f'DOWNLOAD {index}/{len(items)} row={number} error={row["error"]}', flush=True)
                 if requested is not None or '20 GiB' in row['error']:
                     return 3
                 continue

@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import argparse
 from collections import Counter
+from concurrent.futures import ThreadPoolExecutor
 import csv
 from datetime import datetime
 from difflib import SequenceMatcher
@@ -327,12 +328,24 @@ def analyze(path, source_row=None):
     }
 
 
+def analyze_and_save(path, examples=False):
+    row = analyze(path)
+    structured = row.pop('_structured')
+    output = STATE / ('samples' if examples or not path.stem.isdigit() or int(path.stem) < 7813 else '') / f'{path.stem}.json'
+    output.parent.mkdir(parents=True, exist_ok=True)
+    temp = output.with_suffix('.json.tmp')
+    temp.write_text(json.dumps(structured, ensure_ascii=False, indent=2), encoding='utf-8')
+    temp.replace(output)
+    return row
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('videos', nargs='*', type=Path)
     parser.add_argument('--examples', action='store_true')
     parser.add_argument('--check30', action='store_true')
     parser.add_argument('--all', action='store_true', help='Process every downloaded file in the selected set')
+    parser.add_argument('--workers', type=int, default=1)
     parser.add_argument('--output', type=Path, default=STATE / 'sample_ledger.csv')
     args = parser.parse_args()
     videos = args.videos or ([EXAMPLES / f'{n}.mp4' for n in range(13, 18)] if args.examples else [])
@@ -343,21 +356,22 @@ def main():
         videos = [base / f'{item["row"]}.mp4' for item in dataset]
     if not videos:
         parser.error('Pass videos or --examples')
-    rows = []
+    if args.workers < 1 or args.workers > 4:
+        parser.error('--workers must be between 1 and 4')
+    if args.workers > 1:
+        compile_ocr()  # Compile once before threads invoke the shared Vision executable.
+    available = []
     for path in videos:
-        if not path.is_file():
+        if path.is_file():
+            available.append(path)
+        else:
             print(f'WEBLEDGER_MISSING {path.name}', flush=True)
-            continue
-        row = analyze(path)
-        structured = row.pop('_structured')
-        output = STATE / ('samples' if args.examples or not path.stem.isdigit() or int(path.stem) < 7813 else '') / f'{path.stem}.json'
-        output.parent.mkdir(parents=True, exist_ok=True)
-        temp = output.with_suffix('.json.tmp')
-        temp.write_text(json.dumps(structured, ensure_ascii=False, indent=2), encoding='utf-8')
-        temp.replace(output)
-        rows.append(row)
-        print(f'WEBLEDGER {path.name} frames={row["sampled_frames"]} D={row["D"]!r} '
-              f'F={row["F"]} R={row["R"]} flags={row["flags"]}', flush=True)
+    rows = []
+    with ThreadPoolExecutor(max_workers=args.workers) as pool:
+        for path, row in zip(available, pool.map(lambda video: analyze_and_save(video, args.examples), available)):
+            rows.append(row)
+            print(f'WEBLEDGER {path.name} frames={row["sampled_frames"]} D={row["D"]!r} '
+                  f'F={row["F"]} R={row["R"]} flags={row["flags"]}', flush=True)
     if not rows:
         parser.error('No recordings were available')
     args.output.parent.mkdir(parents=True, exist_ok=True)
@@ -365,6 +379,7 @@ def main():
         writer = csv.DictWriter(handle, fieldnames=list(rows[0]))
         writer.writeheader()
         writer.writerows(rows)
+    print(f'WEBLEDGER_COMPLETE count={len(rows)} missing={len(videos)-len(available)}', flush=True)
     print(f'WEBLEDGER_OUTPUT {args.output}', flush=True)
 
 
