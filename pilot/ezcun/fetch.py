@@ -31,7 +31,7 @@ SHARE = 'https://www.ezcun.com/web/#/share?evidenceId='
 API = '/web/api/evid/getEvidencePreviewById'
 MIN_GAP = 5.5
 MIN_FREE = 20 * 1024**3
-CHECK_MODE = False
+DATASET = 'formal'
 FIELDS = ['row', 'sheet_row', 'evidenceId', 'file_size_bytes', 'duration_ms',
           'startWitnessTime', 'finishedWitnessTime', 'url_expires_at', 'status', 'error']
 
@@ -79,10 +79,8 @@ def entries():
     return found
 
 
-@lru_cache(maxsize=1)
-def check_entries():
-    """Read only the seven input fields in the frozen CSV, never workbook conclusions."""
-    path = ROOT / 'cases/tsxk_check30.csv'
+def _check_csv_entries(path, set_name):
+    """Read only input fields from a case list, never workbook conclusions."""
     found = []
     with path.open(newline='', encoding='utf-8-sig') as handle:
         for row in csv.DictReader(handle):
@@ -92,11 +90,25 @@ def check_entries():
             if not evid:
                 raise ValueError(f'No evidenceId for check row {number}')
             found.append({'row': number, 'sheet_row': '', 'evidenceId': evid,
+                          'source_set': set_name,
                           'input_title': row.get('标题', ''),
                           'input_url': f"https://www.bilibili.com/video/{row['BV']}"})
     if (len(found) != 30 or len({item['row'] for item in found}) != 30
             or len({item['evidenceId'] for item in found}) != 30):
         raise ValueError('Expected 30 distinct check rows')
+    return found
+
+
+@lru_cache(maxsize=1)
+def check_entries():
+    return _check_csv_entries(ROOT / 'cases/tsxk_check30.csv', 'check30')
+
+
+@lru_cache(maxsize=1)
+def check30b_entries():
+    found = _check_csv_entries(ROOT / 'cases/tsxk_check30b.csv', 'check30b')
+    if {item['row'] for item in found} & {item['row'] for item in check_entries()}:
+        raise ValueError('Second check set overlaps the frozen first check set')
     return found
 
 
@@ -108,7 +120,7 @@ def safe_write_json(path, data):
 
 
 def manifest_path():
-    return STATE / ('manifest_check30.csv' if CHECK_MODE else 'manifest.csv')
+    return STATE / (f'manifest_{DATASET}.csv' if DATASET != 'formal' else 'manifest.csv')
 
 
 def write_manifest(rows):
@@ -343,19 +355,22 @@ def download_http(signed_url, destination, expected_size):
 
 
 def run():
-    global CHECK_MODE, TARGET
+    global DATASET, TARGET
     parser = argparse.ArgumentParser()
-    parser.add_argument('--check30', action='store_true')
+    group = parser.add_mutually_exclusive_group()
+    group.add_argument('--check30', action='store_true')
+    group.add_argument('--check30b', action='store_true')
     parser.add_argument('--rows', help='Comma-separated row numbers to download after metadata is complete')
     args = parser.parse_args()
-    CHECK_MODE = args.check30
-    TARGET = Path('/Volumes/Element/ip-video-matcher-field-test/evidence_check30' if CHECK_MODE
-                  else '/Volumes/Element/ip-video-matcher-field-test/evidence')
-    items = check_entries() if CHECK_MODE else entries()
+    DATASET = 'check30b' if args.check30b else 'check30' if args.check30 else 'formal'
+    folder = 'evidence' if DATASET == 'formal' else f'evidence_{DATASET}'
+    TARGET = Path('/Volumes/Element/ip-video-matcher-field-test') / folder
+    items = (check30b_entries() if DATASET == 'check30b' else
+             check_entries() if DATASET == 'check30' else entries())
     requested = {int(value) for value in args.rows.split(',')} if args.rows else None
     if requested is not None and not requested <= {item['row'] for item in items}:
         parser.error('Some requested rows are absent from the selected dataset')
-    metadata_dir = STATE / ('metadata_check30' if CHECK_MODE else 'metadata')
+    metadata_dir = STATE / (f'metadata_{DATASET}' if DATASET != 'formal' else 'metadata')
     STATE.mkdir(parents=True, exist_ok=True)
     lock = (STATE / 'run.lock').open('w')
     try:
@@ -441,7 +456,8 @@ def run():
         if len(good) != len(items):
             print('METADATA_INCOMPLETE: downloads held until all entries succeed', flush=True)
             return 2
-        results_path = STATE / ('downloads_check30.csv' if CHECK_MODE else 'downloads.csv')
+        results_path = STATE / (f'downloads_{DATASET}.csv' if DATASET != 'formal'
+                                else 'downloads.csv')
         download_rows = {}
         if results_path.exists():
             with results_path.open(newline='') as handle:

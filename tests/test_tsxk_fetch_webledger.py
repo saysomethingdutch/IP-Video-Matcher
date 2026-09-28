@@ -1,7 +1,8 @@
 import unittest
+from unittest.mock import patch
 
-from pilot.ezcun.fetch import expiry_from_signed_url
-from pilot.webledger.ledger import sample_times
+from pilot.ezcun.fetch import check_entries, check30b_entries, expiry_from_signed_url
+from pilot.webledger.ledger import resolve_row, sample_times
 
 
 class TsxkFetchLedgerTests(unittest.TestCase):
@@ -14,6 +15,14 @@ class TsxkFetchLedgerTests(unittest.TestCase):
         times = sample_times(112.64)
         self.assertEqual(times[0], 0)
         self.assertEqual(times[-1], 112.14)
+
+    def test_second_check_list_uses_input_csv_and_is_disjoint(self):
+        first, second = check_entries(), check30b_entries()
+        self.assertEqual(len(second), 30)
+        self.assertFalse({item['row'] for item in first} &
+                         {item['row'] for item in second})
+        with patch('pilot.webledger.ledger.entries', side_effect=AssertionError('workbook opened')):
+            self.assertEqual(resolve_row(None, second[0]['row'])['source_set'], 'check30b')
 
 
 if __name__ == '__main__':
