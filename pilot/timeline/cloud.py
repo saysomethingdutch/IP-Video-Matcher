@@ -261,15 +261,22 @@ def ask_group(board: Path, legend: str, picture: Path, n: int,
     """Both providers on one collage, in parallel, each under its throttle: ({backend: answers}, [calls])."""
     prompt = PROMPT.format(legend=legend, n=n)
 
+    def call(backend):
+        """One provider call. A malformed reply that breaks the adapter (an empty JSON body under load) counts
+        as no answer for these frames — they stay unknown and flagged — instead of failing the whole row."""
+        try:
+            with THROTTLE[backend]:
+                return llm.ask(backend, prompt, images=[board, picture], required=("frames",), timeout=600)
+        except Exception as exc:
+            return llm.Reply(backend, llm.BACKENDS[backend].model, error=f"{type(exc).__name__}: {str(exc)[:200]}")
+
     def one(backend):
-        with THROTTLE[backend]:
-            reply = llm.ask(backend, prompt, images=[board, picture], required=("frames",), timeout=600)
+        reply = call(backend)
         if reply.error.startswith("HTTP 429"):
             THROTTLE[backend].limited()
         parsed = parse(reply.data, n)
         if parsed is None and not reply.error:                      # a reply that misses tiles: ask once more
-            with THROTTLE[backend]:
-                reply = llm.ask(backend, prompt, images=[board, picture], required=("frames",), timeout=600)
+            reply = call(backend)
             parsed = parse(reply.data, n)
         return backend, parsed, {"backend": backend, "model": reply.model, "seconds": reply.seconds,
                                  "usage": reply.usage, "error": reply.error, "fallback": reply.fallback,

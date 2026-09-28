@@ -239,6 +239,16 @@ class R1Test(unittest.TestCase):
             with a:
                 self.assertTrue(any(Path(tmp).glob("zhipu.*.lock")))
 
+    def test_a_broken_reply_is_no_answer_not_a_failed_row(self):
+        from unittest import mock
+        with tempfile.TemporaryDirectory() as tmp:
+            pic = Path(tmp) / "c.jpg"
+            cv2.imwrite(str(pic), np.full((72, 128, 3), 50, np.uint8))
+            with mock.patch.object(C.llm, "ask", side_effect=AttributeError("'NoneType' object has no attribute 'get'")):
+                answers, calls = C.ask_group(pic, "R1", pic, 1)
+        self.assertEqual(answers, {"zhipu": None, "deepseek": None})
+        self.assertTrue(all(c["error"].startswith("AttributeError") for c in calls))
+
     def test_captions_music_chip_and_lyrics_are_recorded(self):
         s, f = Lc.Screen(RULES), {"t": 1.0}
         s.screen(f, [item("就点名要布洛琳", y=0.85), item("J 海阔天空", y=0.9), item("词：黄家驹", y=0.4)],
