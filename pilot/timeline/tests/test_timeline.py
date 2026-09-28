@@ -279,6 +279,13 @@ class R2Test(unittest.TestCase):
         s, f = Lc.Screen(RULES), {"t": 1.0}
         s.screen(f, [item("AI虚构无不良导向")], np.full((90, 160, 3), 90, np.uint8))
         self.assertTrue(f["ai_note"])
+        for misread in ("创陰博元不於守向", "山鸡相无不段守购", "A 应相 不员守向"):            # the label cut at the top edge
+            f = {"t": 1.0}
+            s.screen(f, [item(misread, y=0.01)], np.full((90, 160, 3), 90, np.uint8))
+            self.assertTrue(f["ai_note"], misread)
+        f = {"t": 1.0}
+        s.screen(f, [item("无不良导向", y=0.85)], np.full((90, 160, 3), 90, np.uint8))    # a caption lower down: no
+        self.assertFalse(f["ai_note"])
 
     def test_frames_outside_the_actual_playback_and_login_popups_decide_nothing(self):
         frames = [{"t": 40.0, "local": {}}, {"t": 50.0, "local": {"login_box": True}}, {"t": 60.0, "dup_of": 50.0},

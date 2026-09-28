@@ -78,6 +78,8 @@ class Screen:
         self.login_words = tr.get("login_box_words") or []
         self.undecoded_to_cloud = tr.get("undecoded_qr") == "cloud"
         self.ai_note = re.compile(rules["timeline"]["ai_note_pattern"], re.I) if rules["timeline"].get("ai_note_pattern") else None
+        fuzzy = rules["timeline"].get("ai_note_top_fuzzy")
+        self.ai_note_top = re.compile(fuzzy) if fuzzy else None
 
     def _in(self, item: dict, where) -> bool:
         x, y, w, h = where
@@ -204,7 +206,9 @@ class Screen:
                              and not MUSIC_TAG.match(i["text"].strip())]
         frame["music_tag"] = any(MUSIC_TAG.match(i["text"].strip()) for i in items)
         frame["lyric"] = any(LYRIC.search(i["text"]) for i in items)
-        frame["ai_note"] = bool(self.ai_note and any(self.ai_note.search(i["text"]) for i in items))
+        frame["ai_note"] = bool(self.ai_note and any(self.ai_note.search(i["text"]) for i in items)) or bool(
+            self.ai_note_top and any(i["y"] + i["h"] / 2 < 0.2 and self.ai_note_top.search(re.sub(r"\s", "", i["text"]))
+                                     for i in items))
         if (r := self.reading(items)):
             frame["reading"] = list(r)
         return local
