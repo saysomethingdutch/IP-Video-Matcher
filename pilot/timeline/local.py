@@ -179,7 +179,12 @@ class Screen:
                     return cur, total
         return None
 
-    def screen(self, frame: dict, items: list[dict], img: np.ndarray) -> dict:
+    def ai_note_on_top(self, top_items: list[dict]) -> bool:
+        """The AI label read from the top band OCR'd again at 2× (WO-102-R2 A4)."""
+        return bool(self.ai_note_top) and any(self.ai_note_top.search(re.sub(r"\s", "", i["text"])) or
+                                              (self.ai_note and self.ai_note.search(i["text"])) for i in top_items)
+
+    def screen(self, frame: dict, items: list[dict], img: np.ndarray, top_items: list[dict] = ()) -> dict:
         """frame["local"]: content (or None), form, traffic, evidence; frame["ocr"]: text lines."""
         qrs = qr_codes(img)
         local = {"content": None, "form": "", "traffic": None, "evidence": []}
@@ -208,7 +213,7 @@ class Screen:
         frame["lyric"] = any(LYRIC.search(i["text"]) for i in items)
         frame["ai_note"] = bool(self.ai_note and any(self.ai_note.search(i["text"]) for i in items)) or bool(
             self.ai_note_top and any(i["y"] + i["h"] / 2 < 0.2 and self.ai_note_top.search(re.sub(r"\s", "", i["text"]))
-                                     for i in items))
+                                     for i in items)) or self.ai_note_on_top(top_items)
         if (r := self.reading(items)):
             frame["reading"] = list(r)
         return local

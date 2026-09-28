@@ -286,6 +286,9 @@ class R2Test(unittest.TestCase):
         f = {"t": 1.0}
         s.screen(f, [item("无不良导向", y=0.85)], np.full((90, 160, 3), 90, np.uint8))    # a caption lower down: no
         self.assertFalse(f["ai_note"])
+        f = {"t": 1.0}                                                            # the top band OCR'd again at 2×
+        s.screen(f, [item("A 应相光快子向", y=0.01)], np.full((90, 160, 3), 90, np.uint8), [item("A 应材光不供守向")])
+        self.assertTrue(f["ai_note"])
 
     def test_frames_outside_the_actual_playback_and_login_popups_decide_nothing(self):
         frames = [{"t": 40.0, "local": {}}, {"t": 50.0, "local": {"login_box": True}}, {"t": 60.0, "dup_of": 50.0},

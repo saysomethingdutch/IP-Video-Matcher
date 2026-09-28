@@ -19,7 +19,8 @@ from . import frames as F
 from . import local as Lc
 from . import segments as S
 
-VERSION = "wo102-4"
+VERSION = "wo102-5"
+TOP_BAND = [0, 0, 1, 0.2]           # OCR'd again at 2× for the AI label on the top edge (WO-102-R2 A4)
 SCENE_DIFF = 12.0                  # 64×36 grey mean absolute difference: below this a frame is the same scene
 llm.LOCAL_ALLOWED = False          # D-057 ④: the local vision model never decides a frame (and Ollama is Codex's)
 
@@ -153,9 +154,11 @@ def run_video(video: Path, out_dir: Path, rules: dict, *, row: str | None = None
     compile_ocr()                                                         # local screen
     todo = [f for f in frames if not f.get("dup_of")]
     ocr = {r["frame"]: r["items"] for r in parallel_ocr([f["path"] for f in todo])} if todo else {}
+    top = {r["frame"]: r["items"] for r in parallel_ocr([f["path"] for f in todo], crop=TOP_BAND, scale=2)} if todo else {}
     screen = Lc.Screen(rules)
     for f in todo:
-        screen.screen(f, ocr.get(Path(f["path"]).name, []), cv2.imread(f["path"]))
+        name = Path(f["path"]).name
+        screen.screen(f, ocr.get(name, []), cv2.imread(f["path"]), top.get(name, []))
     readings = [(f["t"], f["reading"]) for f in todo if f.get("reading")]
     start = cspan[0] if cspan else span[0]
     vclock = S.Clock(start, readings, anchors, duration)                  # the B站 video's own clock
