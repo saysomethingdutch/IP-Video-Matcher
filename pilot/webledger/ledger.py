@@ -21,6 +21,7 @@ import unicodedata
 
 from pilot.ezcun.fetch import entries, check_entries, STATE as EZCUN_STATE
 from pilot.webledger.progress import measure as measure_progress, decide as decide_progress
+from pilot.webledger.progress_r2 import decide as decide_progress_r2
 
 ROOT = Path(__file__).resolve().parents[2]
 STATE = ROOT / 'workspace/tsxk/webledger'
@@ -417,8 +418,12 @@ def analyze(path, source_row=None):
                 other_pages[0]['start'] = round(page_end, 2)
                 progress_points = [[t, p] for t, p in progress_points if t < page_end]
                 break
-    r_decision, progress_duration, playback_flags = decide_progress(
+    _, progress_duration, _ = decide_progress(
         progress_points, page_start or 0, page_end or 0, autoplay_after)
+    r2 = decide_progress_r2(progress_points, page_start or 0, page_end or 0)
+    r_decision = r2.complete
+    playback_flags = ([f'R2：{r2.reason}'] if r_decision is not True or '外推' in r2.basis
+                      else [])
     r_value = {True: '是', False: '否', None: '待核'}[r_decision]
     flags.extend(playback_flags)
     if title_same is False:
@@ -454,6 +459,8 @@ def analyze(path, source_row=None):
                           '播放器读数' if total_from_readouts else
                           '选集时长 OCR' if selected_duration else None,
         'complete': {'是': True, '否': False}.get(r_value),
+        'complete_basis': r2.basis,
+        'complete_reason': r2.reason,
         'title_same_as_input': title_same,
         'address_same_as_input': address_same,
         'tags': {'visible': tag_seen, 'items': list(dict.fromkeys(tag_text)), 'activity': None},
