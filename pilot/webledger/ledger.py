@@ -19,9 +19,10 @@ import subprocess
 import tempfile
 import unicodedata
 
-from pilot.ezcun.fetch import entries, check_entries, STATE as EZCUN_STATE
+from pilot.ezcun.fetch import entries, check_entries, check30b_entries, STATE as EZCUN_STATE
 from pilot.webledger.progress import measure as measure_progress, decide as decide_progress
 from pilot.webledger.progress_r2 import decide as decide_progress_r2
+from pilot.webledger.content_span import locate as locate_content
 
 ROOT = Path(__file__).resolve().parents[2]
 STATE = ROOT / 'workspace/tsxk/webledger'
@@ -29,6 +30,7 @@ OCR_SOURCE = ROOT / 'pilot/tools/ocr_vision.swift'
 OCR_BINARY = Path('/private/tmp/tsxk-webledger-ocr')
 EXAMPLES = Path('/Volumes/Element/ip-video-matcher-field-test/field-test/videos')
 BV_PATTERN = re.compile(r'BV[0-9A-Za-z]{10}')
+LOOSE_BV_PATTERN = re.compile(r'BV[0-9A-Za-z\u4e00-\u9fff]{10,12}')
 TIME_PATTERN = re.compile(r'(\d{1,2}:\d{2}(?::\d{2})?)\s*[/／]\s*(\d{1,2}:\d{2}(?::\d{2})?)')
 SINGLE_TIME = re.compile(r'^\d{1,2}:\d{2}(?::\d{2})?$')
 DATE_PATTERN = re.compile(r'20\d{2}[-/]\d{1,2}[-/]\d{1,2}\s+\d{1,2}:\d{2}:\d{2}')
@@ -82,10 +84,31 @@ def bv_distance(left, right):
 
 def address_observation(frame):
     for line in positioned(frame, 0, .82, .02, .11):
-        match = BV_PATTERN.search(line)
+        match = LOOSE_BV_PATTERN.search(line)
         if match:
-            return match.group(0), 'player_end_recommend_autoplay' in line
+            return match.group(0), ('player_end_recommend_autoplay' in line or
+                                    'player.switch' in line)
     return None, False
+
+
+def desktop_visible(frame):
+    """A missing address is not proof that Chrome closed; desktop icons are."""
+    text = ' '.join(positioned(frame, 0, .32, 0, .24))
+    return sum(label in text for label in ('此电脑', '回收站', 'App Center')) >= 2
+
+
+def tab_matches(frame, title):
+    if not title:
+        return False
+    return any(same_title(line, title) is True
+               for line in positioned(frame, 0, .7, 0, .045)
+               if '公证云' not in line and '见证实录' not in line)
+
+
+def error_page_times(records, start, end):
+    return [frame['t'] for frame in records if start <= frame['t'] < end and
+            any(('出错啦' in item['text'] or '安全风控' in item['text'] or
+                 '访问请求被拒绝' in item['text']) for item in frame['items'])]
 
 
 def refine_switch(path, last_target, first_other, target_bv):
@@ -121,11 +144,14 @@ def refine_switch(path, last_target, first_other, target_bv):
     return first_other
 
 
-def page_segments(records, source_bv, seconds, path):
+def page_segments(records, source_bv, seconds, path, source_title=None):
     observed = [(frame['t'], *address_observation(frame)) for frame in records]
+    same_tabs = [tab_matches(frame, source_title) for frame in records]
+    desktop = [desktop_visible(frame) for frame in records]
     target_bv = source_bv or next((bv for _, bv, _ in observed if bv), None)
     matches = [i for i, (_, bv, _) in enumerate(observed)
-               if bv and bv_distance(bv, target_bv) <= 2]
+               if (bv and bv_distance(bv, target_bv) <= 2) or
+               (not bv and same_tabs[i])]
     if not matches:
         return [], None, None, target_bv, [], False, ['原表 E 的目标 BV 未在录屏地址栏找到']
     first = matches[0]
@@ -147,11 +173,8 @@ def page_segments(records, source_bv, seconds, path):
                 continue
             switch_i = i
             break
-        if not bv and i + 1 < len(observed):
-            next_t, next_bv, _ = observed[i + 1]
-            if next_t - t >= 2 and not next_bv and not any(
-                    other and bv_distance(other, target_bv) <= 2
-                    for _, other, _ in observed[i + 2:]):
+        if not bv and not same_tabs[i] and i + 1 < len(observed):
+            if desktop[i] and desktop[i + 1] and not same_tabs[i + 1]:
                 closed_i = i
                 break
     if switch_i is not None:
@@ -182,7 +205,7 @@ def page_segments(records, source_bv, seconds, path):
             other_pages[0]['start'] = round(end, 2)
     flags = []
     if closed_i is not None:
-        flags.append('目标页面之后浏览器关闭')
+        flags.append('目标页面之后浏览器关闭（连续桌面帧）')
     return target_records, round(start, 2), round(end, 2), target_bv, other_pages, bool(
         switch_i is not None and observed[switch_i][2]), flags
 
@@ -327,7 +350,12 @@ def resolve_row(recording, source_row=None):
         source_row = int(recording.stem)
     if source_row is None:
         return None
-    return next((item for item in entries() + check_entries() if item['row'] == source_row), None)
+    if source_row > 8212:
+        return next((item for item in check_entries() + check30b_entries()
+                     if item['row'] == source_row), None)
+    if source_row >= 7813:
+        return next((item for item in entries() if item['row'] == source_row), None)
+    return None
 
 
 def format_finished(value):
@@ -346,7 +374,7 @@ def analyze(path, source_row=None):
     input_bv_match = BV_PATTERN.search(input_url)
     input_bv = input_bv_match.group(0) if input_bv_match else None
     records, page_start, page_end, target_bv, other_pages, autoplay_after, page_flags = page_segments(
-        all_records, input_bv, seconds, path)
+        all_records, input_bv, seconds, path, source['input_title'] if source else None)
     title_candidates, url_candidates, view_candidates, dates, up_candidates = [], [], [], [], []
     tag_seen = desc_seen = collection_seen = False
     tag_text, desc_text, collections = [], [], []
@@ -400,6 +428,10 @@ def analyze(path, source_row=None):
         if address_same:
             url = input_url
     flags = list(page_flags)
+    if page_start is not None and page_end is not None:
+        errors = error_page_times(all_records, page_start, page_end)
+        if errors:
+            flags.append(f'目标页出现 B 站报错页：{min(errors):.0f}–{max(errors):.0f}秒')
     if not title or title_votes < 2:
         flags.append('标题 OCR 证据不足')
     if not bv or bv_votes < 2:
@@ -421,6 +453,8 @@ def analyze(path, source_row=None):
     _, progress_duration, _ = decide_progress(
         progress_points, page_start or 0, page_end or 0, autoplay_after)
     r2 = decide_progress_r2(progress_points, page_start or 0, page_end or 0)
+    content = locate_content(progress_points, page_start, page_end, r2,
+                             page_uncertain=page_start is None or page_end is None)
     r_decision = r2.complete
     playback_flags = ([f'R2：{r2.reason}'] if r_decision is not True or '外推' in r2.basis
                       else [])
@@ -431,7 +465,8 @@ def analyze(path, source_row=None):
     if address_same is False:
         flags.append('录屏地址 BV 与原表 E 不同')
     row_number = source_row or (source['row'] if source else '')
-    metadata_folder = 'metadata_check30' if source and source['row'] > 8212 else 'metadata'
+    metadata_folder = (f"metadata_{source['source_set']}" if source and source.get('source_set')
+                       else 'metadata')
     metadata_path = EZCUN_STATE / metadata_folder / f'{row_number}.json'
     metadata = json.loads(metadata_path.read_text()) if source and metadata_path.exists() else {}
     certificate_path = EZCUN_STATE / 'certificates' / f'{row_number}.json'
@@ -461,6 +496,7 @@ def analyze(path, source_row=None):
         'complete': {'是': True, '否': False}.get(r_value),
         'complete_basis': r2.basis,
         'complete_reason': r2.reason,
+        **content,
         'title_same_as_input': title_same,
         'address_same_as_input': address_same,
         'tags': {'visible': tag_seen, 'items': list(dict.fromkeys(tag_text)), 'activity': None},
@@ -517,15 +553,18 @@ def main():
     parser.add_argument('videos', nargs='*', type=Path)
     parser.add_argument('--examples', action='store_true')
     parser.add_argument('--check30', action='store_true')
+    parser.add_argument('--check30b', action='store_true')
     parser.add_argument('--all', action='store_true', help='Process every downloaded file in the selected set')
     parser.add_argument('--workers', type=int, default=1)
     parser.add_argument('--output', type=Path, default=STATE / 'sample_ledger.csv')
     args = parser.parse_args()
     videos = args.videos or ([EXAMPLES / f'{n}.mp4' for n in range(13, 18)] if args.examples else [])
     if args.all:
-        dataset = check_entries() if args.check30 else entries()
-        base = Path('/Volumes/Element/ip-video-matcher-field-test/evidence_check30' if args.check30
-                    else '/Volumes/Element/ip-video-matcher-field-test/evidence')
+        if args.check30 and args.check30b:
+            parser.error('--check30 and --check30b cannot be combined')
+        dataset = check30b_entries() if args.check30b else check_entries() if args.check30 else entries()
+        folder = 'evidence_check30b' if args.check30b else 'evidence_check30' if args.check30 else 'evidence'
+        base = Path('/Volumes/Element/ip-video-matcher-field-test') / folder
         videos = [base / f'{item["row"]}.mp4' for item in dataset]
     if not videos:
         parser.error('Pass videos or --examples')
