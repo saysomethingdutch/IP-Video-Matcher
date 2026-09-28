@@ -28,6 +28,11 @@ def system_prompt(case: TsxkCase) -> tuple[str, dict]:
                     "colleague_skipped": not check_list.exists()}
 
 
+def span(a: float, b: float) -> str:
+    from pilot.timeline.cloud import mmss
+    return mmss(a) if round(a) == round(b) else f"{mmss(a)}-{mmss(b)}"
+
+
 def process_row(inputs: dict, led: dict | None, tl: dict | None, rules: dict, system: str, backend: str = "zhipu",
                 audio: dict | None = None) -> dict:
     title = (led or {}).get("title") or inputs.get("C") or ""
@@ -61,10 +66,16 @@ def process_row(inputs: dict, led: dict | None, tl: dict | None, rules: dict, sy
     forms = [x for x in K.FORMS if x in set(hints["forms"]) | set(data.get("T_extra") or [])]
     fields["T"] = FD._f(f"是（{'、'.join(forms)}）" if forms else FD.NO, "timeline+model",
                         "画面里的其他形式由时间线定，解说或文字里的小说、有声书由 GLM 定")
-    lines = FD.time_lines(tl, fields, y) + notes + [x for x in (FD.episode_note(title),) if x]
+    promo = SD.promotions(audio)                               # D-061 ④: a clue for X, with its time
+    promo_lines = [f"{span(p['start'], p['end'])}出现推广口播，{'、'.join(p['kinds'])}" for p in promo]
+    if promo and (fields.get("X") or {}).get("value") == FD.NO:
+        flags.append(FD.flag("yellow", f"X：有推广口播（{'、'.join(dict.fromkeys(k for p in promo for k in p['kinds']))}），"
+                                       "画面上没有网盘、群号等旁证，X 暂按否，请核对（D-061）"))
+    lines = FD.time_lines(tl, fields, y) + promo_lines + notes + [x for x in (FD.episode_note(title),) if x]
     fields["AC"] = FD._f(A.assemble(data.get("AC") or {}, lines), "model+code", "五段由 GLM 写，时间段等由代码填")
     return {"fields": fields, "flags": flags, "evidence": data.get("evidence") or [], "calls": res["calls"],
-            "errors": res["errors"], "prompt": res["prompt"], "sound": {"music": music, "uploader_speech": res["speech"]}}
+            "errors": res["errors"], "prompt": res["prompt"],
+            "sound": {"music": music, "uploader_speech": res["speech"], "promotions": promo}}
 
 
 def save(result: dict, path: Path) -> None:

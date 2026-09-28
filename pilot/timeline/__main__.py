@@ -63,6 +63,7 @@ def main(argv=None) -> int:
         p.add_argument("--workers", type=int)
     args = ap.parse_args(argv)
     case = TsxkCase(args.case if args.cmd == "video" else args.config)
+    C.share_slots(case.case_dir / ".cloud_slots")        # the 8/4 limit counts across processes (D-058)
     tl = case.raw["timeline"]
     upload = bool(tl.get("allow_image_upload")) and not args.no_upload
     board, legend = board_for(case) if upload else (None, "")

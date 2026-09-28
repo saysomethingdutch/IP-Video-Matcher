@@ -226,11 +226,18 @@ class R1Test(unittest.TestCase):
             self.assertEqual(P.seed_cache(prev, [frame2], "d3", cache2, C.BACKENDS), 1)
             self.assertIsNotNone(C.cached(frame2, "d3", cache2))
 
-    def test_throttle_drops_to_four_after_a_rate_limit(self):
-        t = C.Throttle()
-        self.assertEqual(t.cap, 8)
+    def test_throttle_drops_to_four_after_a_rate_limit_across_processes(self):
+        t = C.Throttle("zhipu")
+        self.assertEqual(t.cap(), 8)
         t.limited()
-        self.assertEqual(t.cap, 4)
+        self.assertEqual(t.cap(), 4)
+        with tempfile.TemporaryDirectory() as tmp:
+            a, b = C.Throttle("zhipu", slot_dir=Path(tmp)), C.Throttle("zhipu", slot_dir=Path(tmp))
+            self.assertEqual(a.cap(), 8)
+            a.limited()
+            self.assertEqual(b.cap(), 4)                     # another process sees the lower limit
+            with a:
+                self.assertTrue(any(Path(tmp).glob("zhipu.*.lock")))
 
     def test_captions_music_chip_and_lyrics_are_recorded(self):
         s, f = Lc.Screen(RULES), {"t": 1.0}

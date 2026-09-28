@@ -19,6 +19,9 @@ check_set:                                  # WO-102 §4。人工结论只有检
   seed: 20260927
   list: cases/tsxk_check30.csv
   evidence_dir: /Volumes/Element/ip-video-matcher-field-test/evidence_check30   # WO-101：检验集 30 条录屏
+  known_unreliable:                         # D-061：照冻结结果计分，出现分歧时注明原因，不为它们改规则
+    "8454": 声音有 10.78 秒被误判为口播（WO-103-R1 残留）
+    "8455": 画面上下颠倒，字幕读不出，132 秒口播不可靠（WO-103-R1 残留）
 
 evidence:
   dir: /Volumes/Element/ip-video-matcher-field-test/evidence        # WO-101 的下载目录

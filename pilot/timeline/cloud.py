@@ -12,9 +12,12 @@ and the board), so a rerun, a shorter play span or a regrouped collage costs not
 """
 from __future__ import annotations
 
+import fcntl
 import hashlib
 import json
+import os
 import threading
+import time
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
@@ -154,30 +157,74 @@ def cross(answers: dict[str, dict | None]) -> dict:
 
 
 class Throttle:
-    """At most `high` calls at a time to one provider; after a rate-limit reply (HTTP 429), at most `low` for the
-    rest of the run (D-058 ③: 8 at once, 4 when throttled)."""
+    """At most `high` calls at a time to one provider, across every process that points at the same slot
+    directory (the 400-row run, the check set and the samples may run together); after a rate-limit reply
+    (HTTP 429) at most `low` for everyone (D-058 ③: 8 at once, 4 when throttled). Slots are lock files held
+    with flock, so a crashed process frees its slot. Without a slot directory the limit is per process."""
 
-    def __init__(self, high: int = 8, low: int = 4):
-        self.high, self.low, self.cap, self.active = high, low, high, 0
+    def __init__(self, backend: str, high: int = 8, low: int = 4, slot_dir: Path | None = None):
+        self.backend, self.high, self.low = backend, high, low
+        self.slot_dir = slot_dir
+        self.cap_local, self.active = high, 0
         self.cond = threading.Condition()
+        self.held = threading.local()
+
+    def cap(self) -> int:
+        if self.slot_dir is None:
+            return self.cap_local
+        f = self.slot_dir / f"{self.backend}.cap"
+        try:
+            return max(1, min(self.high, int(f.read_text().strip())))
+        except (OSError, ValueError):
+            return self.high
 
     def __enter__(self):
-        with self.cond:
-            while self.active >= self.cap:
-                self.cond.wait()
-            self.active += 1
+        if self.slot_dir is None:
+            with self.cond:
+                while self.active >= self.cap_local:
+                    self.cond.wait()
+                self.active += 1
+            return self
+        self.slot_dir.mkdir(parents=True, exist_ok=True)
+        while True:
+            for i in range(self.cap()):
+                fd = os.open(self.slot_dir / f"{self.backend}.{i}.lock", os.O_CREAT | os.O_RDWR, 0o644)
+                try:
+                    fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                except BlockingIOError:
+                    os.close(fd)
+                    continue
+                self.held.fd = fd
+                return self
+            time.sleep(0.5)
 
     def __exit__(self, *exc):
-        with self.cond:
-            self.active -= 1
-            self.cond.notify_all()
+        if self.slot_dir is None:
+            with self.cond:
+                self.active -= 1
+                self.cond.notify_all()
+            return
+        fd = getattr(self.held, "fd", None)
+        if fd is not None:
+            fcntl.flock(fd, fcntl.LOCK_UN)
+            os.close(fd)
+            self.held.fd = None
 
     def limited(self) -> None:
-        with self.cond:
-            self.cap = min(self.cap, self.low)
+        if self.slot_dir is None:
+            with self.cond:
+                self.cap_local = min(self.cap_local, self.low)
+            return
+        (self.slot_dir / f"{self.backend}.cap").write_text(str(self.low))
 
 
-THROTTLE = {b: Throttle() for b in BACKENDS}
+THROTTLE = {b: Throttle(b) for b in BACKENDS}
+
+
+def share_slots(slot_dir: Path) -> None:
+    """Make every provider's limit count across processes (call once at start-up)."""
+    for b in BACKENDS:
+        THROTTLE[b] = Throttle(b, slot_dir=slot_dir)
 
 
 def prompt_digest(board: Path, legend: str) -> str:

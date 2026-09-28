@@ -9,7 +9,10 @@ from __future__ import annotations
 import json
 import re
 
+from contextlib import nullcontext
+
 from pilot.semantic import llm
+from pilot.timeline.cloud import THROTTLE
 
 from . import sound as SD
 from .fields import NO, YES
@@ -179,7 +182,8 @@ def classify(inputs: dict, led: dict | None, tl: dict | None, fixed: dict, hints
     calls, errors, data = [], [], None
     for attempt in range(2):
         p = prompt if not errors else prompt + "\n\n上一次的回答有这些问题，请改正后重新输出完整 JSON：\n- " + "\n- ".join(errors)
-        reply = llm.ask(backend, p, system=system, required=("AC",), timeout=900)
+        with THROTTLE.get(backend, nullcontext()):              # shares the provider limit with the timeline
+            reply = llm.ask(backend, p, system=system, required=("AC",), timeout=900)
         calls.append({"backend": reply.backend, "model": reply.model, "seconds": reply.seconds, "usage": reply.usage,
                       "error": reply.error, "fallback": reply.fallback})
         data = reply.data

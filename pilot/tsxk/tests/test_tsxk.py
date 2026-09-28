@@ -230,5 +230,60 @@ class SoundTest(unittest.TestCase):
         self.assertTrue(any(f["reason"].startswith("R：") for f in flags))
 
 
+
+class Step2Test(unittest.TestCase):
+    """WO-102-R1 step 2: WO-103-R1 facts, promotional speech as an X clue, the Owner's disagreement list."""
+
+    def audio(self, **facts):
+        base = {"music_only_spans": [], "lyric_subtitle_spans": [], "bilibili_music_tags": [], "subtitle_without_speech_spans": []}
+        base.update(facts)
+        return {"status": "ok", "segments": [{"text": "x"}], "uploader_speech": [], "music_facts": base}
+
+    def test_music_facts_give_the_four_kinds_of_evidence(self):
+        tl = {"segments": [seg(40, 99, "tsxk"), seg(100, 200, "unrelated")], "frames": []}
+        self.assertEqual(SD.music_evidence(self.audio(music_only_spans=[[50, 90]]), tl)["verdict"], "无旁证")
+        self.assertEqual(SD.music_evidence(self.audio(), tl)["verdict"], "否")
+        self.assertIn("非吞噬星空画面上的配乐", SD.music_evidence(self.audio(music_only_spans=[[120, 180]]), tl)["evidence"][0])
+        self.assertIn("听不到人声", SD.music_evidence(self.audio(subtitle_without_speech_spans=[[60, 70]]), tl)["evidence"][0])
+        self.assertIn("歌词字幕", SD.music_evidence(self.audio(lyric_subtitle_spans=[[150, 160]]), tl)["evidence"][0])
+        self.assertEqual(SD.music_evidence(self.audio(bilibili_music_tags=[{"t": 50}]), tl)["evidence"], ["B站音乐标签"])
+
+    def test_promotions_merge_and_are_labelled(self):
+        audio = {"status": "ok", "segments": [{"text": "x"}], "promotional_speech": [
+            {"text": "本视频需要一个硬币才能观看", "recording_start": 52.76, "recording_end": 55.24},
+            {"text": "喜欢的话欢迎关注投币支持一下", "recording_start": 56.0, "recording_end": 60.0},
+            {"text": "想提前看更多后续的不要再到处找资源了", "recording_start": 300.0, "recording_end": 304.0}]}
+        pr = SD.promotions(audio)
+        self.assertEqual([(round(p["start"]), round(p["end"])) for p in pr], [(53, 60), (300, 304)])
+        self.assertEqual(pr[0]["kinds"], ["要求投币或付费才能观看"])
+        self.assertEqual(pr[1]["kinds"], ["引导观众去别处找后续资源"])
+        line = SD.section({**audio, "uploader_speech": [], "redub_candidates": [{"text": "a"}]}, {"verdict": "否", "evidence": [],
+                                                                                                "series_music_seconds": 0})
+        self.assertIn("改配音候选 1 句", line)
+        self.assertIn("推广口播 3 句", line)
+
+    def test_uploader_speech_accepts_strings_or_objects(self):
+        self.assertEqual(SD.uploader_speech({"status": "ok", "segments": [{}], "uploader_speech": ["甲", {"text": "乙"}]}),
+                         ["甲", "乙"])
+
+    def test_disagreements_carry_basis_frames_and_notes(self):
+        from pathlib import Path as P
+        tl = {"segments": [seg(40, 80, "tsxk"), seg(81, 120, "unrelated")],
+              "frames": [{"t": 40.0, "content": "tsxk"}, {"t": 90.0, "content": "unrelated", "traffic": ["other"]}]}
+        report = {"scored": {"Y": {"disagree": [{"row": "8454", "machine": "偷渡", "human": "纯cut"}]}},
+                  "guidance_over_human": {"X": {"differ": [{"row": "8454", "machine": "是（其他）", "human": "否"}]},
+                                          "R": {"differ": [{"row": "8454", "machine": "是", "human": "否"}]}}}
+        rows = {"8454": {"fields": {"Y": {"basis": "GLM"}, "X": {"basis": "画面"}, "R": {"basis": "进度条"}}}}
+        items = CK.disagreements(report, rows, {"8454": (P("/t/8454"), tl)}, {"8454": P("/a/8454.json")},
+                                 {"8454": "声音不可靠"})
+        by = {e["column"]: e for e in items}
+        self.assertEqual(by["Y"]["frames"], ["/t/8454/frames/00040.00.jpg", "/t/8454/frames/00090.00.jpg"])
+        self.assertEqual(by["X"]["frames"], ["/t/8454/frames/00090.00.jpg"])
+        self.assertEqual((by["R"]["frames"], by["R"]["scored"]), ([], False))
+        self.assertIn("WO-101-R2", by["R"]["note"])
+        self.assertIn("声音不可靠", by["Y"]["note"])
+        self.assertIn("裁定：", CK.disagreements_md(items))
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -19,6 +19,7 @@ from pathlib import Path
 import openpyxl
 
 from pilot.semantic import llm
+from pilot.timeline.cloud import share_slots
 
 from . import check as CK
 from .config import TsxkCase
@@ -59,7 +60,7 @@ def sample_inputs(case: TsxkCase) -> dict[str, dict]:
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(prog="python -m pilot.tsxk")
     sub = ap.add_subparsers(dest="cmd", required=True)
-    for name in ("run", "samples", "check-list", "check-score"):
+    for name in ("run", "samples", "check-list", "check-run", "check-freeze", "check-score"):
         p = sub.add_parser(name)
         p.add_argument("config")
         p.add_argument("--rows", default="")
@@ -71,6 +72,7 @@ def main(argv=None) -> int:
     args = ap.parse_args(argv)
     llm.LOCAL_ALLOWED = False                      # GLM only (D-037); never the local model (Codex's Ollama)
     case = TsxkCase(args.config)
+    share_slots(case.case_dir / ".cloud_slots")     # one 8/4 limit per provider across processes (D-058)
     cs = case.raw["check_set"]
     if args.cmd == "check-list":
         rows = CK.filled_rows(Path(case.raw["workbook"]["path"]), cs["sheet"], cs["filled_column"])
@@ -78,27 +80,44 @@ def main(argv=None) -> int:
         CK.write_list(picked, case.path_of(cs["list"]))
         print(f"{len(rows)} 行已填，抽 {len(picked)} 行：", dict(__import__("collections").Counter(r["层"] for r in picked)))
         return 0
+    if args.cmd == "check-freeze":
+        return freeze(case)
     if args.cmd == "check-score":
         if not args.owner_approved:
             print("检验会读取人工结论，需要 Owner 放行：加 --owner-approved", file=sys.stderr)
             return 2
         ids = check_rows(case.path_of(cs["list"]))
-        mdir = Path(args.machine) if args.machine else case.case_dir / "check" / "rows"
-        machine = {rid: {c: (v or {}).get("value") for c, v in r["fields"].items()}
-                   for rid in ids if (r := _load(mdir / f"{rid}.json"))}
+        frozen = Path(args.machine) if args.machine else latest_frozen(case)
+        if frozen is None:
+            print("没有冻结的机器结果：先运行 check-freeze", file=sys.stderr)
+            return 2
+        rows = {rid: r for rid in ids if (r := _load(frozen / "rows" / f"{rid}.json"))}
+        machine = {rid: {c: (v or {}).get("value") for c, v in r["fields"].items()} for rid, r in rows.items()}
         report = CK.score(machine, CK.human_values(Path(case.raw["workbook"]["path"]), cs["sheet"], ids))
+        report["frozen"] = str(frozen)
+        tls = {rid: (case.case_dir / "check" / "timeline" / rid, _load(frozen / "timeline" / f"{rid}.json")) for rid in rows}
+        audio = {rid: case.case_dir / "audio" / f"{rid}.json" for rid in rows}
+        items = CK.disagreements(report, rows, tls, audio, {str(k): v for k, v in (cs.get("known_unreliable") or {}).items()})
         out = case.case_dir / "check"
-        out.mkdir(parents=True, exist_ok=True)
-        (out / "check_report.json").write_text(json.dumps(report, ensure_ascii=False, indent=1), encoding="utf-8")
+        (out / "check_report.json").write_text(json.dumps({**report, "disagreements": items}, ensure_ascii=False, indent=1),
+                                               encoding="utf-8")
         (out / "check_report.md").write_text(CK.markdown(report), encoding="utf-8")
+        (out / "disagreements.md").write_text(CK.disagreements_md(items), encoding="utf-8")
         print(CK.markdown(report))
+        print(f"分歧 {len(items)} 条：{out / 'disagreements.md'}")
         return 0
     rules = case.rules()
     system, info = system_prompt(case)
     print(f"风格样例：示例表 {info['guidance_examples']} 条，同事 {info['colleague_examples']} 条"
           + ("（检验名单未生成，未取同事样例）" if info["colleague_skipped"] else ""))
     backend = case.raw["models"]["text"]
-    if args.cmd == "samples":
+    if args.cmd == "check-run":
+        ids = sorted(check_rows(case.path_of(cs["list"])), key=int)
+        ids = [r.strip() for r in args.rows.split(",") if r.strip()] or ids
+        inputs = case.read_inputs(sheet=cs["sheet"], rows=ids)             # input columns only
+        jobs = [(r, inputs.get(r, {}), case.webledger(r), _load(case.case_dir / "check" / "timeline" / r / "timeline.json"),
+                 case.case_dir / "check" / "rows" / f"{r}.json", case.audio(r)) for r in ids]
+    elif args.cmd == "samples":
         inputs = sample_inputs(case)
         jobs = [(n, inputs.get(n, {}), case.webledger(f"samples/{n}"), _load(case.case_dir / "samples" / n / "timeline.json"),
                  case.case_dir / "samples" / n / "fields.json", case.audio(f"samples/{n}")) for n in args.videos.split(",")]
@@ -121,7 +140,45 @@ def main(argv=None) -> int:
             print(f"{rid}: Y={res['fields'].get('Y', {}).get('value')} U={res['fields']['U']['value']} "
                   f"V={res['fields']['V']['value']} Z={res['fields'].get('Z', {}).get('value')} "
                   f"{'标红' if any(f['level'] == 'red' for f in res['flags']) else ''}", flush=True)
-    _csv(results, case.case_dir / ("samples_fields.csv" if args.cmd == "samples" else "fields.csv"))
+    _csv(results, case.case_dir / {"samples": "samples_fields.csv", "check-run": "check/check_fields.csv"}.get(args.cmd, "fields.csv"))
+    return 0
+
+
+def latest_frozen(case: TsxkCase) -> Path | None:
+    snaps = sorted((case.case_dir / "check" / "frozen").glob("*/manifest.json"))
+    return snaps[-1].parent if snaps else None
+
+
+def freeze(case: TsxkCase) -> int:
+    """Copy the check set's machine rows and timelines into check/frozen/<time>/ with SHA-256 and the code commit,
+    before any human value is read (WO-102-R1 §2.1)."""
+    import hashlib
+    import shutil
+    import subprocess
+    from datetime import datetime
+    cs = case.raw["check_set"]
+    ids = sorted(check_rows(case.path_of(cs["list"])), key=int)
+    src = case.case_dir / "check"
+    missing = [r for r in ids if not (src / "rows" / f"{r}.json").exists() or not (src / "timeline" / r / "timeline.json").exists()]
+    if missing:
+        print(f"还有 {len(missing)} 行没有机器结果，不能冻结：{', '.join(missing)}", file=sys.stderr)
+        return 2
+    dest = src / "frozen" / datetime.now().strftime("%Y%m%d-%H%M%S")
+    files = {}
+    for r in ids:
+        for kind, path in (("rows", src / "rows" / f"{r}.json"), ("timeline", src / "timeline" / r / "timeline.json")):
+            (dest / kind).mkdir(parents=True, exist_ok=True)
+            target = dest / kind / f"{r}.json"
+            shutil.copy2(path, target)
+            files[f"{kind}/{r}.json"] = hashlib.sha256(target.read_bytes()).hexdigest()
+    here = Path(__file__).parent
+    commit = subprocess.run(["git", "rev-parse", "HEAD"], capture_output=True, text=True, cwd=here).stdout.strip()
+    dirty = bool(subprocess.run(["git", "status", "--porcelain", "--", "pilot", "cases"], capture_output=True, text=True,
+                                cwd=here).stdout.strip())
+    (dest / "manifest.json").write_text(json.dumps({"frozen_at": datetime.now().isoformat(timespec="seconds"), "rows": len(ids),
+                                                    "code_commit": commit, "code_dirty": dirty, "files": files},
+                                                   ensure_ascii=False, indent=1), encoding="utf-8")
+    print(f"已冻结 {len(ids)} 行：{dest}（代码 {commit[:7]}{'，有未提交改动' if dirty else ''}）")
     return 0
 
 

@@ -74,6 +74,9 @@ def ledger_fields(inputs: dict, led: dict | None) -> tuple[dict, list[dict]]:
         flags.append(flag("yellow", "L：台账没有取证完成时间"))
     complete = led.get("complete")
     basis = "；".join(str(v) for k, v in led.items() if k.startswith("complete_") and v not in (None, "", [], {}))[:200]
+    prog = led.get("progress")
+    if isinstance(prog, list) and prog and all(isinstance(x, (list, tuple)) and len(x) == 2 for x in prog):
+        basis = (basis + "；" if basis else "") + f"进度条 {prog[0][1]:.1%} → {prog[-1][1]:.1%}（{len(prog)} 点，WO-101-R1）"
     out["R"] = _f({True: YES, False: NO}.get(complete), "webledger", basis or "台账按进度条、播放器读数和时长判断")
     if complete is None:
         flags.append(flag("yellow", "R：台账判不了是否完整播放"))
