@@ -61,14 +61,20 @@ def ledger_fields(inputs: dict, led: dict | None) -> tuple[dict, list[dict]]:
                 [flag("yellow", "D、F、L、R 待台账（WO-101）")])
     out, flags = {}, []
     title = led.get("title")
-    out["D"] = _f(inputs.get("C") if _same(title, inputs.get("C")) else title, "webledger",
-                  "与 C 列一致，照抄" if _same(title, inputs.get("C")) else "播放页标题与 C 列不同，填播放页的")
+    same_title = led["title_same_as_input"] if isinstance(led.get("title_same_as_input"), bool) else _same(title, inputs.get("C"))
+    out["D"] = _f(inputs.get("C") if same_title else title, "webledger",
+                  "台账判定与 C 列一致，照抄" if same_title else "播放页标题与 C 列不同，填播放页的")
     addr = led.get("address")
-    out["F"] = _f("未显示" if not addr else (inputs.get("E") if _same(addr, inputs.get("E")) else addr), "webledger",
-                  "地址栏未显示" if not addr else ("与 E 列一致，照抄" if _same(addr, inputs.get("E")) else "地址与 E 列不同，填播放页的"))
-    out["L"] = _f(witness_time(led.get("finished_witness_time")), "webledger", "取证完成时间（证书或接口）")
+    same_addr = led["address_same_as_input"] if isinstance(led.get("address_same_as_input"), bool) else _same(addr, inputs.get("E"))
+    out["F"] = _f("未显示" if not addr else (inputs.get("E") if same_addr else addr), "webledger",
+                  "地址栏未显示" if not addr else ("台账判定与 E 列一致，照抄" if same_addr else "地址与 E 列不同，填播放页的"))
+    when = witness_time(led.get("finished_witness_time")) or witness_time(led.get("certificate_finished_time"))
+    out["L"] = _f(when, "webledger", "证书上的取证完成时间（WO-101-R1）")
+    if not when:
+        flags.append(flag("yellow", "L：台账没有取证完成时间"))
     complete = led.get("complete")
-    out["R"] = _f({True: YES, False: NO}.get(complete), "webledger", "台账按内容时长和播放器读数判断")
+    basis = "；".join(str(v) for k, v in led.items() if k.startswith("complete_") and v not in (None, "", [], {}))[:200]
+    out["R"] = _f({True: YES, False: NO}.get(complete), "webledger", basis or "台账按进度条、播放器读数和时长判断")
     if complete is None:
         flags.append(flag("yellow", "R：台账判不了是否完整播放"))
     return out, flags

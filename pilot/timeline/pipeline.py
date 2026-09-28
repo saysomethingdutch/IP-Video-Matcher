@@ -19,7 +19,7 @@ from . import frames as F
 from . import local as Lc
 from . import segments as S
 
-VERSION = "wo102-2"
+VERSION = "wo102-3"
 SCENE_DIFF = 12.0                  # 64×36 grey mean absolute difference: below this a frame is the same scene
 llm.LOCAL_ALLOWED = False          # D-057 ④: the local vision model never decides a frame (and Ollama is Codex's)
 
@@ -63,6 +63,23 @@ def scenes(todo: list[dict], need: list[dict]) -> tuple[list[dict], dict[float, 
     return send, scene_of
 
 
+def seed_cache(previous: dict | None, frames: list[dict], digest: str, cache_dir: Path, backends) -> int:
+    """Answers already paid for in the last timeline of this recording go into the per-frame cache, when they
+    came from the same prompt (same digest; "wo102-2" was the last per-collage version with this prompt)."""
+    if not previous or not (previous.get("prompt_digest") == digest or previous.get("version") == "wo102-2"):
+        return 0
+    paths = {f["t"]: f for f in frames}
+    n = 0
+    for old in previous.get("frames") or []:
+        answers = ((old.get("cloud") or {}).get("answers") or {})
+        f = paths.get(old.get("t"))
+        if f and all(answers.get(b) for b in backends) and not C.cached(f, digest, cache_dir, backends):
+            for b in backends:
+                C.store(f, digest, cache_dir, b, answers[b], {"seeded_from": previous.get("version")})
+            n += 1
+    return n
+
+
 def second_round(send: list[dict], scene_of: dict[float, float], todo: list[dict]) -> tuple[list[dict], dict]:
     """For a scene whose first frame came back unknown, up to three more of its frames, evenly spaced."""
     members: dict[float, list[dict]] = {}
@@ -95,8 +112,8 @@ def votes(members: dict[float, list[dict]], probes: list[dict]) -> dict[float, d
 
 def run_video(video: Path, out_dir: Path, rules: dict, *, row: str | None = None, span=None, anchors=(),
               duration: float | None = None, step: float = 10, upload: bool = False, board: Path | None = None,
-              legend: str = "", backends=C.BACKENDS, workers: int = 2, force: bool = False, ac_clock: str = "recording",
-              log=print) -> dict:
+              legend: str = "", backends=C.BACKENDS, workers: int = 4, force: bool = False, ac_clock: str = "recording",
+              cache_dir: Path | None = None, log=print) -> dict:
     """Timeline of one recording. span/anchors/duration come from the web ledger when it has them."""
     out_dir.mkdir(parents=True, exist_ok=True)
     result_path = out_dir / "timeline.json"
@@ -104,10 +121,10 @@ def run_video(video: Path, out_dir: Path, rules: dict, *, row: str | None = None
     span_source = "台账" if span else "时间线模块按画面变化粗估（台账未提供）"
     span = tuple(float(x) for x in span) if span else F.detect_span(video, info)
     fp = fingerprint(video, span, step, rules, upload, backends, anchors, duration) + ac_clock[0]
-    if not force and result_path.exists():
-        old = json.loads(result_path.read_text(encoding="utf-8"))
-        if old.get("fingerprint") == fp:
-            return old
+    previous = json.loads(result_path.read_text(encoding="utf-8")) if result_path.exists() else None
+    if not force and previous and previous.get("fingerprint") == fp:
+        return previous
+    cache_dir = cache_dir or out_dir.parent / "_frame_cache"
     t0 = time.monotonic()
     flags = [] if span_source == "台账" else [_flag("yellow", f"播放区间为{span_source}")]
     player = F.find_player(video, span, info)
@@ -135,8 +152,10 @@ def run_video(video: Path, out_dir: Path, rules: dict, *, row: str | None = None
     calls = []
     scene_votes: dict[float, dict] = {}
     probes: list[dict] = []
+    digest = C.prompt_digest(board, legend) if (upload and board) else None
     if send and upload and board:                                         # cloud, only what is left
-        cache = out_dir.parent / "_cloud_cache"
+        cache = cache_dir
+        seed_cache(previous, frames, digest, cache, backends)
         calls = C.label_frames(send, clock, board, legend, out_dir / "cloud_outbox", cache, workers, backends)
         probes, members = second_round(send, scene_of, todo)              # scenes whose first frame stayed unknown
         if probes:
@@ -183,7 +202,7 @@ def run_video(video: Path, out_dir: Path, rules: dict, *, row: str | None = None
             return False
         return screen.traffic(_ocr_image(img), Lc.qr_codes(img)) is not None
 
-    segs = S.segments(frames, clock, stop, probe)
+    segs = S.segments(frames, clock, stop, probe, start=span[0])
     traffic = S.traffic_intervals(frames, clock, check, step)
     unknown = [s for s in segs if s["content"] == "unknown"]
     if unknown:
@@ -202,8 +221,10 @@ def run_video(video: Path, out_dir: Path, rules: dict, *, row: str | None = None
               "frames_cloud": len(send) + len(probes) if (upload and board) else 0, "frames_same_scene": len(scene_of),
               "segments": segs, "traffic": traffic, "ac": S.ac_lines(segs, traffic), "summary": S.summary(frames, segs),
               "flags": flags, "calls": calls, "usage": usage, "seconds": round(time.monotonic() - t0, 1),
+              "prompt_digest": digest, "calls_cached": sum(1 for f in send + probes if (f.get("cloud") or {}).get("cached")),
               "frames": [{k: f.get(k) for k in ("t", "v", "content", "form", "source", "traffic", "kinds", "face", "text",
-                                                "dup_of", "ocr", "reading", "local", "cloud")} for f in frames]}
+                                                "dup_of", "ocr", "captions", "music_tag", "lyric", "reading", "local", "cloud")}
+                         for f in frames]}
     result_path.write_text(json.dumps(result, ensure_ascii=False, indent=1), encoding="utf-8")
     log(f"{row or video.name}: {len(frames)} 帧（去重 {dups}，本地定 {result['frames_local']}，云端 {result['frames_cloud']}），"
         f"{len(segs)} 段，引流 {len(traffic)} 处，{result['seconds']} 秒")

@@ -20,9 +20,13 @@ import cv2
 import numpy as np
 import yaml
 
+from pilot.content.extract import MUSIC_TAG            # B站's "music detected" chip, the note read as "J"
+
 RULES = Path(__file__).resolve().parents[1] / "semantic" / "rules_tsxk.yaml"
 SITE_DOMAINS = ("bilibili.com", "b23.tv", "biliapi", "hdslb.com", "acg.tv")      # the page itself, not traffic
 READING = re.compile(r"(?<!\d)(\d{1,2}:\d{2}(?::\d{2})?)\s*/\s*(\d{1,2}:\d{2}(?::\d{2})?)(?!\d)")
+LYRIC = re.compile(r"[♪♫]|歌词|作词|作曲|^\s*[词曲]\s*[:：]")        # WO-102-R1 §1.5: lyric captions
+CJK = re.compile(r"[\u4e00-\u9fff]")
 WEAK_WORDS = ("扫码", "扫一扫", "完整版", "全集资源", "资源已外泄", "付费")           # only with another cue
 TENCENT_PATTERNS = (r"(?:加|\+)\s*(?:vx|VX|v信|V信|威信|wx|WX)", r"微信\s*(?:号|群|扫|搜)", r"QQ\s*群", r"企鹅群")
 
@@ -176,6 +180,11 @@ class Screen:
             local["evidence"] += tr["evidence"]
         frame["local"] = local
         frame["ocr"] = [i["text"] for i in items if i.get("conf", 1) >= 0.3]
+        frame["captions"] = [i["text"] for i in items if i["y"] + i["h"] / 2 >= 0.72 and len(CJK.findall(i["text"])) >= 4
+                             and not self.logo_like(i["text"]) and not READING.search(i["text"])
+                             and not MUSIC_TAG.match(i["text"].strip())]
+        frame["music_tag"] = any(MUSIC_TAG.match(i["text"].strip()) for i in items)
+        frame["lyric"] = any(LYRIC.search(i["text"]) for i in items)
         if (r := self.reading(items)):
             frame["reading"] = list(r)
         return local

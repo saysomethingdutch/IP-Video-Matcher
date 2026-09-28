@@ -197,5 +197,47 @@ class SegmentsTest(unittest.TestCase):
         self.assertEqual(P.votes(members, probes), {})
 
 
+
+class R1Test(unittest.TestCase):
+    """WO-102-R1: frames on a fixed grid and answers cached per frame, so a shorter span costs nothing again."""
+
+    def test_grid_pick_is_a_subset_when_the_span_shrinks(self):
+        keys = [t + 0.27 for t in range(0, 300, 5)]
+        long = F.grid_pick(keys, (40.0, 290.0), 10)
+        short = F.grid_pick(keys, (45.0, 200.0), 10)
+        self.assertTrue(set(short) <= set(long))
+        self.assertEqual(long[0], (40.0, 40.27))
+        self.assertEqual(F.grid_pick([], (0.0, 20.0), 10), [(0.0, None), (10.0, None), (20.0, None)])   # exact seeks
+
+    def test_answers_are_cached_per_frame_and_seeded_from_the_last_timeline(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            pic = Path(tmp) / "00081.27.jpg"
+            cv2.imwrite(str(pic), np.full((72, 128, 3), 77, np.uint8))
+            frame, cache = {"t": 81.27, "path": str(pic)}, Path(tmp) / "cache"
+            answer = {"content": "tsxk", "form": "", "traffic": "none", "face": False, "text": False, "why": ""}
+            self.assertIsNone(C.cached(frame, "d1", cache))
+            C.store(frame, "d1", cache, "zhipu", answer, {})
+            self.assertIsNone(C.cached(frame, "d1", cache))                   # both providers are needed
+            C.store(frame, "d1", cache, "deepseek", answer, {})
+            self.assertEqual(C.cached(frame, "d1", cache)["zhipu"]["content"], "tsxk")
+            self.assertIsNone(C.cached(frame, "d2", cache))                   # another prompt or board
+            prev = {"version": "wo102-2", "frames": [{"t": 81.27, "cloud": {"answers": {"zhipu": answer, "deepseek": answer}}}]}
+            frame2, cache2 = {"t": 81.27, "path": str(pic)}, Path(tmp) / "cache2"
+            self.assertEqual(P.seed_cache(prev, [frame2], "d3", cache2, C.BACKENDS), 1)
+            self.assertIsNotNone(C.cached(frame2, "d3", cache2))
+
+    def test_throttle_drops_to_four_after_a_rate_limit(self):
+        t = C.Throttle()
+        self.assertEqual(t.cap, 8)
+        t.limited()
+        self.assertEqual(t.cap, 4)
+
+    def test_captions_music_chip_and_lyrics_are_recorded(self):
+        s, f = Lc.Screen(RULES), {"t": 1.0}
+        s.screen(f, [item("就点名要布洛琳", y=0.85), item("J 海阔天空", y=0.9), item("词：黄家驹", y=0.4)],
+                 np.full((90, 160, 3), 90, np.uint8))
+        self.assertEqual((f["captions"], f["music_tag"], f["lyric"]), (["就点名要布洛琳"], True, True))
+
+
 if __name__ == "__main__":
     unittest.main()

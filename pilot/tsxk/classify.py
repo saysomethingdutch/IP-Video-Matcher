@@ -11,6 +11,7 @@ import re
 
 from pilot.semantic import llm
 
+from . import sound as SD
 from .fields import NO, YES
 
 SECTIONS = ("主题概括", "段落情节", "新增创作要素", "比对意见", "其他")
@@ -43,6 +44,7 @@ SYSTEM = """你为短视频比对表填写几项判断和"视频说明"。判断
 def standards(rules: dict) -> str:
     c = rules["columns"]
     lines = [f"U 是否为解说：{c['U']['rule']}", f"V 是否仅增加背景音乐：{c['V']['rule']}",
+             f"V 的旁证：{c['V']['evidence']}",
              "Y 类别（有吞噬星空动画画面时，在下面几类里选）："]
     lines += [f"- {k}：{v}" for k, v in c["Y"]["categories"].items() if k in ANIME_Y]
     lines += ["Z 合理使用可能性："] + [f"- {k}：{v}" for k, v in c["Z"]["levels"].items()]
@@ -58,7 +60,8 @@ def examples_text(guide: list[dict], colleague: list[str]) -> str:
     return "\n\n".join(parts)
 
 
-def facts_text(inputs: dict, led: dict | None, tl: dict | None, fixed: dict, hints: dict) -> str:
+def facts_text(inputs: dict, led: dict | None, tl: dict | None, fixed: dict, hints: dict, audio: dict | None = None,
+               music: dict | None = None) -> str:
     title = (led or {}).get("title") or inputs.get("C") or ""
     lines = [f"【视频标题】{title}", f"【UP主】{inputs.get('G') or '未知'}"]
     led = led or {}
@@ -99,7 +102,7 @@ def facts_text(inputs: dict, led: dict | None, tl: dict | None, fixed: dict, hin
                 if len(t) >= 4 and t not in texts and not re.search(r"bilibili|登录|试看|弹幕", t, re.I):
                     texts.append(t)
         lines.append("【画面文字】" + (" / ".join(texts[:60]) if texts else "无"))
-    lines.append("【声音】未提供（音频不上传，本机声音这一路本单未跑）")
+    lines.append(SD.section(audio, music or SD.music_evidence(audio, tl)))
     return "\n".join(lines)
 
 
@@ -117,7 +120,8 @@ def _strings(ac: dict) -> list[str]:
     return out
 
 
-def check(data: dict | None, y_fixed: str | None, fixed: dict, tl: dict | None) -> list[str]:
+def check(data: dict | None, y_fixed: str | None, fixed: dict, tl: dict | None, music: dict | None = None,
+          speech: int = 0) -> list[str]:
     """Problems with a reply; empty when it can be used."""
     if not isinstance(data, dict):
         return ["回复不是 JSON 对象"]
@@ -157,13 +161,21 @@ def check(data: dict | None, y_fixed: str | None, fixed: dict, tl: dict | None) 
         errors.append("Y：纯cut 不能同时是解说或加了背景音乐（纯cut 的 V 填否）")
     if not y_fixed and y == "二创（解说类）" and data.get("U") != YES:
         errors.append("U：解说类的 U 应为是")
+    if data.get("V") == YES:                     # WO-102-R1 §1.5: only BGM added, and evidence that it was added
+        others = {s["content"] for s in (tl or {}).get("segments", [])} & {"unrelated", "creator", "traffic", "tsxk_other"}
+        if (music or {}).get("verdict") != YES:
+            errors.append("V：没有 UP 主配乐的旁证（原片画面加纯音乐不算），V 应为否")
+        elif others or speech or data.get("U") == YES:
+            errors.append("V：除配乐外还有其他新增内容（非原片画面、口播或解说），V 应为否")
     return errors
 
 
 def classify(inputs: dict, led: dict | None, tl: dict | None, fixed: dict, hints: dict, system: str,
-             backend: str = "zhipu") -> dict:
+             backend: str = "zhipu", audio: dict | None = None) -> dict:
     """{"data", "errors", "calls", "prompt"}: the reply after at most one retry."""
-    prompt = user_prompt(facts_text(inputs, led, tl, fixed, hints), hints.get("y_fixed"))
+    music = SD.music_evidence(audio, tl)
+    speech = len(SD.uploader_speech(audio))
+    prompt = user_prompt(facts_text(inputs, led, tl, fixed, hints, audio, music), hints.get("y_fixed"))
     calls, errors, data = [], [], None
     for attempt in range(2):
         p = prompt if not errors else prompt + "\n\n上一次的回答有这些问题，请改正后重新输出完整 JSON：\n- " + "\n- ".join(errors)
@@ -171,7 +183,7 @@ def classify(inputs: dict, led: dict | None, tl: dict | None, fixed: dict, hints
         calls.append({"backend": reply.backend, "model": reply.model, "seconds": reply.seconds, "usage": reply.usage,
                       "error": reply.error, "fallback": reply.fallback})
         data = reply.data
-        errors = [reply.error] if reply.error and data is None else check(data, hints.get("y_fixed"), fixed, tl)
+        errors = [reply.error] if reply.error and data is None else check(data, hints.get("y_fixed"), fixed, tl, music, speech)
         if not errors:
             break
-    return {"data": data, "errors": errors, "calls": calls, "prompt": prompt}
+    return {"data": data, "errors": errors, "calls": calls, "prompt": prompt, "music": music, "speech": speech}

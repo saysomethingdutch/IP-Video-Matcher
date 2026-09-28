@@ -8,6 +8,7 @@ from pilot.tsxk import check as CK
 from pilot.tsxk import classify as K
 from pilot.tsxk import fields as FD
 from pilot.tsxk import samples as SM
+from pilot.tsxk import sound as SD
 
 RULES = Lc.load_rules()
 
@@ -172,6 +173,61 @@ class SamplesTest(unittest.TestCase):
     def test_scrub_takes_out_times_episodes_and_shares(self):
         text = "【其他】\n1.02:47-5:17无关内容\n2.第108集的内容\n3.80%以上为无关内容"
         self.assertEqual(SM.scrub(text), "【其他】\n1.相关集数的内容\n2.大部分为无关内容")
+
+
+
+class SoundTest(unittest.TestCase):
+    """WO-102-R1 §1.2, §1.5: what the prompt hears, and the evidence that music was added by the uploader."""
+
+    def chunk(self, a, b, tags, text=""):
+        return {"recording_start": a, "recording_end": b, "tags": tags, "text": text}
+
+    def tl(self, frames, segs):
+        return {"segments": segs, "frames": frames}
+
+    def test_series_with_pure_music_is_no_evidence(self):
+        audio = {"status": "ok", "audio_chunks": [self.chunk(40, 60, ["BGM"])], "uploader_speech": []}
+        tl = self.tl([{"t": 50, "content": "tsxk", "captions": []}], [seg(40, 60, "tsxk")])
+        m = SD.music_evidence(audio, tl)
+        self.assertEqual((m["verdict"], m["series_music_seconds"]), ("无旁证", 20))
+        self.assertIn("只有原片画面加纯音乐", SD.section(audio, m))
+        self.assertNotIn("BGM", SD.section(audio, m))                       # never the raw share (D-047)
+
+    def test_the_four_kinds_of_evidence(self):
+        audio = {"status": "ok", "audio_chunks": [self.chunk(40, 60, ["BGM"]), self.chunk(60, 80, ["BGM"])]}
+        off = self.tl([{"t": 70, "content": "unrelated"}], [seg(40, 59, "tsxk"), seg(60, 80, "unrelated")])
+        self.assertIn("非吞噬星空画面上的配乐", SD.music_evidence(audio, off)["evidence"][0])
+        silent = self.tl([{"t": 50, "content": "tsxk", "captions": ["就点名要布洛琳"]}], [seg(40, 80, "tsxk")])
+        self.assertIn("听不到人声", SD.music_evidence(audio, silent)["evidence"][0])
+        lyric = self.tl([{"t": 50, "content": "creator", "lyric": True}], [seg(40, 80, "tsxk")])
+        self.assertIn("歌词字幕", "".join(SD.music_evidence(audio, lyric)["evidence"]))
+        chip = self.tl([{"t": 50, "content": "tsxk", "music_tag": True}], [seg(40, 80, "tsxk")])
+        self.assertEqual(SD.music_evidence(audio, chip)["evidence"], ["B站音乐标签"])
+
+    def test_no_music_no_audio_and_the_speech_line(self):
+        audio = {"status": "ok", "audio_chunks": [self.chunk(40, 44, ["Speech"], "大家好")], "uploader_speech": ["大家好"]}
+        m = SD.music_evidence(audio, self.tl([], [seg(40, 44, "tsxk")]))
+        self.assertEqual(m["verdict"], "否")
+        self.assertEqual(SD.section(audio, m), "【声音】UP主口播（过滤后）1 句：大家好；疑似UP主配乐：否")
+        self.assertIsNone(SD.music_evidence(None, None)["verdict"])
+        self.assertIn("未提供", SD.section(None, SD.music_evidence(None, None)))
+
+    def test_v_yes_needs_evidence_and_nothing_else_added(self):
+        reply = {"Y": "二创（单IP混剪类）", "U": "否", "V": "是", "Z": "中", "T_extra": [],
+                 "AC": {"主题概括": "混剪。", "段落情节": "打斗。", "新增创作要素": ["背景音乐"], "比对意见": "中等。", "其他": []}}
+        tl = {"segments": [seg(0, 60, "tsxk")]}
+        fixed = {"W": {"value": "否"}}
+        self.assertIn("没有 UP 主配乐的旁证", "".join(K.check(reply, None, fixed, tl, {"verdict": "无旁证"})))
+        self.assertEqual(K.check(reply, None, fixed, tl, {"verdict": "是"}), [])
+        self.assertIn("口播", "".join(K.check(reply, None, fixed, tl, {"verdict": "是"}, speech=3)))
+
+    def test_ledger_same_as_input_flags_and_certificate_time(self):
+        led = {"title": "OCR 读错的标题", "title_same_as_input": True, "address": "https://x", "address_same_as_input": False,
+               "complete": None, "finished_witness_time": None, "certificate_finished_time": "2026-04-01 09:05:01"}
+        fields, flags = FD.ledger_fields({"C": "原表标题", "E": "https://e"}, led)
+        self.assertEqual((fields["D"]["value"], fields["F"]["value"], fields["L"]["value"]),
+                         ("原表标题", "https://x", "2026/4/1 09:05:01"))
+        self.assertTrue(any(f["reason"].startswith("R：") for f in flags))
 
 
 if __name__ == "__main__":

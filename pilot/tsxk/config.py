@@ -73,6 +73,11 @@ class TsxkCase:
         path = self.path_of(self.raw["webledger"]["dir"]) / f"{row}.json"
         return json.loads(path.read_text(encoding="utf-8")) if path.exists() else None
 
+    def audio(self, row: str) -> dict | None:
+        """WO-103's local sound analysis: <case>/audio/<序号>.json (samples: audio/samples/<n>.json)."""
+        path = self.case_dir / "audio" / f"{row}.json"
+        return json.loads(path.read_text(encoding="utf-8")) if path.exists() else None
+
     def read_inputs(self, sheet: str | None = None, rows: list[str] | None = None) -> dict[str, dict]:
         """{序号: {column letter: value}} with the input columns only — never the output (conclusion) columns."""
         wb = self.raw["workbook"]

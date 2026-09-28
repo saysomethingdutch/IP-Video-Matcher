@@ -18,6 +18,7 @@ check_set:                                  # WO-102 §4。人工结论只有检
   size: 30
   seed: 20260927
   list: cases/tsxk_check30.csv
+  evidence_dir: /Volumes/Element/ip-video-matcher-field-test/evidence_check30   # WO-101：检验集 30 条录屏
 
 evidence:
   dir: /Volumes/Element/ip-video-matcher-field-test/evidence        # WO-101 的下载目录
@@ -42,7 +43,7 @@ timeline:
   step: 10
   allow_image_upload: true                 # D-057 ③：所有者授权本项目画面上云，长期有效；默认只发播放器区域
   backends: [zhipu, deepseek]              # GLM-5.3-Flash 与 DeepSeek-Flash 交叉，一致才采用（D-033）
-  workers: 4                               # 同时 4 组拼图；每组 GLM 与 DeepSeek 并行
+  workers: 4                               # 每行同时 4 组拼图；两家各自最多 8 路，被限流降到 4 路（D-058）
   series_refs:                             # 参考图板上的正片帧（带官方台标）：6 号罗峰特写，16 号人物、能量球
     - {video: 6.mp4, t: 60, box: [40, 244, 1120, 628]}
     - {video: 16.mp4, t: 121.27, box: [168, 258, 1122, 632]}

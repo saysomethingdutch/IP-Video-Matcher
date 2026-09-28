@@ -100,17 +100,17 @@ def main(argv=None) -> int:
     backend = case.raw["models"]["text"]
     if args.cmd == "samples":
         inputs = sample_inputs(case)
-        jobs = [(n, inputs.get(n, {}), None, _load(case.case_dir / "samples" / n / "timeline.json"),
-                 case.case_dir / "samples" / n / "fields.json") for n in args.videos.split(",")]
+        jobs = [(n, inputs.get(n, {}), case.webledger(f"samples/{n}"), _load(case.case_dir / "samples" / n / "timeline.json"),
+                 case.case_dir / "samples" / n / "fields.json", case.audio(f"samples/{n}")) for n in args.videos.split(",")]
     else:
         rows = [r.strip() for r in args.rows.split(",") if r.strip()] or case.rows
         inputs = case.read_inputs(rows=rows)
         jobs = [(r, inputs.get(r, {}), case.webledger(r), _load(case.case_dir / "timeline" / r / "timeline.json"),
-                 case.case_dir / "rows" / f"{r}.json") for r in rows]
+                 case.case_dir / "rows" / f"{r}.json", case.audio(r)) for r in rows]
 
     def one(job):
-        rid, inp, led, tl, path = job
-        res = process_row(inp, led, tl, rules, system, backend)
+        rid, inp, led, tl, path, audio = job
+        res = process_row(inp, led, tl, rules, system, backend, audio)
         save(res, path)
         return rid, res
 

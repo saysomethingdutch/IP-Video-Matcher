@@ -79,7 +79,7 @@ def _boundary(a: dict, b: dict, probe: Callable[[float], float | None] | None) -
     return b["t"]
 
 
-def segments(frames: list[dict], clock: Clock, stop: float, probe=None) -> list[dict]:
+def segments(frames: list[dict], clock: Clock, stop: float, probe=None, start: float | None = None) -> list[dict]:
     """[{start, end, content, form, frames, sources}] on `clock`; `stop` = where playback ends (recording s).
     probe(a, b) gives a function t → (> 0 when the picture at t looks more like frame b than frame a)."""
     runs = []
@@ -89,7 +89,8 @@ def segments(frames: list[dict], clock: Clock, stop: float, probe=None) -> list[
             runs[-1]["frames"].append(f)
         else:
             runs.append({"key": key, "frames": [f]})
-    starts = [runs[0]["frames"][0]["t"]]
+    first = runs[0]["frames"][0]["t"]
+    starts = [min(first, start) if start is not None else first]           # content starts when playback does
     for p, r in zip(runs, runs[1:]):
         a, b = p["frames"][-1], r["frames"][0]
         starts.append(_boundary(a, b, probe(a, b) if probe else None))
