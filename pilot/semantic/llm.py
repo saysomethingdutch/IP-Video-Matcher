@@ -108,7 +108,8 @@ def _image_b64(path: Path) -> str:
 
 def ask(backend_name: str, prompt: str, images: list[Path] = (), json_mode: bool = True,
         timeout: float = 300.0, retries: int = 1, max_tokens: int | None = None,
-        required: tuple[str, ...] = (), system: str | None = None, temperature: float = 0.0) -> Reply:
+        required: tuple[str, ...] = (), system: str | None = None, temperature: float = 0.0,
+        reasoning_effort: str | None = None) -> Reply:
     """max_tokens caps a local reply: qwen3:4b in JSON mode sometimes loops until the timeout, so a capped
     reply that does not parse is retried once without JSON mode. Cloud replies are not capped (their
     thinking tokens count against the cap). A system prompt goes first, so a provider that caches prompt
@@ -144,6 +145,10 @@ def ask(backend_name: str, prompt: str, images: list[Path] = (), json_mode: bool
         content.append({"type": "text", "text": prompt})
         messages = ([{"role": "system", "content": system}] if system else []) + [{"role": "user", "content": content}]
         payload = {"model": b.model, "messages": messages, "temperature": temperature}
+        if reasoning_effort is not None:
+            if b.name != 'zhipu' or reasoning_effort not in ('low', 'high', 'max'):
+                raise ValueError('reasoning_effort is supported here only for Zhipu low/high/max')
+            payload['reasoning_effort'] = reasoning_effort
     reply.usage = {"prompt": 0, "completion": 0, "reasoning": 0, "cached": 0}
     if b.key_env:
         retries = max(retries, 2)                  # cloud: proxy and rate-limit errors are usually transient
