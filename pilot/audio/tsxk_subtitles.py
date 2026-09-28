@@ -12,7 +12,7 @@ import tempfile
 import unicodedata
 
 import numpy as np
-from PIL import Image
+from PIL import Image, ImageOps
 
 ROOT = Path(__file__).resolve().parents[2]
 STATE = ROOT / 'workspace/tsxk/audio/subtitles'
@@ -89,51 +89,84 @@ def _subtitle_crop(panel: Image.Image, mode: str):
     return panel.resize((panel.width * 4, panel.height * 4), Image.Resampling.LANCZOS)
 
 
-def detect_orientation(video: Path, start: float, end: float):
-    """Compare local OCR of portrait content in three rotations; no upload."""
+def _wide_panel(frame: np.ndarray) -> Image.Image:
+    """Use the player rectangle, excluding the upright Bilibili page around it."""
+    x0, _, x1, bottom_strip = player_strip(frame)
+    left, right = max(0, x0 - 25), min(frame.shape[1], x1 + 25)
+    bottom = min(frame.shape[0], bottom_strip + 7)
+    top = max(0, int(bottom - (right - left) * 9 / 16))
+    return Image.fromarray(frame[top:bottom, left:right])
+
+
+def _wide_subtitle_crop(panel: Image.Image, mode: str) -> Image.Image:
+    if mode == 'rot180':
+        panel = panel.rotate(180, expand=True)
+    elif mode == 'mirror':
+        panel = ImageOps.mirror(panel)
+    panel = panel.crop((int(.04 * panel.width), int(.58 * panel.height),
+                        int(.96 * panel.width), int(.98 * panel.height)))
+    return panel.resize((panel.width * 2, panel.height * 2), Image.Resampling.BICUBIC)
+
+
+def detect_orientation(video: Path, start: float, end: float, with_scores: bool = False):
+    """Compare local subtitle OCR after portrait/wide transformations; no upload."""
     samples = []
+    all_frames = []
     with tempfile.TemporaryDirectory(prefix='tsxk-orientation-') as temp:
-        for index, fraction in enumerate((.12, .23, .35, .47, .59, .71, .83, .94)):
+        for index, fraction in enumerate((index + .5) / 24 for index in range(24)):
             t = start + (end - start) * fraction
             target = Path(temp) / f'frame-{index}.jpg'
             subprocess.run(['ffmpeg', '-hide_banner', '-loglevel', 'error', '-ss', str(t),
                             '-i', str(video), '-frames:v', '1', '-vf', 'scale=960:540',
                             str(target), '-y'], capture_output=True, check=True)
             frame = np.array(Image.open(target).convert('RGB'))
+            all_frames.append(frame)
             bounds = portrait_bounds(frame)
             if bounds:
                 samples.append((frame, bounds))
-        if len(samples) < 5:
-            return 'normal'
+        portrait = len(samples) >= 5
         files = {}
-        for index, (frame, (x0, y0, x1, y1)) in enumerate(samples):
-            panel = Image.fromarray(frame[y0:y1, x0:x1])
-            for mode in ('normal', 'rot90', 'rot270'):
+        chosen = samples if portrait else []
+        if not portrait:
+            chosen = [(frame, None) for frame in all_frames]
+        modes = ('normal', 'rot90', 'rot270') if portrait else ('normal', 'rot180', 'mirror')
+        for index, (frame, bounds) in enumerate(chosen):
+            panel = (Image.fromarray(frame[bounds[1]:bounds[3], bounds[0]:bounds[2]])
+                     if portrait else _wide_panel(frame))
+            for mode in modes:
                 file = Path(temp) / f'ocr-{index}-{mode}.jpg'
-                _subtitle_crop(panel, mode).save(file, quality=92)
+                (_subtitle_crop(panel, mode) if portrait else
+                 _wide_subtitle_crop(panel, mode)).save(file, quality=92)
                 files[file.name] = mode
         process = subprocess.run([str(OCR_BINARY), *(str(Path(temp) / name) for name in files)],
                                  capture_output=True, text=True)
-        if process.returncode:
+        if process.returncode or 'OCR failed' in process.stderr:
             raise RuntimeError(f'Orientation OCR failed: {process.stderr[:250]}')
-        scores = Counter()
+        entries = {mode: [] for mode in modes}
         for line in process.stdout.splitlines():
             if not line.startswith('{'):
                 continue
             result = json.loads(line)
             mode = files.get(result['frame'])
             if mode:
-                score = sum(min(24, len(re.findall(r'[\u4e00-\u9fff]', item['text'])))
-                            for item in result['items'] if not any(u in item['text'] for u in UI))
-                scores[mode] += score
-        winner = max(('normal', 'rot90', 'rot270'), key=lambda mode: scores[mode])
-        return winner if winner != 'normal' and scores[winner] >= scores['normal'] + 15 else 'normal'
+                entries[mode].extend(item['text'] for item in result['items']
+                                     if not any(u in item['text'] for u in UI))
+        scores = Counter()
+        for mode, values in entries.items():
+            counts = Counter(re.sub(r'\W', '', value) for value in values)
+            scores[mode] = sum(min(24, len(re.findall(r'[\u4e00-\u9fff]', value)))
+                               for value in values if counts[re.sub(r'\W', '', value)] < 4)
+        winner = max(modes, key=lambda mode: scores[mode])
+        selected = (winner if winner != 'normal' and scores[winner] >= 30
+                    and scores[winner] >= max(scores['normal'] + 25, scores['normal'] * 1.8)
+                    else 'normal')
+        return (selected, dict(scores)) if with_scores else selected
 
 
 def _ocr_group(group):
     process = subprocess.run([str(OCR_BINARY), *(str(p) for _, p, _, _ in group)],
                              capture_output=True, text=True)
-    if process.returncode:
+    if process.returncode or 'OCR failed' in process.stderr:
         raise RuntimeError(f'Subtitle OCR failed: {process.stderr[:250]}')
     parsed = {j['frame']: j for j in (json.loads(line) for line in process.stdout.splitlines()
                                       if line.startswith('{'))}
@@ -160,14 +193,14 @@ def _ocr_group(group):
                 if re.search(r'\d\d:\d\d\s*[/／]\s*\d\d:\d\d', value):
                     continue
                 items.append({'text': value, 'x': round(x, 4), 'y': round(y, 4)})
-        records.append({'t': t, 'items': items})
+        records.append({'t': t, 'items': items, 'orientation': mode})
         file.unlink(missing_ok=True)
     return records
 
 
 def subtitles(video: Path, start: float, end: float):
     STATE.mkdir(parents=True, exist_ok=True)
-    fingerprint = hashlib.sha256(f'{video.resolve()}:{video.stat().st_size}:{start:.2f}:{end:.2f}:r4'.encode()).hexdigest()[:16]
+    fingerprint = hashlib.sha256(f'{video.resolve()}:{video.stat().st_size}:{start:.2f}:{end:.2f}:r6'.encode()).hexdigest()[:16]
     cache = STATE / f'{video.stem}-{fingerprint}.jsonl'
     if cache.exists():
         return [json.loads(line) for line in cache.read_text().splitlines()]
@@ -179,8 +212,10 @@ def subtitles(video: Path, start: float, end: float):
         ).hexdigest()[:16]
         prior = STATE / f'{video.stem}-{older}.jsonl'
         if prior.exists():
-            cache.write_bytes(prior.read_bytes())
-            return [json.loads(line) for line in cache.read_text().splitlines()]
+            records = [{**json.loads(line), 'orientation': 'normal'}
+                       for line in prior.read_text().splitlines()]
+            cache.write_text(''.join(json.dumps(r, ensure_ascii=False) + '\n' for r in records))
+            return records
     start_second = int(start)
     length = max(0, int(end - start_second + .999))
     process = subprocess.Popen(
@@ -214,6 +249,9 @@ def subtitles(video: Path, start: float, end: float):
                     x0, y0, x1, y1 = bounds
                     crop = Image.fromarray(frame[y0:y1, x0:x1]).resize(
                         ((x1 - x0) * 2, (y1 - y0) * 2), Image.Resampling.BICUBIC)
+                elif orientation in ('rot180', 'mirror'):
+                    bounds = (0, 0, 960, 540)
+                    crop = _wide_subtitle_crop(_wide_panel(frame), orientation)
                 else:
                     bounds = portrait_bounds(frame)
                     if bounds is None:
@@ -275,7 +313,7 @@ def pinyin_values(values):
 
 
 def match_caption(text, start, end, records, romanized):
-    nearby = [item['text'] for frame in records if start - 2 <= frame['t'] <= end + 2
+    nearby = [item['text'] for frame in records if start - 4 <= frame['t'] <= end + 4
               for item in frame['items']]
     if not nearby:
         return 0.0, None, False
@@ -295,6 +333,11 @@ def match_caption(text, start, end, records, romanized):
             coverage = sum(block.size for block in matcher.get_matching_blocks()) / len(a)
             if coverage >= .85:
                 similarity = max(similarity, coverage)
+        # One four-second ASR chunk may contain only half of a displayed line.
+        # Require a substantial common phrase, rather than a shared short word.
+        overlap = matcher.find_longest_match(0, len(a), 0, len(b)).size
+        if min(len(a), len(b)) >= 8 and overlap >= 8 and overlap / min(len(a), len(b)) >= .60:
+            similarity = max(similarity, .80)
         scored.append((similarity, value))
     if not scored:
         return 0.0, None, True

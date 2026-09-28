@@ -15,16 +15,17 @@ from pathlib import Path
 import re
 import shutil
 import tempfile
+import wave
 
 from pilot.audio.pipeline import _extract_wav, _model, decode_tags, SPLIT
 from pilot.audio.tsxk import MODEL, ROOT, STATE, SAMPLES, recording_duration, video_time
 from pilot.audio.tsxk_subtitles import subtitles, pinyin_values, match_caption
 from pilot.semantic.llm import ask
 
-VERSION = 'WO-103-R1-v4'
-MUSIC_FACTS_VERSION = 'r3'
-REDUB_VERSION = 'r6'
-SPEECH_POLICY_VERSION = 'r4'
+VERSION = 'WO-103-R2-v2'
+MUSIC_FACTS_VERSION = 'r4'
+REDUB_VERSION = 'r7'
+SPEECH_POLICY_VERSION = 'r5'
 ROLE_MODEL_SETTING = 'reasoning-low'
 OUTPUT = STATE / 'audio'
 TRANSCRIPTS = OUTPUT / 'transcripts_r1'
@@ -47,7 +48,8 @@ SPEECH_MATCH_THRESHOLD = .58
 def recording(row, group):
     if group == 'samples':
         return SAMPLES / f'{row}.mp4', STATE / 'webledger/samples' / f'{row}.json', OUTPUT / 'samples' / f'{row}.json'
-    directory = 'evidence' if group == 'formal' else 'evidence_check30'
+    directory = {'formal': 'evidence', 'check30': 'evidence_check30',
+                 'check30b': 'evidence_check30b'}[group]
     return (EVIDENCE_ROOT / directory / f'{row}.mp4',
             STATE / 'webledger' / f'{row}.json', OUTPUT / f'{row}.json')
 
@@ -56,8 +58,9 @@ def selected(group):
     if group == 'samples':
         return list(range(13, 18))
     if group == 'formal':
-        return [*VALIDATION_FULL, *VALIDATION_EPISODE_CLIPS, *VALIDATION_COMMENTARY]
-    with (STATE / 'ezcun/manifest_check30.csv').open(newline='') as handle:
+        return list(range(7813, 8213))
+    manifest = 'manifest_check30b.csv' if group == 'check30b' else 'manifest_check30.csv'
+    with (STATE / 'ezcun' / manifest).open(newline='') as handle:
         return [int(item['row']) for item in csv.DictReader(handle)]
 
 
@@ -83,6 +86,17 @@ def transcribe(video, start, end, prior, fingerprint, model_box):
             while t < b - .15:
                 stop = min(b, t + 4.0)
                 _extract_wav(video, t, stop, wav)
+                # kaldi-native-fbank crashes on an all-zero PCM chunk (seen in
+                # a muted Bilibili error page). There is no speech to decode.
+                with wave.open(str(wav), 'rb') as stream:
+                    pcm = stream.readframes(stream.getnframes())
+                    digital_silence = stream.getsampwidth() == 2 and not any(pcm)
+                if digital_silence:
+                    chunks.append({'recording_start': round(t, 2),
+                                   'recording_end': round(stop, 2), 'text': '',
+                                   'tags': [], 'raw_model_text': ''})
+                    t = stop
+                    continue
                 if model_box[0] is None:
                     model_box[0] = _model(MODEL)
                 with redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()):
@@ -258,7 +272,7 @@ def redub_candidates(clauses, frames):
              'basis': basis} for c, basis in sorted(found, key=lambda pair: pair[0]['recording_start'])]
 
 
-def speech_selection(clauses):
+def speech_selection(clauses, played):
     """Keep short calls to action visible without treating them as commentary."""
     eligible = sorted((c for c in clauses if c.get('speech_type') == '旁白讲解'
                        and c['caption_similarity'] < SPEECH_MATCH_THRESHOLD
@@ -278,7 +292,9 @@ def speech_selection(clauses):
     promo_ids = {id(c) for c in promotions}
     candidates = [c for c in eligible if id(c) not in promo_ids]
     seconds = sum(c['recording_end'] - c['recording_start'] for c in candidates)
-    return candidates if seconds >= 10 else [], promotions, round(seconds if seconds >= 10 else 0, 2)
+    qualifies = seconds >= 10 and played > 0 and seconds / played >= .03
+    return (candidates if qualifies else [], promotions,
+            round(seconds if qualifies else 0, 2), round(seconds, 2))
 
 
 def music_facts(chunks, frames, ledger, clauses):
@@ -321,7 +337,8 @@ def analyze(row, video, ledger, prior, fingerprint, model_box):
     frames = subtitles(video, start, end)
     clauses = clauses_from_chunks(chunks)
     usage = classify(row, fingerprint, clauses, frames) if clauses else {}
-    uploader, promotion, uploader_seconds = speech_selection(clauses)
+    played = end - start
+    uploader, promotion, uploader_seconds, candidate_seconds = speech_selection(clauses, played)
     redub = redub_candidates(clauses, frames)
     redub_keys = {(c['recording_start'], c['recording_end']) for c in redub}
     segments = []
@@ -334,7 +351,6 @@ def analyze(row, video, ledger, prior, fingerprint, model_box):
                 'source' if clause['caption_similarity'] >= MATCH_THRESHOLD else 'uncertain')
         segments.append({**clause, 'start': a, 'end': b, 'timestamp_basis': basis,
                          'kind': kind, 'episode': None})
-    played = end - start
     speech = sum(c['recording_end'] - c['recording_start'] for c in chunks
                  if 'Speech' in (c.get('tags') or []) or re.search(r'[\u4e00-\u9fff]{2}', c['text']))
     bgm = sum(c['recording_end'] - c['recording_start'] for c in chunks
@@ -345,10 +361,13 @@ def analyze(row, video, ledger, prior, fingerprint, model_box):
             'segments': segments, 'transcript': ''.join(c['text'] for c in chunks),
             'uploader_speech': [c['text'] for c in uploader],
             'uploader_speech_seconds': uploader_seconds,
+            'uploader_candidate_seconds': candidate_seconds,
+            'uploader_candidate_ratio': round(candidate_seconds / played, 4),
             'promotional_speech': [{'text': c['text'], 'recording_start': c['recording_start'],
                                     'recording_end': c['recording_end']} for c in promotion],
             'speech_policy_version': SPEECH_POLICY_VERSION,
             'redub_candidates': redub, 'redub_version': REDUB_VERSION,
+            'subtitle_orientation': frames[0].get('orientation', 'normal') if frames else 'normal',
             'speech_ratio': round(speech / played, 3), 'bgm_ratio': round(bgm / played, 3),
             'events': {'speech': round(speech / played, 3), 'bgm': round(bgm / played, 3)},
             'music_facts': facts, 'music_facts_version': MUSIC_FACTS_VERSION,
@@ -359,6 +378,8 @@ def analyze(row, video, ledger, prior, fingerprint, model_box):
 
 
 def run(group, rows=None):
+    if group == 'check30':
+        raise RuntimeError('R1 check30 outputs are frozen; R2 may only run formal rows and samples')
     OUTPUT.mkdir(parents=True, exist_ok=True)
     lock = OUTPUT / '.run.lock'
     counts = Counter()
@@ -392,9 +413,13 @@ def run(group, rows=None):
                         clause['kind'] = ('redub' if key in keys else
                                           'source' if clause['caption_similarity'] >= MATCH_THRESHOLD
                                           else 'uncertain')
-                    uploader, promotion, seconds = speech_selection(prior['segments'])
+                    played = prior.get('played_seconds') or 0
+                    uploader, promotion, seconds, candidate_seconds = speech_selection(
+                        prior['segments'], played)
                     prior['uploader_speech'] = [c['text'] for c in uploader]
                     prior['uploader_speech_seconds'] = seconds
+                    prior['uploader_candidate_seconds'] = candidate_seconds
+                    prior['uploader_candidate_ratio'] = round(candidate_seconds / played, 4) if played else 0
                     prior['promotional_speech'] = [
                         {'text': c['text'], 'recording_start': c['recording_start'],
                          'recording_end': c['recording_end']} for c in promotion]
@@ -417,7 +442,7 @@ def run(group, rows=None):
                     counts['cached'] += 1
                 continue
             if prior and prior.get('audio_chunks'):
-                backup = OUTPUT / 'v3_backup' / ('samples' if group == 'samples' else '') / f'{row}.json'
+                backup = OUTPUT / 'r1_backup' / ('samples' if group == 'samples' else '') / f'{row}.json'
                 backup.parent.mkdir(parents=True, exist_ok=True)
                 if not backup.exists():
                     shutil.copyfile(output, backup)
@@ -432,18 +457,18 @@ def run(group, rows=None):
             temp.write_text(json.dumps(result, ensure_ascii=False, indent=2))
             temp.replace(output)
             counts[result['status']] += 1
-            print(f'AUDIO_R1 {group} {row} {result["status"]} '
+            print(f'AUDIO_R2 {group} {row} {result["status"]} '
                   f'up_seconds={result.get("uploader_speech_seconds", 0)} '
                   f'redub={len(result.get("redub_candidates") or [])}', flush=True)
-        summary = OUTPUT / f'summary_r1_{group}.json'
+        summary = OUTPUT / f'summary_r2_{group}.json'
         summary.write_text(json.dumps(dict(counts), ensure_ascii=False, indent=2))
-    print(f'AUDIO_R1_COMPLETE {group} {dict(counts)}', flush=True)
+    print(f'AUDIO_R2_COMPLETE {group} {dict(counts)}', flush=True)
     return counts
 
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument('--group', choices=('samples', 'formal', 'check30'), required=True)
+    parser.add_argument('--group', choices=('samples', 'formal', 'check30b'), required=True)
     parser.add_argument('--rows', help='Comma-separated row numbers for a targeted retry')
     args = parser.parse_args()
     counts = run(args.group, set(map(int, args.rows.split(','))) if args.rows else None)
