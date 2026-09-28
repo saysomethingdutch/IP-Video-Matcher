@@ -1,8 +1,16 @@
 # WO-103 吞噬星空：声音这一路
 
 - 签发：Owner　执行：**Codex**（做完 WO-101 之后）　时间盒：**半天**
-- 分支：从 `main` 切出 `tsxk/wo-103-audio`
+- 分支：从 `tsxk/wo-101-fetch-ledger` 的最新提交切出 `tsxk/wo-103-audio`。main 上还没有网页台账（D-059）。
 - 交付说明：`docs/workorders/WO-103-RESULT.md`，不超过半页
+
+## 环境
+
+- 新工作树里建三个软链接，都指向主仓库 `/Users/lestersun/IP-Video-Matcher`：
+  - `workspace/tsxk`：共用数据目录；
+  - `workspace/pilot`：里面有声音环境 `audio_env`；
+  - `models`：里面有 SenseVoice。
+- 用 `workspace/pilot/audio_env/bin/python` 运行。主仓库的 `.venv` 没有装 funasr。
 
 ## 目的
 
@@ -23,6 +31,9 @@ WO-102 在示例录屏上已经看到后果：没有声音，13 号是重新配�
    - 对不上、又有持续人声的，算口播候选。
    - "疑似 UP 主配乐"的旁证：歌词字幕、B 站音乐标签、长时间只有音乐。
 4. **验证**：用示例 13–17 号，写出每条的口播和配乐判断，交 Owner 抽查。13 号是重新配音的，应当检出口播。
+   - 示例的输出写到 `workspace/tsxk/audio/samples/<录像名>.json`；
+   - 正式行和检验集写到 `workspace/tsxk/audio/<序号>.json`。
+5. **示例验证完**：放后台对检验集 30 条跑一遍，WO-102-R1 要用。
 
 ## 不做
 

@@ -76,6 +76,32 @@
 2. **另下 30 行检验集的证据**：名单在 `cases/tsxk_check30.csv`，来自"张亚晨"sheet。下载办法和 §1 相同，存到 `/Volumes/Element/ip-video-matcher-field-test/evidence_check30/`。所有者已同意自动下载（D-057）。
 3. **不得读取"张亚晨"的结论列**，也就是 Q–AC。
 
+## 6. 交接补充（Owner，2026-09-28，D-059）
+
+1. **先合并 main**：先提交 `pilot/ezcun/fetch.py` 里未提交的修改，再 `git merge main`，不要 rebase。main 上已经有：
+   - WO-102 的 `pilot/tsxk/config.py`、`cases/tsxk.yaml`、`cases/tsxk_check30.csv`；
+   - 本工单的追加内容。
+2. **数据放共用目录**：本工作树的 `workspace/tsxk` 已经是软链接，指向 `/Users/lestersun/IP-Video-Matcher/workspace/tsxk`。manifest、下载记录、元数据、Chrome 配置都在那里。不要改回本地目录。
+3. **下载**：
+   - **先试 3 条**：用 7820、7822、7823 试普通 HTTP 下载（D-059 ④）。
+     - 签名直链从分享页自己的响应里取。
+     - 请求只加 Range 头，写到 `.part`，中断了就接着续。
+     - 大小和 md5 都核对无误，再改成正式文件名。
+   - **3 条都通过**：用这种方式把其余各条下完。
+   - **直链不接受普通下载**：不要改请求头，退回浏览器下载，并修好"浏览器中途关闭"的问题。
+   - 一次只下一个文件；分享页之间仍然间隔 ≥ 5 秒；全量只跑一份。
+   - `downloads.csv` 里的旧失败记录不算数，以外置盘上核对过的文件为准。
+   - Chrome 下载目录里残留的 `.crdownload` 是下到一半的文件，可以删掉。
+4. **检验集 30 条**：
+   - 分享链接用 `cases/tsxk_check30.csv` 的"取证视频链接"列，不必打开"张亚晨"表。
+   - 元数据另写一份 `manifest_check30.csv`。
+   - 文件存到 `evidence_check30/<序号>.mp4`。
+5. **台账输出**：
+   - 正式行和检验集都写到 `workspace/tsxk/webledger/<序号>.json`，两边的序号不重叠。
+   - 示例录屏写到 `workspace/tsxk/webledger/samples/<录像名>.json`，例如 `13.json`。
+   - 示例 5 条的 R 目前全是"待核"，因为没读到悬停时才出现的读数。要补一个办法：用播放区间的长度，对比视频本身的时长。两种办法都拿不准的，才标黄。
+   - 下载完成后放后台跑台账：先跑检验集 30 条，再跑 400 条。
+
 ## 4. 不做
 
 - 不绕过网站防护；
