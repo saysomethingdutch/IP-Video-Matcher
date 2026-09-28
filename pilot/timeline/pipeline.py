@@ -133,15 +133,15 @@ def run_video(video: Path, out_dir: Path, rules: dict, *, row: str | None = None
     info = F.probe(video)
     span_source = "台账" if span else "时间线模块按画面变化粗估（台账未提供）"
     span = tuple(float(x) for x in span) if span else F.detect_span(video, info)
-    content = (float(content[0]), float(content[1])) if content and None not in content else None
-    fp = fingerprint(video, span, step, rules, upload, backends, anchors, duration) + ac_clock[0] + json.dumps(content)
+    cspan = (float(content[0]), float(content[1])) if content and None not in content else None
+    fp = fingerprint(video, span, step, rules, upload, backends, anchors, duration) + ac_clock[0] + json.dumps(cspan)
     previous = json.loads(result_path.read_text(encoding="utf-8")) if result_path.exists() else None
     if not force and previous and previous.get("fingerprint") == fp:
         return previous
     cache_dir = cache_dir or out_dir.parent / "_frame_cache"
     t0 = time.monotonic()
     flags = [] if span_source == "台账" else [_flag("yellow", f"播放区间为{span_source}")]
-    if content is None:
+    if cspan is None:
         flags.append(_flag("yellow", "台账没有内容区间（content_start–content_end），按播放区间和视频时长推算"))
     player = F.find_player(video, span, info)
     box = player["box"]
@@ -157,15 +157,15 @@ def run_video(video: Path, out_dir: Path, rules: dict, *, row: str | None = None
     for f in todo:
         screen.screen(f, ocr.get(Path(f["path"]).name, []), cv2.imread(f["path"]))
     readings = [(f["t"], f["reading"]) for f in todo if f.get("reading")]
-    start = content[0] if content else span[0]
+    start = cspan[0] if cspan else span[0]
     vclock = S.Clock(start, readings, anchors, duration)                  # the B站 video's own clock
     clock = S.Clock.recording() if ac_clock == "recording" else vclock    # what segments and AC lines use
-    if content:
-        stop = content[1]
+    if cspan:
+        stop = cspan[1]
     else:
         stop = min(span[1], vclock.to_recording(vclock.duration)) if vclock.duration else span[1]
     by_t = {f["t"]: f for f in frames}
-    mark_ignored(frames, content)
+    mark_ignored(frames, cspan)
     if ac_clock != "recording":
         flags += [_flag("yellow", x) for x in vclock.flags]
 
@@ -242,7 +242,7 @@ def run_video(video: Path, out_dir: Path, rules: dict, *, row: str | None = None
     usage = {k: sum((c.get("usage") or {}).get(k) or 0 for c in calls if not c.get("cached")) for k in ("prompt", "completion", "reasoning")}
     result = {"row": row, "video": video.name, "version": VERSION, "fingerprint": fp, "duration": info["duration"],
               "span": [round(span[0], 2), round(span[1], 2)], "span_source": span_source,
-              "content_span": [round(content[0], 2), round(content[1], 2)] if content else None,
+              "content_span": [round(cspan[0], 2), round(cspan[1], 2)] if cspan else None,
               "frames_ignored": dict(Counter(f["ignored"] for f in frames if f.get("ignored"))),
               "clock": {"ac": clock.source, "video_offset": round(vclock.offset, 2), "video_source": vclock.source,
                         "video_duration": vclock.duration, "playback_stop": round(stop, 2), "readings": readings[:20]},

@@ -288,5 +288,28 @@ class R2Test(unittest.TestCase):
                          ["内容区间外", "B站登录弹窗", "B站登录弹窗", None, "内容区间外"])
 
 
+
+@unittest.skipUnless(__import__("shutil").which("ffmpeg") and P.compile_ocr and (Path(__file__).resolve().parents[3] / "pilot/bin/ocr_vision").exists(),
+                     "needs ffmpeg and the OCR tool")
+class EndToEndTest(unittest.TestCase):
+    """run_video end to end on a generated 30 s recording, locally (no cloud): the content span decides."""
+
+    def test_content_span_and_ignored_frames(self):
+        import subprocess
+        with tempfile.TemporaryDirectory() as tmp:
+            video = Path(tmp) / "t.mp4"
+            subprocess.run(["ffmpeg", "-v", "error", "-f", "lavfi", "-i", "testsrc=duration=30:size=1920x1080:rate=10",
+                            "-g", "50", "-pix_fmt", "yuv420p", str(video)], check=True)
+            r = P.run_video(video, Path(tmp) / "out", RULES, row="t", span=(0.0, 30.0), content=(5.0, 25.0), upload=False,
+                            log=lambda *a: None)
+            self.assertEqual(r["content_span"], [5.0, 25.0])
+            self.assertEqual(set(r["frames_ignored"]), {"内容区间外"})
+            self.assertTrue(r["segments"] and r["segments"][0]["start"] >= 5 and r["segments"][-1]["end"] <= 25)
+            again = P.run_video(video, Path(tmp) / "out", RULES, row="t", span=(0.0, 30.0), content=None, upload=False,
+                                log=lambda *a: None)
+            self.assertIsNone(again["content_span"])
+            self.assertTrue(any("没有内容区间" in f["reason"] for f in again["flags"]))
+
+
 if __name__ == "__main__":
     unittest.main()
