@@ -72,10 +72,19 @@ def extract_ocr(path, seconds):
         files = []
         for index, t in enumerate(sample_times(seconds)):
             file = frame_dir / f'{index:04d}.jpg'
-            command(['ffmpeg', '-hide_banner', '-loglevel', 'error', '-ss', str(t),
-                     '-i', path, '-frames:v', '1', '-q:v', '4', '-y', file])
+            try:
+                command(['ffmpeg', '-hide_banner', '-loglevel', 'error', '-ss', str(t),
+                         '-i', path, '-frames:v', '1', '-q:v', '4', '-y', file])
+            except subprocess.CalledProcessError:
+                # A few otherwise valid recordings have a YUV range that the
+                # MJPEG encoder rejects. PNG accepts the decoded frame.
+                file = frame_dir / f'{index:04d}.png'
+                command(['ffmpeg', '-hide_banner', '-loglevel', 'error', '-ss', str(t),
+                         '-i', path, '-frames:v', '1', '-y', file])
             if file.exists():
                 files.append((t, file))
+        if not files:
+            raise RuntimeError(f'No video frames extracted from {path}')
         for offset in range(0, len(files), 12):
             group = files[offset:offset + 12]
             process = subprocess.run([str(OCR_BINARY), *map(lambda x: str(x[1]), group)],
