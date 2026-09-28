@@ -101,7 +101,7 @@ def main(argv=None) -> int:
         span = (led["play_start"], led["play_end"]) if led.get("play_start") is not None and led.get("play_end") else None
         try:
             run_video(video, out, rules, row=row, span=span, anchors=led.get("anchors") or (), duration=led.get("duration"),
-                      **common)
+                      content=(led.get("content_start"), led.get("content_end")), **common)
         except Exception as exc:                          # one bad recording must not stop the batch
             print(f"{row}: 失败 {type(exc).__name__}: {str(exc)[:200]}", file=sys.stderr, flush=True)
 

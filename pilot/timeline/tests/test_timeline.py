@@ -56,7 +56,7 @@ class LocalScreenTest(unittest.TestCase):
         self.assertEqual(self.s.traffic([], ["https://pan.quark.cn/s/abc"])["kinds"], ["网盘二维码"])
         self.assertEqual(self.s.traffic([], ["https://weixin.qq.com/g/abc"])["platforms"], ["tencent"])
         self.assertIsNone(self.s.traffic([], ["https://passport.bilibili.com/qrcode"]))
-        self.assertEqual(self.s.traffic([], [""])["evidence"], ["二维码：未能解码"])
+        self.assertIsNone(self.s.traffic([], [""]))            # WO-102-R2 A3: an unreadable code alone goes to the cloud
 
     def test_opencv_reads_a_code_laid_over_the_picture(self):
         self.assertEqual(Lc.qr_codes(qr_image("https://pan.quark.cn/s/cc8e")), ["https://pan.quark.cn/s/cc8e"])
@@ -254,6 +254,38 @@ class R1Test(unittest.TestCase):
         s.screen(f, [item("就点名要布洛琳", y=0.85), item("J 海阔天空", y=0.9), item("词：黄家驹", y=0.4)],
                  np.full((90, 160, 3), 90, np.uint8))
         self.assertEqual((f["captions"], f["music_tag"], f["lyric"]), (["就点名要布洛琳"], True, True))
+
+
+
+class R2Test(unittest.TestCase):
+    """WO-102-R2 A1–A4 in the timeline."""
+
+    def test_login_popup_is_neither_traffic_nor_content(self):
+        s, f = Lc.Screen(RULES), {"t": 1.0}
+        loc = s.screen(f, [item("扫描二维码登录"), item("微信登录"), item("QQ登录")], np.full((90, 160, 3), 90, np.uint8))
+        self.assertEqual((loc.get("login_box"), loc["traffic"]), (True, None))
+        self.assertFalse(s.login_box([item("微信登录")], []))                      # one method and no code: not enough
+        self.assertTrue(s.login_box([item("密码登录")], ["https://passport.bilibili.com/x"]))
+
+    def test_unreadable_code_is_asked_in_the_cloud(self):
+        s, f = Lc.Screen(RULES), {"t": 1.0}
+        with tempfile.TemporaryDirectory():
+            img = qr_image("x")
+            img[300:340, 540:580] = 255                                           # damage it
+        loc = s.screen(f, [], np.full((90, 160, 3), 90, np.uint8))
+        self.assertIsNone(loc["traffic"])
+
+    def test_ai_note_is_recorded(self):
+        s, f = Lc.Screen(RULES), {"t": 1.0}
+        s.screen(f, [item("AI虚构无不良导向")], np.full((90, 160, 3), 90, np.uint8))
+        self.assertTrue(f["ai_note"])
+
+    def test_frames_outside_the_actual_playback_and_login_popups_decide_nothing(self):
+        frames = [{"t": 40.0, "local": {}}, {"t": 50.0, "local": {"login_box": True}}, {"t": 60.0, "dup_of": 50.0},
+                  {"t": 70.0, "local": {}}, {"t": 120.0, "local": {}}]
+        P.mark_ignored(frames, (45.0, 100.0))
+        self.assertEqual([f.get("ignored") for f in frames],
+                         ["内容区间外", "B站登录弹窗", "B站登录弹窗", None, "内容区间外"])
 
 
 if __name__ == "__main__":

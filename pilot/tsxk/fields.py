@@ -80,6 +80,8 @@ def ledger_fields(inputs: dict, led: dict | None) -> tuple[dict, list[dict]]:
     out["R"] = _f({True: YES, False: NO}.get(complete), "webledger", basis or "台账按进度条、播放器读数和时长判断")
     if complete is None:
         flags.append(flag("yellow", "R：台账判不了是否完整播放"))
+    if led.get("complete_needs_review"):
+        flags.append(flag("yellow", "R：台账标注需复核（靠外推且实测进度不到 90%，或页面何时结束拿不准）"))
     return out, flags
 
 
@@ -132,16 +134,29 @@ def timeline_fields(tl: dict | None, led: dict | None, title: str, rules: dict) 
         flags.append(flag("yellow", "标题与吞噬星空相关，但画面里没有认出吞噬星空动画，请核对 Q、Y"))
     platforms = set(s["traffic_platforms"]) | {p for p in ((led or {}).get("comments") or {}).get("traffic") or ()}
     unrelated = secs.get("unrelated", 0) > 0
-    out["W"] = _f(YES if unrelated or platforms else NO, "timeline",
-                  "有无关内容或引流画面" if unrelated or platforms else "画面都来自吞噬星空（含 UP 主自制画面）")
-    if s["forms"] and out["W"]["value"] == NO:
-        flags.append(flag("yellow", f"含吞噬星空其他形式（{'、'.join(s['forms'])}），W 按“第三方无关内容”口径填否，请所有者确认"))
+    scope = ((rules.get("policies") or {}).get("w_scope") or {}).get("value", "non_official")
+    if scope == "third_party":                                  # D-058 ④, kept as the other switch position
+        w = bool(unrelated or platforms)
+        basis = "有无关内容或引流画面" if w else "画面都来自吞噬星空（含 UP 主自制画面）"
+    else:                                                       # WO-102-R2 B2 (default)
+        extra = [x for x, on in (("其他作品或无关画面", unrelated), ("引流画面", platforms),
+                                 ("UP 主自制画面", s.get("creator_frames")), ("真人出镜", s.get("face_frames")),
+                                 ("AI 生成画面（有 AI 创作声明）", s.get("ai_note_frames")),
+                                 ("吞噬星空其他形式（" + "、".join(f for f in s["forms"] if f != "动画剧场版") + "）",
+                                  [f for f in s["forms"] if f != "动画剧场版"])) if on]
+        w = bool(extra)
+        basis = ("有不属于官方动画素材的画面：" + "；".join(extra)) if w else "画面都来自吞噬星空官方动画素材"
+    out["W"] = _f(YES if w else NO, "timeline", basis + f"（口径：{scope}）")
     if platforms:
         label = "、".join(x for x, k in (("腾讯", "tencent"), ("其他", "other")) if k in platforms)
         out["X"] = _f(f"是（{label}）", "timeline", "画面" + ("或评论区" if (led or {}).get("comments", {}).get("traffic") else "") + "里有引流信息")
     else:
         out["X"] = _f(NO, "timeline", "画面里没有引流信息" + ("" if ((led or {}).get("comments") or {}).get("visible") else "；录屏未显示评论区"))
-    hints = {"forms": list(s["forms"]), "y_fixed": None, "z_default": None}
+    forms = (["动画剧场版"] if s.get("film_watermark") else []) + \
+        [f for f in s["forms"] if f in ("漫画", "手游", "有声书")] + (["小说"] if s.get("novel_frames") else [])
+    if "动画剧场版" in s["forms"] and not s.get("film_watermark"):
+        flags.append(flag("yellow", "T：画面像剧场版，但没有看到片名水印，T 不填剧场版（WO-102-R2 A5）"))
+    hints = {"forms": forms, "y_fixed": None, "z_default": None, "ai_note": bool(s.get("ai_note_frames"))}
     if not s["has_tsxk"]:
         content = {k: v for k, v in secs.items() if k not in ("blank", "unknown")}
         other_secs = content.get("tsxk_other", 0)

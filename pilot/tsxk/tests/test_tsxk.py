@@ -92,12 +92,32 @@ class FieldsTest(unittest.TestCase):
         f, h, flags = FD.timeline_fields(other, None, "谆提身陨", RULES)
         self.assertEqual((f["Y"]["value"], f["Z"]["value"]), ("完全无关内容", "高"))              # 示例 11802
 
-    def test_other_forms_do_not_count_as_unrelated_but_are_flagged(self):
+    def test_w_counts_non_official_pictures_by_default_and_third_party_on_the_other_switch(self):
         tl = timeline([seg(0, 33, "tsxk_other", "手游"), seg(34, 400, "tsxk")], forms=["手游"])
-        f, h, flags = FD.timeline_fields(tl, None, "吞噬星空动漫吐槽", RULES)
-        self.assertEqual((f["W"]["value"], h["forms"]), ("否", ["手游"]))
-        self.assertTrue(any("W 按" in x["reason"] for x in flags))
+        f, h, flags = FD.timeline_fields(tl, None, "吞噬星空动漫吐槽", RULES)           # WO-102-R2 B2
+        self.assertEqual((f["W"]["value"], h["forms"]), ("是", ["手游"]))
+        self.assertIn("吞噬星空其他形式（手游）", f["W"]["basis"])
         self.assertEqual(FD.time_lines(tl, f, "二创（其他类）"), ["00:00-00:33为《吞噬星空》手游内容"])
+        narrow = {**RULES, "policies": {**RULES["policies"], "w_scope": {"value": "third_party"}}}
+        f, _, _ = FD.timeline_fields(tl, None, "吞噬星空动漫吐槽", narrow)               # D-058 ④
+        self.assertEqual(f["W"]["value"], "否")
+        creator = timeline([seg(0, 20, "creator"), seg(21, 300, "tsxk")])
+        creator["summary"]["creator_frames"] = 2
+        self.assertEqual(FD.timeline_fields(creator, None, "x", RULES)[0]["W"]["value"], "是")
+        official = timeline([seg(0, 300, "tsxk")])
+        self.assertEqual(FD.timeline_fields(official, None, "x", RULES)[0]["W"]["value"], "否")
+
+    def test_t_needs_evidence(self):
+        film = timeline([seg(0, 90, "tsxk"), seg(91, 120, "tsxk_other", "动画剧场版")], forms=["动画剧场版"])
+        f, h, flags = FD.timeline_fields(film, None, "x", RULES)                          # WO-102-R2 A5
+        self.assertEqual(h["forms"], [])
+        self.assertTrue(any("没有看到片名水印" in x["reason"] for x in flags))
+        film["summary"]["film_watermark"] = True
+        self.assertEqual(FD.timeline_fields(film, None, "x", RULES)[1]["forms"], ["动画剧场版"])
+
+    def test_r_needs_review_is_flagged(self):
+        _, flags = FD.ledger_fields({"C": "t"}, {"title": "t", "complete": True, "complete_needs_review": True})
+        self.assertTrue(any("需复核" in x["reason"] for x in flags))
 
     def test_episode_note(self):
         self.assertEqual(FD.episode_note("吞噬星空第52集看点"), "标题标注第52集")
@@ -283,6 +303,32 @@ class Step2Test(unittest.TestCase):
         self.assertIn("WO-101-R2", by["R"]["note"])
         self.assertIn("声音不可靠", by["Y"]["note"])
         self.assertIn("裁定：", CK.disagreements_md(items))
+
+
+
+class R2FixesTest(unittest.TestCase):
+    """WO-102-R2 A4, A5 in the classification."""
+
+    def test_novel_needs_words_inside_the_actual_playback(self):
+        from pilot.tsxk.pipeline import text_evidence
+        tl = {"frames": [{"ocr": ["这里和原著小说不一样"]}, {"ocr": ["有声书"], "ignored": "内容区间外"}]}
+        self.assertEqual(text_evidence(tl, None), {"小说": True, "有声书": False})
+        self.assertEqual(text_evidence({"frames": [{"ocr": ["罗峰出场"]}]}, None)["小说"], False)
+        speech = {"status": "ok", "segments": [{}], "uploader_speech": ["小说里写得更细"]}
+        self.assertTrue(text_evidence({"frames": []}, speech)["小说"])
+
+    def test_ai_note_keeps_y_among_the_derivative_kinds(self):
+        reply = {"Y": "纯cut", "U": "否", "V": "否", "Z": "低", "T_extra": [],
+                 "AC": {"主题概括": "片段。", "段落情节": "罗峰。", "新增创作要素": [], "比对意见": "低。", "其他": []}}
+        tl = {"segments": [seg(0, 60, "tsxk")], "summary": {"ai_note_frames": 2}}
+        self.assertIn("AI 创作声明", "".join(K.check(reply, None, {"W": {"value": "是"}}, tl)))
+        self.assertNotIn("AI 创作声明", "".join(K.check(dict(reply, Y="二创（单IP混剪类）"), None, {"W": {"value": "是"}}, tl)))
+
+    def test_policies_are_in_the_prompt(self):
+        text = K.standards(RULES)
+        self.assertIn("口径（WO-102-R2 B", text)
+        self.assertIn("归二创（单IP混剪类）", text)
+        self.assertIn("水印", text)
 
 
 if __name__ == "__main__":

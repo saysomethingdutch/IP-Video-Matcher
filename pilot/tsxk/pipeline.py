@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 
 from . import ac as A
@@ -33,6 +34,15 @@ def span(a: float, b: float) -> str:
     return mmss(a) if round(a) == round(b) else f"{mmss(a)}-{mmss(b)}"
 
 
+def text_evidence(tl: dict | None, audio: dict | None) -> dict[str, bool]:
+    """Whether the captions, on-screen text or filtered speech inside the actual playback name the novel or an
+    audiobook (WO-102-R2 A5)."""
+    texts = [t for f in (tl or {}).get("frames", []) if not f.get("ignored") for t in (f.get("ocr") or [])]
+    texts += SD.uploader_speech(audio)
+    blob = " ".join(texts)
+    return {"小说": bool(re.search(r"原著|小说", blob)), "有声书": bool(re.search(r"有声书|有声小说|听书", blob))}
+
+
 def process_row(inputs: dict, led: dict | None, tl: dict | None, rules: dict, system: str, backend: str = "zhipu",
                 audio: dict | None = None) -> dict:
     title = (led or {}).get("title") or inputs.get("C") or ""
@@ -51,10 +61,15 @@ def process_row(inputs: dict, led: dict | None, tl: dict | None, rules: dict, sy
     if not hints["y_fixed"]:
         fields["Y"] = FD._f(y, "model", "GLM 按指引在纯cut、偷渡和二创各子类中选")
         default = rules["columns"]["Z"]["code_defaults"].get(y)
+        if hints.get("ai_note"):                                   # WO-102-R2 A4: AI creation, Z per "高" example ③
+            default = "高"
+            flags.append(FD.flag("yellow", "AI 创作：画面文字有\"AI虚构\"一类声明，按利用 AI 创作处理（二创，Z 高），请核实"))
         if default and data.get("Z") not in (None, default):
             flags.append(FD.flag("yellow", f"Z：模型给{data.get('Z')}，按指引示例（{y}）改为{default}"))
         fields["Z"] = FD._f(default or data.get("Z"), "code" if default else "model",
                             "指引 Z 的示例" if default else "GLM 按指引 Z 的高、中、低标准")
+        if y == "偷渡" and ((rules.get("policies") or {}).get("appended_unrelated") or {}).get("value") == "偷渡":
+            flags.append(FD.flag("yellow", "偷渡：原片后面拼接了无关内容（口径开关 B3，待所有者确认），请核对"))
     fields["U"] = FD._f(data.get("U"), "model", "GLM：以配音或字幕讲解、分析剧情")
     music = res["music"]
     fields["V"] = FD._f(data.get("V"), "model", "GLM：是否只加了背景音乐；疑似UP主配乐："
@@ -63,7 +78,14 @@ def process_row(inputs: dict, led: dict | None, tl: dict | None, rules: dict, sy
         flags.append(FD.flag("yellow", "V：没有声音分析结果，是否加了背景音乐按画面判断"))
     elif music["verdict"] == "无旁证" and music["series_music_seconds"] and data.get("V") == FD.NO:
         flags.append(FD.flag("yellow", "V：只有原片画面加纯音乐，不能证明是 UP 主加的配乐，按否填（D-060）"))
-    forms = [x for x in K.FORMS if x in set(hints["forms"]) | set(data.get("T_extra") or [])]
+    said = text_evidence(tl, audio)                            # WO-102-R2 A5: 小说/有声书 need words to rest on
+    extra = []
+    for form in data.get("T_extra") or []:
+        if form in ("小说", "有声书") and not said.get(form):
+            flags.append(FD.flag("yellow", f"T：模型提到{form}，但字幕、口播、画面文字里找不到依据，T 不填{form}（WO-102-R2 A5）"))
+        elif form in ("小说", "有声书"):
+            extra.append(form)
+    forms = [x for x in K.FORMS if x in set(hints["forms"]) | set(extra)]
     fields["T"] = FD._f(f"是（{'、'.join(forms)}）" if forms else FD.NO, "timeline+model",
                         "画面里的其他形式由时间线定，解说或文字里的小说、有声书由 GLM 定")
     promo = SD.promotions(audio)                               # D-061 ④: a clue for X, with its time

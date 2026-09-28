@@ -46,13 +46,20 @@ SYSTEM = """你为短视频比对表填写几项判断和"视频说明"。判断
 
 def standards(rules: dict) -> str:
     c = rules["columns"]
+    pol = {k: (v or {}).get("value") for k, v in (rules.get("policies") or {}).items()}
+    opt = lambda k: ((rules.get("policies") or {}).get(k) or {}).get("options", {}).get(pol.get(k), "")
     lines = [f"U 是否为解说：{c['U']['rule']}", f"V 是否仅增加背景音乐：{c['V']['rule']}",
-             f"V 的旁证：{c['V']['evidence']}",
+             f"V 的旁证：{c['V']['evidence']}", f"V 与水印：{c['V']['watermark']}",
              "Y 类别（有吞噬星空动画画面时，在下面几类里选）："]
     lines += [f"- {k}：{v}" for k, v in c["Y"]["categories"].items() if k in ANIME_Y]
     lines += ["Z 合理使用可能性："] + [f"- {k}：{v}" for k, v in c["Z"]["levels"].items()]
-    lines += [f"T 其他形式：{c['T']['rule']} 画面能看出的形式由程序填；解说或文字结合了原著小说、有声书的，在 T_extra 里写\"小说\"或\"有声书\"。"]
+    lines += [f"T 其他形式：{c['T']['rule']} {c['T']['evidence']} 画面能看出的形式由程序填；解说、字幕或口播明确结合了原著小说、有声书的，在 T_extra 里写\"小说\"或\"有声书\"。"]
     lines += ["补充：" + n for n in c["Y"]["notes"]]
+    lines += ["口径（WO-102-R2 B，待所有者确认）：",                      # policy switches from rules_tsxk.yaml
+              f"- 一段原片只加了标题和零星的点评或引述字幕、没有连续讲解的：{opt('quote_captions')}",
+              f"- 整集原片后面拼接了一段无关内容的：{opt('appended_unrelated')}",
+              f"- 预告解析、结合设定或原著的讲解：{opt('z_knowledge')}",
+              "- 画面文字有\"AI虚构\"\"AI生成\"一类声明的，按利用 AI 创作处理：属于二创；Z 参照\"高\"的示例③（利用 AI 创作生成非原片画面）填高"]
     return "\n".join(lines)
 
 
@@ -87,6 +94,8 @@ def facts_text(inputs: dict, led: dict | None, tl: dict | None, fixed: dict, hin
             lines.append("【引流】" + "；".join(f"{mmss(t['start'])}-{mmss(t['end'])} {'、'.join(t['kinds'])}" for t in tl["traffic"]))
         notes, seen = [], set()
         for f in tl["frames"]:
+            if f.get("ignored"):                   # outside the actual playback, or B站's login popup
+                continue
             answers = ((f.get("cloud") or {}).get("answers") or {}).values()
             why = "；".join(dict.fromkeys(a["why"] for a in answers if a and a.get("why")))
             if why and why not in seen:
@@ -95,10 +104,13 @@ def facts_text(inputs: dict, led: dict | None, tl: dict | None, fixed: dict, hin
         if notes:
             lines.append("【画面描述】" + " | ".join(notes[:30]))
         s = tl["summary"]
-        lines.append(f"【真人出镜】{s['face_frames']} 帧；【作者字幕或大段文字】{s['text_frames']} 帧（共 {len(tl['frames'])} 帧）")
+        inside = [f for f in tl["frames"] if not f.get("ignored")]
+        lines.append(f"【真人出镜】{s['face_frames']} 帧；【作者字幕或大段文字】{s['text_frames']} 帧（共 {len(inside)} 帧）")
+        if s.get("ai_note_frames"):
+            lines.append(f"【AI 声明】画面文字里有\"AI虚构\"\"AI生成\"一类声明（{s['ai_note_frames']} 帧），按利用 AI 创作处理")
         texts = []
         for f in tl["frames"]:                     # text on the series, other forms and the uploader's own frames
-            if f.get("content") not in ("tsxk", "tsxk_other", "creator", "unknown"):
+            if f.get("ignored") or f.get("content") not in ("tsxk", "tsxk_other", "creator", "unknown"):
                 continue
             for t in f.get("ocr") or []:
                 t = t.strip()
@@ -164,6 +176,8 @@ def check(data: dict | None, y_fixed: str | None, fixed: dict, tl: dict | None, 
         errors.append("Y：纯cut 不能同时是解说或加了背景音乐（纯cut 的 V 填否）")
     if not y_fixed and y == "二创（解说类）" and data.get("U") != YES:
         errors.append("U：解说类的 U 应为是")
+    if not y_fixed and ((tl or {}).get("summary") or {}).get("ai_note_frames") and not str(y).startswith("二创"):
+        errors.append("Y：画面有 AI 创作声明，按利用 AI 创作处理，应在二创各子类里选（WO-102-R2 A4）")
     if data.get("V") == YES:                     # WO-102-R1 §1.5: only BGM added, and evidence that it was added
         others = {s["content"] for s in (tl or {}).get("segments", [])} & {"unrelated", "creator", "traffic", "tsxk_other"}
         if (music or {}).get("verdict") != YES:

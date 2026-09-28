@@ -75,6 +75,9 @@ class Screen:
         self.logo_where, self.logo_text, self.logo_min = logo["where"], logo["text"], logo.get("min_match", 2)
         self.films = rules["work"]["film_watermarks"]
         self.ignore = tr.get("ignore_words") or []
+        self.login_words = tr.get("login_box_words") or []
+        self.undecoded_to_cloud = tr.get("undecoded_qr") == "cloud"
+        self.ai_note = re.compile(rules["timeline"]["ai_note_pattern"], re.I) if rules["timeline"].get("ai_note_pattern") else None
 
     def _in(self, item: dict, where) -> bool:
         x, y, w, h = where
@@ -88,9 +91,18 @@ class Screen:
             return "tencent"
         return "other"
 
+    def login_box(self, items: list[dict], qrs: list[str]) -> bool:
+        """B站's own login popup (WO-102-R2 A2): two sign-in methods on screen, or one and a QR code."""
+        text = re.sub(r"\s", "", "".join(i["text"] for i in items))
+        hits = {w for w in self.login_words if w in text}
+        return len(hits) >= 2 or (len(hits) == 1 and bool(qrs))
+
     def traffic(self, items: list[dict], qrs: list[str]) -> dict | None:
-        """{"platforms": [...], "kinds": [...], "evidence": [...]} or None."""
+        """{"platforms": [...], "kinds": [...], "evidence": [...]} or None. A code that cannot be read is not
+        traffic on its own when undecoded_qr is "cloud" (WO-102-R2 A3): the frame goes to the cloud instead."""
         platforms, kinds, evidence = set(), set(), []
+        if self.undecoded_to_cloud:
+            qrs = [q for q in qrs if q]
         for q in qrs:
             host = domain(q) if q else ""
             if q and any(s in host for s in SITE_DOMAINS):
@@ -169,6 +181,13 @@ class Screen:
         """frame["local"]: content (or None), form, traffic, evidence; frame["ocr"]: text lines."""
         qrs = qr_codes(img)
         local = {"content": None, "form": "", "traffic": None, "evidence": []}
+        if self.login_box(items, qrs):                   # the platform's own popup: neither traffic nor content
+            local.update(login_box=True, evidence=["B站登录弹窗"])
+            frame["local"] = local
+            frame["ocr"] = [i["text"] for i in items if i.get("conf", 1) >= 0.3]
+            return local
+        if self.undecoded_to_cloud and "" in qrs:
+            local["qr_undecoded"] = True                 # asked in the cloud; traffic only if both providers see it
         if self.blank(img):
             local.update(content="blank", evidence=["黑屏或无画面"])
         elif (film := self.film_hit(items)):
@@ -185,6 +204,7 @@ class Screen:
                              and not MUSIC_TAG.match(i["text"].strip())]
         frame["music_tag"] = any(MUSIC_TAG.match(i["text"].strip()) for i in items)
         frame["lyric"] = any(LYRIC.search(i["text"]) for i in items)
+        frame["ai_note"] = bool(self.ai_note and any(self.ai_note.search(i["text"]) for i in items))
         if (r := self.reading(items)):
             frame["reading"] = list(r)
         return local

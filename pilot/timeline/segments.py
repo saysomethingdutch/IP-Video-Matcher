@@ -152,5 +152,9 @@ def summary(frames: list[dict], segs: list[dict]) -> dict:
             "traffic_platforms": sorted({p for f in frames for p in f.get("traffic") or ()}),
             "unknown_frames": sum(1 for f in frames if f["content"] == "unknown"),
             "face_frames": sum(1 for f in frames if f.get("face")), "text_frames": sum(1 for f in frames if f.get("text")),
+            "creator_frames": sum(1 for f in frames if f["content"] == "creator"),
+            "ai_note_frames": sum(1 for f in frames if f.get("ai_note")),
+            "film_watermark": any((f.get("local") or {}).get("form") == "动画剧场版" for f in frames),   # WO-102-R2 A5
+            "novel_frames": sum(1 for f in frames if f["content"] == "tsxk_other" and f.get("form") == "小说"),
             "local_frames": sum(1 for f in frames if f["source"].startswith("本地")),
             "cloud_frames": sum(1 for f in frames if f["source"].startswith("云端"))}
