@@ -19,7 +19,7 @@ import subprocess
 import tempfile
 import unicodedata
 
-from pilot.ezcun.fetch import entries, check_entries, STATE as EZCUN_STATE
+from pilot.ezcun.fetch import entries, check_entries, check30b_entries, STATE as EZCUN_STATE
 from pilot.webledger.progress import measure as measure_progress, decide as decide_progress
 from pilot.webledger.progress_r2 import decide as decide_progress_r2
 from pilot.webledger.content_span import locate as locate_content
@@ -350,7 +350,12 @@ def resolve_row(recording, source_row=None):
         source_row = int(recording.stem)
     if source_row is None:
         return None
-    return next((item for item in entries() + check_entries() if item['row'] == source_row), None)
+    if source_row > 8212:
+        return next((item for item in check_entries() + check30b_entries()
+                     if item['row'] == source_row), None)
+    if source_row >= 7813:
+        return next((item for item in entries() if item['row'] == source_row), None)
+    return None
 
 
 def format_finished(value):
@@ -460,7 +465,8 @@ def analyze(path, source_row=None):
     if address_same is False:
         flags.append('录屏地址 BV 与原表 E 不同')
     row_number = source_row or (source['row'] if source else '')
-    metadata_folder = 'metadata_check30' if source and source['row'] > 8212 else 'metadata'
+    metadata_folder = (f"metadata_{source['source_set']}" if source and source.get('source_set')
+                       else 'metadata')
     metadata_path = EZCUN_STATE / metadata_folder / f'{row_number}.json'
     metadata = json.loads(metadata_path.read_text()) if source and metadata_path.exists() else {}
     certificate_path = EZCUN_STATE / 'certificates' / f'{row_number}.json'
@@ -547,15 +553,18 @@ def main():
     parser.add_argument('videos', nargs='*', type=Path)
     parser.add_argument('--examples', action='store_true')
     parser.add_argument('--check30', action='store_true')
+    parser.add_argument('--check30b', action='store_true')
     parser.add_argument('--all', action='store_true', help='Process every downloaded file in the selected set')
     parser.add_argument('--workers', type=int, default=1)
     parser.add_argument('--output', type=Path, default=STATE / 'sample_ledger.csv')
     args = parser.parse_args()
     videos = args.videos or ([EXAMPLES / f'{n}.mp4' for n in range(13, 18)] if args.examples else [])
     if args.all:
-        dataset = check_entries() if args.check30 else entries()
-        base = Path('/Volumes/Element/ip-video-matcher-field-test/evidence_check30' if args.check30
-                    else '/Volumes/Element/ip-video-matcher-field-test/evidence')
+        if args.check30 and args.check30b:
+            parser.error('--check30 and --check30b cannot be combined')
+        dataset = check30b_entries() if args.check30b else check_entries() if args.check30 else entries()
+        folder = 'evidence_check30b' if args.check30b else 'evidence_check30' if args.check30 else 'evidence'
+        base = Path('/Volumes/Element/ip-video-matcher-field-test') / folder
         videos = [base / f'{item["row"]}.mp4' for item in dataset]
     if not videos:
         parser.error('Pass videos or --examples')
