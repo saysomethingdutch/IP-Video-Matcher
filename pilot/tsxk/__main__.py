@@ -69,25 +69,29 @@ def main(argv=None) -> int:
         p.add_argument("--workers", type=int, default=4)
         p.add_argument("--owner-approved", action="store_true")
         p.add_argument("--machine", default="")
+        p.add_argument("--set", default="a", choices=("a", "b"))
     args = ap.parse_args(argv)
     llm.LOCAL_ALLOWED = False                      # GLM only (D-037); never the local model (Codex's Ollama)
     case = TsxkCase(args.config)
     share_slots(case.case_dir / ".cloud_slots")     # one 8/4 limit per provider across processes (D-058)
-    cs = case.raw["check_set"]
+    cs = case.check_set(args.set)
     if args.cmd == "check-list":
+        if Path(cs["list"]).exists():                  # a drawn list is the Owner's record: never redraw over it
+            print(f"名单已存在，不覆盖：{cs['list']}", file=sys.stderr)
+            return 2
         rows = CK.filled_rows(Path(case.raw["workbook"]["path"]), cs["sheet"], cs["filled_column"])
         picked = CK.draw(rows, int(cs["size"]), int(cs["seed"]))
         CK.write_list(picked, case.path_of(cs["list"]))
         print(f"{len(rows)} 行已填，抽 {len(picked)} 行：", dict(__import__("collections").Counter(r["层"] for r in picked)))
         return 0
     if args.cmd == "check-freeze":
-        return freeze(case)
+        return freeze(case, cs)
     if args.cmd == "check-score":
         if not args.owner_approved:
             print("检验会读取人工结论，需要 Owner 放行：加 --owner-approved", file=sys.stderr)
             return 2
-        ids = check_rows(case.path_of(cs["list"]))
-        frozen = Path(args.machine) if args.machine else latest_frozen(case)
+        ids = check_rows(cs["list"])
+        frozen = Path(args.machine) if args.machine else latest_frozen(cs)
         if frozen is None:
             print("没有冻结的机器结果：先运行 check-freeze", file=sys.stderr)
             return 2
@@ -95,10 +99,10 @@ def main(argv=None) -> int:
         machine = {rid: {c: (v or {}).get("value") for c, v in r["fields"].items()} for rid, r in rows.items()}
         report = CK.score(machine, CK.human_values(Path(case.raw["workbook"]["path"]), cs["sheet"], ids))
         report["frozen"] = str(frozen)
-        tls = {rid: (case.case_dir / "check" / "timeline" / rid, _load(frozen / "timeline" / f"{rid}.json")) for rid in rows}
+        tls = {rid: (cs["out"] / "timeline" / rid, _load(frozen / "timeline" / f"{rid}.json")) for rid in rows}
         audio = {rid: case.case_dir / "audio" / f"{rid}.json" for rid in rows}
         items = CK.disagreements(report, rows, tls, audio, {str(k): v for k, v in (cs.get("known_unreliable") or {}).items()})
-        out = case.case_dir / "check"
+        out = cs["out"]
         (out / "check_report.json").write_text(json.dumps({**report, "disagreements": items}, ensure_ascii=False, indent=1),
                                                encoding="utf-8")
         (out / "check_report.md").write_text(CK.markdown(report), encoding="utf-8")
@@ -112,11 +116,11 @@ def main(argv=None) -> int:
           + ("（检验名单未生成，未取同事样例）" if info["colleague_skipped"] else ""))
     backend = case.raw["models"]["text"]
     if args.cmd == "check-run":
-        ids = sorted(check_rows(case.path_of(cs["list"])), key=int)
+        ids = sorted(check_rows(cs["list"]), key=int)
         ids = [r.strip() for r in args.rows.split(",") if r.strip()] or ids
         inputs = case.read_inputs(sheet=cs["sheet"], rows=ids)             # input columns only
-        jobs = [(r, inputs.get(r, {}), case.webledger(r), _load(case.case_dir / "check" / "timeline" / r / "timeline.json"),
-                 case.case_dir / "check" / "rows" / f"{r}.json", case.audio(r)) for r in ids]
+        jobs = [(r, inputs.get(r, {}), case.webledger(r), _load(cs["out"] / "timeline" / r / "timeline.json"),
+                 cs["out"] / "rows" / f"{r}.json", case.audio(r)) for r in ids]
     elif args.cmd == "samples":
         inputs = sample_inputs(case)
         jobs = [(n, inputs.get(n, {}), case.webledger(f"samples/{n}"), _load(case.case_dir / "samples" / n / "timeline.json"),
@@ -140,25 +144,25 @@ def main(argv=None) -> int:
             print(f"{rid}: Y={res['fields'].get('Y', {}).get('value')} U={res['fields']['U']['value']} "
                   f"V={res['fields']['V']['value']} Z={res['fields'].get('Z', {}).get('value')} "
                   f"{'标红' if any(f['level'] == 'red' for f in res['flags']) else ''}", flush=True)
-    _csv(results, case.case_dir / {"samples": "samples_fields.csv", "check-run": "check/check_fields.csv"}.get(args.cmd, "fields.csv"))
+    _csv(results, cs["out"] / "check_fields.csv" if args.cmd == "check-run" else
+         case.case_dir / ("samples_fields.csv" if args.cmd == "samples" else "fields.csv"))
     return 0
 
 
-def latest_frozen(case: TsxkCase) -> Path | None:
-    snaps = sorted((case.case_dir / "check" / "frozen").glob("*/manifest.json"))
+def latest_frozen(cs: dict) -> Path | None:
+    snaps = sorted((cs["out"] / "frozen").glob("*/manifest.json"))
     return snaps[-1].parent if snaps else None
 
 
-def freeze(case: TsxkCase) -> int:
+def freeze(case: TsxkCase, cs: dict) -> int:
     """Copy the check set's machine rows and timelines into check/frozen/<time>/ with SHA-256 and the code commit,
     before any human value is read (WO-102-R1 §2.1)."""
     import hashlib
     import shutil
     import subprocess
     from datetime import datetime
-    cs = case.raw["check_set"]
-    ids = sorted(check_rows(case.path_of(cs["list"])), key=int)
-    src = case.case_dir / "check"
+    ids = sorted(check_rows(cs["list"]), key=int)
+    src = cs["out"]
     missing = [r for r in ids if not (src / "rows" / f"{r}.json").exists() or not (src / "timeline" / r / "timeline.json").exists()]
     if missing:
         print(f"还有 {len(missing)} 行没有机器结果，不能冻结：{', '.join(missing)}", file=sys.stderr)

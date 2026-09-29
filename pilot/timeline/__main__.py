@@ -57,6 +57,7 @@ def main(argv=None) -> int:
             p.add_argument("config")
         p.add_argument("--rows" if name in ("case", "check") else "--videos", default="")
         p.add_argument("--row-workers", type=int, default=2)
+        p.add_argument("--set", default="a", choices=("a", "b"))
         p.add_argument("--no-upload", action="store_true")
         p.add_argument("--no-local", action="store_true")
         p.add_argument("--force", action="store_true")
@@ -80,10 +81,9 @@ def main(argv=None) -> int:
         jobs = [(f"sample{n}", case.sample_video(f"{n}.mp4"), case.webledger(f"samples/{n}"),
                  case.case_dir / "samples" / n) for n in names]
     elif args.cmd == "check":
-        cs = case.raw["check_set"]
-        rows = [r.strip() for r in args.rows.split(",") if r.strip()] or sorted(check_rows(case.path_of(cs["list"])), key=int)
-        jobs = [(r, Path(cs["evidence_dir"]) / f"{r}.mp4", case.webledger(r), case.case_dir / "check" / "timeline" / r)
-                for r in rows]
+        cs = case.check_set(args.set)
+        rows = [r.strip() for r in args.rows.split(",") if r.strip()] or sorted(check_rows(cs["list"]), key=int)
+        jobs = [(r, Path(cs["evidence_dir"]) / f"{r}.mp4", case.webledger(r), cs["out"] / "timeline" / r) for r in rows]
     else:
         rows = [r.strip() for r in args.rows.split(",") if r.strip()] or case.rows
         jobs = [(r, case.evidence(r), case.webledger(r), case.case_dir / "timeline" / r) for r in rows]

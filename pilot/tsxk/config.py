@@ -78,6 +78,27 @@ class TsxkCase:
         path = self.case_dir / "audio" / f"{row}.json"
         return json.loads(path.read_text(encoding="utf-8")) if path.exists() else None
 
+    def check_set(self, name: str = "a") -> dict:
+        """A check set: "a" is the first 30 rows (check/), "b" the second, independent 30 (check_set_b)."""
+        base = dict(self.raw["check_set"])
+        out = "check"
+        if name == "b":
+            b = self.raw["check_set_b"]
+            base.update(list=b["list"], evidence_dir=b["evidence_dir"], known_unreliable={})
+            out = b.get("out", "check30b")
+        elif name != "a":
+            raise ValueError(f"unknown check set {name!r}")
+        base["list"] = self.path_of(base["list"])
+        base["out"] = self.case_dir / out
+        return base
+
+    def check_lists(self) -> list[Path]:
+        """Every check list, so that no check row ever becomes a style example."""
+        lists = [self.path_of(self.raw["check_set"]["list"])]
+        if self.raw.get("check_set_b"):
+            lists.append(self.path_of(self.raw["check_set_b"]["list"]))
+        return lists
+
     def read_inputs(self, sheet: str | None = None, rows: list[str] | None = None) -> dict[str, dict]:
         """{序号: {column letter: value}} with the input columns only — never the output (conclusion) columns."""
         wb = self.raw["workbook"]

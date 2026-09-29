@@ -139,7 +139,13 @@ def cross(answers: dict[str, dict | None]) -> dict:
         missing = "、".join(NAMES[k] for k in BACKENDS if not answers.get(k))
         out["flags"].append(f"云端：{missing} 没有给出可用的回答")
         return out
-    if a["content"] == b["content"]:
+    pair = {a["content"], b["content"]}
+    film_or_series = pair == {"tsxk", "tsxk_other"} and \
+        all(x["form"] in ("", "动画剧场版") for x in (a, b) if x["content"] == "tsxk_other")
+    if film_or_series:                                          # D-065 ⑤-1: animation either way (T still needs the watermark)
+        out["content"] = "tsxk"
+        out["flags"].append("两家都认出吞噬星空动画，正片还是剧场版说法不一，按动画画面计")
+    elif a["content"] == b["content"]:
         out["content"] = a["content"]
         if a["content"] == "tsxk_other":
             out["form"] = a["form"] if a["form"] == b["form"] else ""

@@ -19,14 +19,15 @@ def system_prompt(case: TsxkCase) -> tuple[str, dict]:
     g = case.raw["guidance"]
     guide = SM.guidance_examples(Path(g["dir"]) / g["examples"], int(se.get("guidance_rows", 8)))
     cs = case.raw["check_set"]
-    check_list = case.path_of(cs["list"])
+    lists = case.check_lists()
     colleague = []
-    if check_list.exists():                        # without the check list, no colleague row can be excluded
+    if all(p.exists() for p in lists):             # without every check list, no colleague row can be excluded
+        exclude = set().union(*(SM.check_rows(p) for p in lists))
         colleague = SM.colleague_examples(Path(case.raw["workbook"]["path"]), cs["sheet"], cs["filled_column"],
-                                          int(se.get("colleague_rows", 0)), SM.check_rows(check_list), int(cs["seed"]))
+                                          int(se.get("colleague_rows", 0)), exclude, int(cs["seed"]))
     system = K.SYSTEM.format(standards=K.standards(case.rules()), examples=K.examples_text(guide, colleague))
     return system, {"guidance_examples": len(guide), "colleague_examples": len(colleague),
-                    "colleague_skipped": not check_list.exists()}
+                    "colleague_skipped": not all(p.exists() for p in lists)}
 
 
 def span(a: float, b: float) -> str:
@@ -58,8 +59,13 @@ def process_row(inputs: dict, led: dict | None, tl: dict | None, rules: dict, sy
     if res["errors"]:
         flags.append(FD.flag("red", "分类：" + "；".join(res["errors"])[:300]))
     y = hints["y_fixed"] or data.get("Y")
+    if not hints["y_fixed"] and hints.get("ai_note") and ((tl or {}).get("summary") or {}).get("has_tsxk"):
+        if y != "二创（单IP混剪类）":                             # D-065 ⑤-3, as example 13 in the guidance table
+            flags.append(FD.flag("yellow", f"Y：以吞噬星空画面为基础的 AI 创作归单IP混剪（D-065），模型原判{y}"))
+        y = "二创（单IP混剪类）"
     if not hints["y_fixed"]:
-        fields["Y"] = FD._f(y, "model", "GLM 按指引在纯cut、偷渡和二创各子类中选")
+        fields["Y"] = FD._f(y, "code" if hints.get("ai_note") else "model",
+                            "AI 创作归单IP混剪（D-065）" if hints.get("ai_note") else "GLM 按指引在纯cut、偷渡和二创各子类中选")
         default = rules["columns"]["Z"]["code_defaults"].get(y)
         if hints.get("ai_note"):                                   # WO-102-R2 A4: AI creation, Z per "高" example ③
             default = "高"
@@ -96,7 +102,7 @@ def process_row(inputs: dict, led: dict | None, tl: dict | None, rules: dict, sy
     lines = FD.time_lines(tl, fields, y) + promo_lines + notes + [x for x in (FD.episode_note(title),) if x]
     fields["AC"] = FD._f(A.assemble(data.get("AC") or {}, lines), "model+code", "五段由 GLM 写，时间段等由代码填")
     return {"fields": fields, "flags": flags, "evidence": data.get("evidence") or [], "calls": res["calls"],
-            "errors": res["errors"], "prompt": res["prompt"],
+            "errors": res["errors"], "prompt": res["prompt"], "z_basis": data.get("Z_basis"),
             "sound": {"music": music, "uploader_speech": res["speech"], "promotions": promo}}
 
 

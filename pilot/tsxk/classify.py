@@ -18,6 +18,7 @@ from . import sound as SD
 from .fields import NO, YES
 
 SECTIONS = ("主题概括", "段落情节", "新增创作要素", "比对意见", "其他")
+Z_HIGH = ("知识解读", "深度分析", "多作品对比", "AI创作")
 ANIME_Y = ("纯cut", "偷渡", "二创（解说类）", "二创（单IP混剪类）", "二创（多IP混剪类）", "二创（reaction类）", "二创（其他类）")
 FORMS = ("漫画", "动画剧场版", "手游", "小说", "有声书")
 QUOTE = re.compile(r"“([^”]+)”|\"([^\"]+)\"|「([^」]+)」")
@@ -41,7 +42,7 @@ SYSTEM = """你为短视频比对表填写几项判断和"视频说明"。判断
 {examples}
 
 只输出一个 JSON 对象：
-{{"Y": "…", "U": "是或否", "V": "是或否", "Z": "高、中或低", "T_extra": [], "AC": {{"主题概括": "…", "段落情节": "…", "新增创作要素": ["…"], "比对意见": "…", "其他": []}}, "evidence": [{{"point": "判断要点", "basis": "依据的事实"}}]}}"""
+{{"Y": "…", "U": "是或否", "V": "是或否", "Z": "高、中或低", "Z_basis": "Z 填高时写知识解读、深度分析、多作品对比或AI创作，否则留空", "T_extra": [], "AC": {{"主题概括": "…", "段落情节": "…", "新增创作要素": ["…"], "比对意见": "…", "其他": []}}, "evidence": [{{"point": "判断要点", "basis": "依据的事实"}}]}}"""
 
 
 def standards(rules: dict) -> str:
@@ -59,7 +60,9 @@ def standards(rules: dict) -> str:
               f"- 一段原片只加了标题和零星的点评或引述字幕、没有连续讲解的：{opt('quote_captions')}",
               f"- 整集原片后面拼接了一段无关内容的：{opt('appended_unrelated')}",
               f"- 预告解析、结合设定或原著的讲解：{opt('z_knowledge')}",
-              "- 画面文字有\"AI虚构\"\"AI生成\"一类声明的，按利用 AI 创作处理：属于二创；Z 参照\"高\"的示例③（利用 AI 创作生成非原片画面）填高"]
+              "- 画面文字有\"AI虚构\"\"AI生成\"一类声明的，按利用 AI 创作处理：属于二创；Z 参照\"高\"的示例③（利用 AI 创作生成非原片画面）填高",
+              f"- {c['Z']['high_only']} Z 填高时，在 Z_basis 里写明是哪一种。",
+              f"- {c['Z']['ai_y']}"]
     return "\n".join(lines)
 
 
@@ -176,6 +179,12 @@ def check(data: dict | None, y_fixed: str | None, fixed: dict, tl: dict | None, 
         errors.append("Y：纯cut 不能同时是解说或加了背景音乐（纯cut 的 V 填否）")
     if not y_fixed and y == "二创（解说类）" and data.get("U") != YES:
         errors.append("U：解说类的 U 应为是")
+    if not y_fixed and data.get("Z") == "高":                   # D-065 ⑤-4: high only in four cases
+        basis = str(data.get("Z_basis") or "").replace(" ", "")
+        if basis not in Z_HIGH:
+            errors.append("Z：填高只限知识解读、深度分析、多作品对比、有声明的 AI 创作，请在 Z_basis 写明，否则改为中")
+        elif basis == "AI创作" and not ((tl or {}).get("summary") or {}).get("ai_note_frames"):
+            errors.append("Z：画面上没有 AI 创作声明，不能按 AI 创作填高")
     if not y_fixed and ((tl or {}).get("summary") or {}).get("ai_note_frames") and not str(y).startswith("二创"):
         errors.append("Y：画面有 AI 创作声明，按利用 AI 创作处理，应在二创各子类里选（WO-102-R2 A4）")
     if data.get("V") == YES:                     # WO-102-R1 §1.5: only BGM added, and evidence that it was added

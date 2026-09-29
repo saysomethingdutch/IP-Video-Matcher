@@ -141,6 +141,17 @@ class Screen:
             return None
         return {"platforms": sorted(platforms), "kinds": sorted(kinds), "evidence": evidence}
 
+    def text_platforms(self, texts: list[str]) -> set[str]:
+        """Platforms the frame's own words point to (D-065 ⑤-2: when the providers disagree on the platform,
+        the side with text evidence wins)."""
+        blob = " ".join(texts)
+        out = set()
+        if self.group.search(blob) or any(p.search(blob) for p in self.tencent):
+            out.add("tencent")
+        if any(w in blob for w in self.strong_other) or any(d in blob for d in self.tr["other_domains"]):
+            out.add("other")
+        return out
+
     def logo_like(self, text: str) -> bool:
         """The calligraphic logo as OCR reads it: 3–5 characters ending in 空, at least min_match of them in the
         same place as in 吞噬星空 ("吞噬呈空", "吞獵呈空", "容噬宝空" all count; "星空" or "天空" do not)."""

@@ -19,7 +19,7 @@ from . import frames as F
 from . import local as Lc
 from . import segments as S
 
-VERSION = "wo102-5"
+VERSION = "wo102-6"
 TOP_BAND = [0, 0, 1, 0.2]           # OCR'd again at 2× for the AI label on the top edge (WO-102-R2 A4)
 SCENE_DIFF = 12.0                  # 64×36 grey mean absolute difference: below this a frame is the same scene
 llm.LOCAL_ALLOWED = False          # D-057 ④: the local vision model never decides a frame (and Ollama is Codex's)
@@ -79,6 +79,13 @@ def seed_cache(previous: dict | None, frames: list[dict], digest: str, cache_dir
                 C.store(f, digest, cache_dir, b, answers[b], {"seeded_from": previous.get("version")})
             n += 1
     return n
+
+
+def choose_platforms(cloud: list[str], backed_by_text: set[str]) -> list[str]:
+    """When the two providers name different platforms, the one the frame's words support (D-065 ⑤-2)."""
+    if len(cloud) > 1 and (both := set(cloud) & backed_by_text):
+        return sorted(both)
+    return cloud
 
 
 def mark_ignored(frames: list[dict], content: tuple[float, float] | None) -> None:
@@ -206,8 +213,9 @@ def run_video(video: Path, out_dir: Path, rules: dict, *, row: str | None = None
             content, form, source = cl["content"], cl["form"], "云端" + ("（同场景）" if src["t"] in scene_of else "")
         else:
             content, form, source = (None if tr else "unknown"), "", ("本地" if tr else "未判定")
+        cloud_traffic = choose_platforms(list(cl["traffic"]) if cl else [], screen.text_platforms(src.get("ocr") or []))
         f.update(content=content, form=form, source=source + ("（同前一帧）" if f.get("dup_of") else ""),
-                 traffic=tr["platforms"] if tr else (cl["traffic"] if cl else []),
+                 traffic=tr["platforms"] if tr else cloud_traffic,
                  kinds=tr["kinds"] if tr else (["导流信息"] if cl and cl["traffic"] else []),
                  traffic_evidence=tr["evidence"] if tr else (["云端两家都看到导流信息"] if cl and cl["traffic"] else []),
                  face=cl.get("face") if cl else None, text=cl.get("text") if cl else None, v=round(vclock(f["t"]), 1))

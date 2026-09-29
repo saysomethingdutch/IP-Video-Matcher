@@ -299,6 +299,26 @@ class R2Test(unittest.TestCase):
 
 
 
+class R3Test(unittest.TestCase):
+    """WO-102-R3 (D-065 ⑤): the last small rules in the timeline."""
+
+    def answer(self, content, form=""):
+        return {"content": content, "form": form, "traffic": "none", "face": False, "text": False, "why": ""}
+
+    def test_film_or_series_counts_as_the_series_animation(self):
+        got = C.cross({"zhipu": self.answer("tsxk_other", "动画剧场版"), "deepseek": self.answer("tsxk")})
+        self.assertEqual(got["content"], "tsxk")
+        self.assertIn("正片还是剧场版", got["flags"][0])
+        self.assertEqual(C.cross({"zhipu": self.answer("tsxk_other", "手游"), "deepseek": self.answer("tsxk")})["content"], "unknown")
+
+    def test_platform_with_text_evidence_wins(self):
+        s = Lc.Screen(RULES)
+        self.assertEqual(s.text_platforms(["汁源抠裙645266305"]), {"tencent"})              # 资源扣群 (8455)
+        self.assertEqual(P.choose_platforms(["other", "tencent"], {"tencent"}), ["tencent"])
+        self.assertEqual(P.choose_platforms(["other", "tencent"], set()), ["other", "tencent"])
+        self.assertEqual(P.choose_platforms(["other"], {"tencent"}), ["other"])
+
+
 @unittest.skipUnless(__import__("shutil").which("ffmpeg") and P.compile_ocr and (Path(__file__).resolve().parents[3] / "pilot/bin/ocr_vision").exists(),
                      "needs ffmpeg and the OCR tool")
 class EndToEndTest(unittest.TestCase):

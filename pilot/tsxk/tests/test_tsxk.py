@@ -1,6 +1,7 @@
 """WO-102 §1, §3, §4: rules file, code-decided columns, the reply checks, AC assembly, the check list and the
 scoring script — synthetic data only (no workbook, no model call)."""
 import unittest
+from pathlib import Path
 
 from pilot.timeline import local as Lc
 from pilot.tsxk import ac as A
@@ -329,6 +330,33 @@ class R2FixesTest(unittest.TestCase):
         self.assertIn("口径（WO-102-R2 B", text)
         self.assertIn("归二创（单IP混剪类）", text)
         self.assertIn("水印", text)
+
+
+
+class R3RulesTest(unittest.TestCase):
+    """WO-102-R3 (D-065 ⑤-4): Z 高 only in four cases; the two check sets."""
+
+    def reply(self, **kw):
+        base = {"Y": "二创（解说类）", "U": "是", "V": "否", "Z": "高", "Z_basis": "", "T_extra": [],
+                "AC": {"主题概括": "解说。", "段落情节": "罗峰。", "新增创作要素": ["配音"], "比对意见": "高。", "其他": []}}
+        base.update(kw)
+        return base
+
+    def test_high_needs_one_of_the_four_cases(self):
+        fixed, tl = {"W": {"value": "否"}}, {"segments": [seg(0, 60, "tsxk")], "summary": {}}
+        self.assertIn("填高只限", "".join(K.check(self.reply(), None, fixed, tl)))
+        self.assertEqual(K.check(self.reply(Z_basis="知识解读"), None, fixed, tl), [])
+        self.assertIn("没有 AI 创作声明", "".join(K.check(self.reply(Z_basis="AI创作"), None, fixed, tl)))
+        self.assertEqual(K.check(self.reply(Z="中"), None, fixed, tl), [])
+
+    def test_two_check_sets_and_every_list_excluded_from_style(self):
+        from pilot.tsxk.config import TsxkCase
+        case = TsxkCase(Path(__file__).resolve().parents[3] / "cases" / "tsxk.yaml")
+        a, b = case.check_set("a"), case.check_set("b")
+        self.assertEqual((a["out"].name, b["out"].name), ("check", "check30b"))
+        self.assertEqual((a["list"].name, b["list"].name), ("tsxk_check30.csv", "tsxk_check30b.csv"))
+        self.assertEqual(b["known_unreliable"], {})
+        self.assertEqual([p.name for p in case.check_lists()], ["tsxk_check30.csv", "tsxk_check30b.csv"])
 
 
 if __name__ == "__main__":
