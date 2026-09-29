@@ -162,6 +162,10 @@ def cross(answers: dict[str, dict | None]) -> dict:
     return out
 
 
+SLOT_POLL = 0.05    # s between looks for a free slot; at 0.5 s a caller that freed a slot and asked again at once
+                    # always won, and the 400-row run kept all four GLM slots from the check-set review (WO-102-R4)
+
+
 class Throttle:
     """At most `high` calls at a time to one provider, across every process that points at the same slot
     directory (the 400-row run, the check set and the samples may run together); after a rate-limit reply
@@ -202,7 +206,7 @@ class Throttle:
                     continue
                 self.held.fd = fd
                 return self
-            time.sleep(0.5)
+            time.sleep(SLOT_POLL)
 
     def __exit__(self, *exc):
         if self.slot_dir is None:
