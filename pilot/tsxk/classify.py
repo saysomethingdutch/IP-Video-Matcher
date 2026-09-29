@@ -16,8 +16,6 @@ from pilot.semantic import llm
 from pilot.timeline.cloud import THROTTLE
 
 from . import sound as SD
-from pilot.textindex.text import normalize
-
 from .fields import NO, YES
 
 SECTIONS = ("主题概括", "段落情节", "新增创作要素", "比对意见", "其他")
@@ -45,7 +43,7 @@ SYSTEM = """你为短视频比对表填写几项判断和"视频说明"。判断
 {examples}
 
 只输出一个 JSON 对象：
-{{"Y": "…", "U": "是或否", "V": "是或否", "Z": "高、中或低", "Z_basis": "Z 填高时写知识解读、深度分析、多作品对比或AI创作，否则留空", "Z_quotes": ["Z 按知识解读或深度分析填高时，原文摘出至少两句口播或 UP 主字幕"], "T_extra": [], "AC": {{"主题概括": "…", "段落情节": "…", "新增创作要素": ["…"], "比对意见": "…", "其他": []}}, "evidence": [{{"point": "判断要点", "basis": "依据的事实"}}]}}"""
+{{"Y": "…", "U": "是或否", "V": "是或否", "Z": "高、中或低", "Z_basis": "Z 填高时写知识解读、深度分析、多作品对比或AI创作，否则留空", "T_extra": [], "AC": {{"主题概括": "…", "段落情节": "…", "新增创作要素": ["…"], "比对意见": "…", "其他": []}}, "evidence": [{{"point": "判断要点", "basis": "依据的事实"}}]}}"""
 
 
 def standards(rules: dict) -> str:
@@ -65,7 +63,6 @@ def standards(rules: dict) -> str:
               f"- 预告解析、结合设定或原著的讲解：{opt('z_knowledge')}",
               "- 画面文字有\"AI虚构\"\"AI生成\"一类声明的，按利用 AI 创作处理：属于二创；Z 参照\"高\"的示例③（利用 AI 创作生成非原片画面）填高",
               f"- {c['Z']['high_only']} Z 填高时，在 Z_basis 里写明是哪一种。",
-              f"- {c['Z']['tightened']} Z_quotes 只用于核对，不写进视频说明。",
               f"- {c['Z']['ai_y']}"]
     return "\n".join(lines)
 
@@ -128,8 +125,8 @@ def facts_text(inputs: dict, led: dict | None, tl: dict | None, fixed: dict, hin
     return "\n".join(lines)
 
 
-def user_prompt(facts: str, y_fixed: str | None, z_fixed: str | None = None) -> str:
-    ask = (f"Y 已由程序定为\"{y_fixed}\"（没有吞噬星空动画画面），Z 已定为\"{z_fixed}\"，照填；请判断 U、V，" if y_fixed else
+def user_prompt(facts: str, y_fixed: str | None) -> str:
+    ask = (f"Y 已由程序定为\"{y_fixed}\"（没有吞噬星空动画画面），Y 照填；请判断 U、V、Z，" if y_fixed else
            f"请按比对说明判断 Y（只能在 {'、'.join(ANIME_Y)} 中选）、U、V、Z，")
     return f"{facts}\n\n{ask}如果解说或文字结合了原著小说、有声书，在 T_extra 里写出；然后写视频说明。"
 
@@ -142,22 +139,8 @@ def _strings(ac: dict) -> list[str]:
     return out
 
 
-def quote_found(quote: str, sources: list[str]) -> bool:
-    """A quoted sentence is really in the transcript or the on-screen text (WO-102-R4 §2)."""
-    q = normalize(str(quote or ""))
-    return len(q) >= 6 and any(q in normalize(s) for s in sources) or (len(q) >= 6 and q in normalize("".join(sources)))
-
-
-LEVEL = {"高": "高", "较高": "高", "中": "中", "中等": "中", "低": "低", "较低": "低"}
-
-
-def stated_levels(opinion: str) -> set[str]:
-    """What 【比对意见】 says the fair-use likelihood is (合理使用可能性高/中等/较低…)."""
-    return {LEVEL[x] for x in re.findall(r"合理使用(?:的)?可能性(?:为|是)?(较高|较低|中等|高|中|低)", opinion or "")}
-
-
 def check(data: dict | None, y_fixed: str | None, fixed: dict, tl: dict | None, music: dict | None = None,
-          speech: int = 0, sources: list[str] = ()) -> list[str]:
+          speech: int = 0) -> list[str]:
     """Problems with a reply; empty when it can be used."""
     if not isinstance(data, dict):
         return ["回复不是 JSON 对象"]
@@ -199,22 +182,10 @@ def check(data: dict | None, y_fixed: str | None, fixed: dict, tl: dict | None, 
         errors.append("U：解说类的 U 应为是")
     if not y_fixed and data.get("Z") == "高":                   # D-065 ⑤-4: high only in four cases
         basis = str(data.get("Z_basis") or "").replace(" ", "")
-        summary = (tl or {}).get("summary") or {}
         if basis not in Z_HIGH:
             errors.append("Z：填高只限知识解读、深度分析、多作品对比、有声明的 AI 创作，请在 Z_basis 写明，否则改为中")
-        elif basis == "AI创作" and not summary.get("ai_note_frames"):
+        elif basis == "AI创作" and not ((tl or {}).get("summary") or {}).get("ai_note_frames"):
             errors.append("Z：画面上没有 AI 创作声明，不能按 AI 创作填高")
-        elif basis == "多作品对比" and not (summary.get("seconds") or {}).get("unrelated"):
-            errors.append("Z：画面里没有其他作品，不能按多作品对比填高")
-        elif basis in ("知识解读", "深度分析"):                  # WO-102-R4 §2: two sentences that really exist
-            found = [q for q in data.get("Z_quotes") or [] if quote_found(q, list(sources))]
-            if len(found) < 2:
-                errors.append(f"Z：填高要从口播或 UP 主字幕里原文摘出至少两句超出剧情复述的话，核对上 {len(found)} 句；"
-                              "摘不出就改为中，并据此改写比对意见")
-    want = (fixed.get("Z") or {}).get("value") or data.get("Z")             # 【比对意见】 matches Z (WO-102-R4 §2)
-    said = stated_levels(str((data.get("AC") or {}).get("比对意见") if isinstance(data.get("AC"), dict) else ""))
-    if want and said and said != {want}:
-        errors.append(f"AC：比对意见写的合理使用可能性（{'、'.join(sorted(said))}）要和 Z（{want}）一致")
     if not y_fixed and ((tl or {}).get("summary") or {}).get("ai_note_frames") and not str(y).startswith("二创"):
         errors.append("Y：画面有 AI 创作声明，按利用 AI 创作处理，应在二创各子类里选（WO-102-R2 A4）")
     if data.get("V") == YES:                     # WO-102-R1 §1.5: only BGM added, and evidence that it was added
@@ -250,10 +221,7 @@ def classify(inputs: dict, led: dict | None, tl: dict | None, fixed: dict, hints
     """{"data", "errors", "calls", "prompt"}: the reply after at most one retry."""
     music = SD.music_evidence(audio, tl)
     speech = len(SD.uploader_speech(audio))
-    sources = SD.uploader_speech(audio) + [t for f in (tl or {}).get("frames", []) if not f.get("ignored")
-                                           for t in (f.get("ocr") or [])]
-    prompt = user_prompt(facts_text(inputs, led, tl, fixed, hints, audio, music), hints.get("y_fixed"),
-                         (fixed.get("Z") or {}).get("value"))
+    prompt = user_prompt(facts_text(inputs, led, tl, fixed, hints, audio, music), hints.get("y_fixed"))
     calls, errors, data = [], [], None
     for attempt in range(2):
         p = prompt if not errors else prompt + "\n\n上一次的回答有这些问题，请改正后重新输出完整 JSON：\n- " + "\n- ".join(errors)
@@ -261,9 +229,7 @@ def classify(inputs: dict, led: dict | None, tl: dict | None, fixed: dict, hints
         calls.append({"backend": reply.backend, "model": reply.model, "seconds": reply.seconds, "usage": reply.usage,
                       "error": reply.error, "fallback": reply.fallback})
         data = reply.data
-        errors = [reply.error] if reply.error and data is None else check(data, hints.get("y_fixed"), fixed, tl, music,
-                                                                         speech, sources)
+        errors = [reply.error] if reply.error and data is None else check(data, hints.get("y_fixed"), fixed, tl, music, speech)
         if not errors:
             break
-    return {"data": data, "errors": errors, "calls": calls, "prompt": prompt, "music": music, "speech": speech,
-            "sources": sources}
+    return {"data": data, "errors": errors, "calls": calls, "prompt": prompt, "music": music, "speech": speech}

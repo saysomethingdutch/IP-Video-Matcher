@@ -56,8 +56,9 @@ def process_row(inputs: dict, led: dict | None, tl: dict | None, rules: dict, sy
     res = K.classify(inputs, led, tl, fixed, hints, system, backend, audio) if tl else \
         {"data": None, "errors": ["没有时间线"], "calls": [], "prompt": "", "music": SD.music_evidence(None, None), "speech": 0}
     data = res["data"] or {}
-    if res["errors"]:
-        flags.append(FD.flag("red", "分类：" + "；".join(res["errors"])[:300]))
+    weak_high = [e for e in res["errors"] if e.startswith("Z：")] if data.get("Z") == "高" and not hints["y_fixed"] else []
+    if [e for e in res["errors"] if e not in weak_high]:          # a 高 on a wrong basis is lowered below, not red
+        flags.append(FD.flag("red", "分类：" + "；".join(e for e in res["errors"] if e not in weak_high)[:300]))
     y = hints["y_fixed"] or (None if hints.get("dispute_pending") else data.get("Y"))
     if not hints["y_fixed"] and hints.get("ai_note") and ((tl or {}).get("summary") or {}).get("has_tsxk"):
         if y != "二创（单IP混剪类）":                             # D-065 ⑤-3, as example 13 in the guidance table
@@ -73,16 +74,18 @@ def process_row(inputs: dict, led: dict | None, tl: dict | None, rules: dict, sy
         if default and data.get("Z") not in (None, default):
             flags.append(FD.flag("yellow", f"Z：模型给{data.get('Z')}，按指引示例（{y}）改为{default}"))
         z = default or data.get("Z")
-        if z == "高" and not default and data.get("Z_basis") in ("知识解读", "深度分析") and \
-                sum(K.quote_found(q, res.get("sources") or []) for q in data.get("Z_quotes") or []) < 2:
-            z = "中"                                                # WO-102-R4 §2: no two real sentences, no 高
-            flags.append(FD.flag("yellow", "Z：摘出的句子核对不上，由高降为中（WO-102-R4 §2）；比对意见请按中核对"))
+        if z == "高" and weak_high and not default:              # D-071: still no valid basis after the retry
+            z = "中"
+            flags.append(FD.flag("yellow", f"Z：模型给高，重答后依据仍不合格（{data.get('Z_basis') or '未写'}），降为中（D-071）；"
+                                           "比对意见请按中核对"))
         fields["Z"] = FD._f(z, "code" if default else "model",
                             "指引 Z 的示例" if default else f"GLM 按指引 Z 的标准（{data.get('Z_basis') or ''}）")
-    if (fields.get("Z") or {}).get("value") == "高":
-        flags.append(FD.flag("yellow", "Z 高：合理使用可能性大，请人确认（WO-102-R4 §2）"))
         if y == "偷渡" and ((rules.get("policies") or {}).get("appended_unrelated") or {}).get("value") == "偷渡":
             flags.append(FD.flag("yellow", "偷渡：原片后面拼接了无关内容（口径开关 B3，待所有者确认），请核对"))
+    if (fields.get("Z") or {}).get("value") == "高":
+        flags.append(FD.flag("yellow", "Z 高：合理使用可能性大，请人确认（D-071）"))
+    if (fields.get("Q") or {}).get("value") == FD.YES:
+        flags.append(FD.flag("red", "Q=是：判为完全不含吞噬星空动画，交人判断（D-071）"))
     fields["U"] = FD._f(data.get("U"), "model", "GLM：以配音或字幕讲解、分析剧情")
     music = res["music"]
     fields["V"] = FD._f(data.get("V"), "model", "GLM：是否只加了背景音乐；疑似UP主配乐："

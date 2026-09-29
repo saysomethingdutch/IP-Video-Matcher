@@ -357,13 +357,7 @@ class R3RulesTest(unittest.TestCase):
     def test_high_needs_one_of_the_four_cases(self):
         fixed, tl = {"W": {"value": "否"}}, {"segments": [seg(0, 60, "tsxk")], "summary": {}}
         self.assertIn("填高只限", "".join(K.check(self.reply(), None, fixed, tl)))
-        speech = ["这里其实和原著里罗峰的心境完全不一样", "动画把虚拟宇宙的设定讲得更清楚了"]
-        good = self.reply(Z_basis="知识解读", Z_quotes=speech)
-        self.assertEqual(K.check(good, None, fixed, tl, sources=speech), [])                   # WO-102-R4 §2
-        made_up = self.reply(Z_basis="知识解读", Z_quotes=["UP主深刻分析了宇宙规则的本质", "他认为这是神作"])
-        self.assertIn("核对上 0 句", "".join(K.check(made_up, None, fixed, tl, sources=speech)))
-        mismatch = self.reply(Z="中", AC=dict(self.reply()["AC"], 比对意见="合理使用可能性较高。"))
-        self.assertIn("要和 Z（中）一致", "".join(K.check(mismatch, None, fixed, tl)))
+        self.assertEqual(K.check(self.reply(Z_basis="知识解读"), None, fixed, tl), [])     # D-071: no quotes asked for
         self.assertIn("没有 AI 创作声明", "".join(K.check(self.reply(Z_basis="AI创作"), None, fixed, tl)))
         self.assertEqual(K.check(self.reply(Z="中"), None, fixed, tl), [])
 
@@ -376,6 +370,45 @@ class R3RulesTest(unittest.TestCase):
         self.assertEqual(b["known_unreliable"], {})
         self.assertEqual([p.name for p in case.check_lists()], ["tsxk_check30.csv", "tsxk_check30b.csv"])
 
+
+class D071FlagsTest(unittest.TestCase):
+    """D-071: Z judged as in R3; only flags added — every 高 yellow, a 高 still on a wrong basis after the retry
+    lowered to 中 (yellow, not red), every Q=是 row red."""
+
+    def row(self, tl, reply, errors=()):
+        from unittest import mock
+        from pilot.tsxk import pipeline as PL
+        res = {"data": reply, "errors": list(errors), "calls": [], "prompt": "", "speech": 0,
+               "music": {"verdict": "无旁证", "evidence": [], "series_music_seconds": 0}}
+        with mock.patch.object(PL.K, "classify", return_value=res):
+            out = PL.process_row({}, None, tl, RULES, "s")
+        return out["fields"]["Z"]["value"], out["flags"], out["fields"]["Q"]["value"]
+
+    def reply(self, **kw):
+        return {**R3RulesTest().reply(), **kw}
+
+    def test_a_high_on_a_wrong_basis_after_the_retry_is_lowered(self):
+        z, flags, _ = self.row(timeline([seg(0, 60, "tsxk")]), self.reply(Z_basis="知识解读（预告解析）"),
+                               ["Z：填高只限知识解读、深度分析、多作品对比、有声明的 AI 创作，请在 Z_basis 写明，否则改为中"])
+        self.assertEqual(z, "中")
+        self.assertTrue(any("降为中" in f["reason"] and f["level"] == "yellow" for f in flags))
+        self.assertFalse(any(f["level"] == "red" for f in flags))
+
+    def test_every_high_is_yellow(self):
+        z, flags, _ = self.row(timeline([seg(0, 60, "tsxk")]), self.reply(Z_basis="知识解读"))
+        self.assertEqual(z, "高")
+        self.assertTrue(any(f["reason"].startswith("Z 高") and f["level"] == "yellow" for f in flags))
+
+    def test_every_row_without_the_series_is_red(self):
+        _, flags, q = self.row(timeline([seg(0, 300, "unrelated")]), self.reply(Z="中"))
+        self.assertEqual(q, "是")
+        self.assertTrue(any(f["reason"].startswith("Q=是") and f["level"] == "red" for f in flags))
+        _, flags, q = self.row(timeline([seg(0, 60, "tsxk")]), self.reply(Z="中"))
+        self.assertFalse(any(f["reason"].startswith("Q=是") for f in flags))
+
+    def test_the_appended_unrelated_flag_does_not_need_a_high(self):
+        _, flags, _ = self.row(timeline([seg(0, 60, "tsxk"), seg(61, 90, "unrelated")]), self.reply(Y="偷渡", Z="低"))
+        self.assertTrue(any(f["reason"].startswith("偷渡：") for f in flags))
 
 
 class RateLimitTest(unittest.TestCase):
