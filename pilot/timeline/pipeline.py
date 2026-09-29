@@ -19,7 +19,7 @@ from . import frames as F
 from . import local as Lc
 from . import segments as S
 
-VERSION = "wo102-7"
+VERSION = "wo102-8"
 TOP_BAND = [0, 0, 1, 0.2]           # OCR'd again at 2× for the AI label on the top edge (WO-102-R2 A4)
 SCENE_DIFF = 12.0                  # 64×36 grey mean absolute difference: below this a frame is the same scene
 llm.LOCAL_ALLOWED = False          # D-057 ④: the local vision model never decides a frame (and Ollama is Codex's)
@@ -224,6 +224,10 @@ def run_video(video: Path, out_dir: Path, rules: dict, *, row: str | None = None
                  face=cl.get("face") if cl else None, text=cl.get("text") if cl else None, v=round(vclock(f["t"]), 1))
     inside = [f for f in frames if not f.get("ignored")]
     S.fill_from_neighbours(inside)
+    lone = S.lone_unrelated(inside)                                        # D-072
+    if lone:
+        flags.append(_flag("yellow", "夹在吞噬星空画面之间的单独一帧无关画面改记待定，不据此判偷渡（D-072）："
+                           + "、".join(C.mmss(clock(f["t"])) for f in lone[:5])))
 
     def probe(a, b):
         ta, tb = F.thumb(a["path"]), F.thumb(b["path"])

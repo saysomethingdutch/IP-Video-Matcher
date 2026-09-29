@@ -66,6 +66,28 @@ def fill_from_neighbours(frames: list[dict]) -> None:
             f["content"] = "traffic" if f.get("traffic") else "unknown"
 
 
+def _series(f: dict) -> bool:
+    return f["content"] == "tsxk" or (f["content"] == "tsxk_other" and f.get("form") == "动画剧场版")
+
+
+def lone_unrelated(frames: list[dict]) -> list[dict]:
+    """D-072: one unrelated frame with 吞噬星空 animation right before and right after it is undetermined, not
+    unrelated content (a single frame does not make a 偷渡). Rewrites those frames and returns them."""
+    lone = [b for a, b, c in zip(frames, frames[1:], frames[2:]) if b["content"] == "unrelated" and _series(a) and _series(c)]
+    for f in lone:
+        f.update(content="unknown", form="", source=f["source"] + "+单帧无关改待定")
+    return lone
+
+
+def unrelated_block(frames: list[dict]) -> bool:
+    """D-072: unrelated content that can make a 偷渡 — two or more frames in a row, or any frame before the first or
+    after the last frame of 吞噬星空 animation (片头、片尾)."""
+    series = [i for i, f in enumerate(frames) if _series(f)]
+    return any(f["content"] == "unrelated" and (not series or i < series[0] or i > series[-1] or
+                                                (i + 1 < len(frames) and frames[i + 1]["content"] == "unrelated"))
+               for i, f in enumerate(frames))
+
+
 def _boundary(a: dict, b: dict, probe: Callable[[float], float | None] | None) -> float:
     """First recording second in (a, b] that looks more like b than a; b's time when probing is impossible."""
     if probe is None or a["content"] not in SETTLED or b["content"] not in SETTLED or b["t"] - a["t"] <= 1.5:
@@ -156,6 +178,8 @@ def summary(frames: list[dict], segs: list[dict]) -> dict:
             "ai_note_frames": sum(1 for f in frames if f.get("ai_note")),
             "film_watermark": any((f.get("local") or {}).get("form") == "动画剧场版" for f in frames),   # WO-102-R2 A5
             "novel_frames": sum(1 for f in frames if f["content"] == "tsxk_other" and f.get("form") == "小说"),
+            "unrelated_block": unrelated_block(frames),                                                 # D-072
+            "lone_unrelated": sum(1 for f in frames if f["source"].endswith("单帧无关改待定")),
             "disputed_frames": sum(1 for f in frames if ((f.get("cloud") or {}).get("arbitration"))),     # WO-102-R4 §1
             "disputed_pending": sum(1 for f in frames if ((f.get("cloud") or {}).get("arbitration") or {}).get("verdict", "").startswith("复核后")),
             "local_frames": sum(1 for f in frames if f["source"].startswith("本地")),

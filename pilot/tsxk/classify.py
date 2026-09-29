@@ -176,6 +176,8 @@ def check(data: dict | None, y_fixed: str | None, fixed: dict, tl: dict | None, 
     w = (fixed.get("W") or {}).get("value")
     if not y_fixed and y in ("偷渡", "二创（多IP混剪类）") and w == NO:
         errors.append(f"Y：{y}要有无关或其他 IP 的内容，但时间线里没有（W=否）")
+    elif not y_fixed and y == "偷渡" and ((tl or {}).get("summary") or {}).get("unrelated_block") is False:
+        errors.append("Y：偷渡要有连续两帧以上的无关内容，或无关内容在片头、片尾；零星一帧不算（D-072）")
     if not y_fixed and y == "纯cut" and (data.get("U") == YES or data.get("V") == YES):
         errors.append("Y：纯cut 不能同时是解说或加了背景音乐（纯cut 的 V 填否）")
     if not y_fixed and y == "二创（解说类）" and data.get("U") != YES:

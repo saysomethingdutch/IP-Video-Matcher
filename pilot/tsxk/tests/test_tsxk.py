@@ -411,6 +411,18 @@ class D071FlagsTest(unittest.TestCase):
         self.assertTrue(any(f["reason"].startswith("偷渡：") for f in flags))
 
 
+class D072Test(unittest.TestCase):
+    def test_a_tochdu_needs_more_than_one_unrelated_frame(self):
+        fixed = {"W": {"value": "是"}}
+        reply = {**R3RulesTest().reply(), "Y": "偷渡", "U": "否", "Z": "低"}
+        lone = {"segments": [seg(0, 60, "tsxk")], "summary": {"unrelated_block": False}}
+        self.assertIn("零星一帧不算", "".join(K.check(reply, None, fixed, lone)))
+        block = {"segments": [seg(0, 60, "tsxk"), seg(61, 90, "unrelated")], "summary": {"unrelated_block": True}}
+        self.assertNotIn("零星一帧不算", "".join(K.check(reply, None, fixed, block)))
+        older = {"segments": [seg(0, 60, "tsxk")], "summary": {}}               # a timeline from before D-072
+        self.assertNotIn("零星一帧不算", "".join(K.check(reply, None, fixed, older)))
+
+
 class RateLimitTest(unittest.TestCase):
     def test_a_rate_limit_waits_lowers_the_limit_and_asks_again(self):
         from unittest import mock

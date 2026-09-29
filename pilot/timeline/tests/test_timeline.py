@@ -354,6 +354,30 @@ class R4ArbitrationTest(unittest.TestCase):
                 C.arbitrate([yes], board, "R1", Path(tmp) / "cache", workers=1)
 
 
+class D072Test(unittest.TestCase):
+    """D-072: a single unrelated frame between frames of the series is undetermined; a 偷渡 needs two unrelated
+    frames in a row, or unrelated content before or after the series."""
+
+    def frames(self, *contents):
+        return [{"t": 10.0 * i, "content": c.split("/")[0], "form": (c.split("/") + [""])[1], "source": "云端"}
+                for i, c in enumerate(contents)]
+
+    def test_a_lone_frame_between_the_series_is_undetermined(self):
+        fr = self.frames("tsxk", "unrelated", "tsxk", "unrelated", "tsxk_other/动画剧场版")
+        self.assertEqual([f["t"] for f in S.lone_unrelated(fr)], [10.0, 30.0])
+        self.assertEqual([f["content"] for f in fr], ["tsxk", "unknown", "tsxk", "unknown", "tsxk_other"])
+        self.assertFalse(S.unrelated_block(fr))
+        next_to_unknown = self.frames("tsxk", "unrelated", "unknown", "tsxk")
+        self.assertEqual(S.lone_unrelated(next_to_unknown), [])                        # not between the series
+        self.assertFalse(S.unrelated_block(next_to_unknown))                           # but one frame is no 偷渡
+
+    def test_what_can_make_a_tochdu(self):
+        self.assertTrue(S.unrelated_block(self.frames("tsxk", "unrelated", "unrelated", "tsxk")))   # two in a row
+        self.assertTrue(S.unrelated_block(self.frames("tsxk", "tsxk", "unrelated")))                # at the end
+        self.assertTrue(S.unrelated_block(self.frames("unrelated", "tsxk", "tsxk")))                # at the start
+        self.assertEqual(S.lone_unrelated(self.frames("tsxk", "tsxk", "unrelated")), [])
+
+
 @unittest.skipUnless(__import__("shutil").which("ffmpeg") and P.compile_ocr and (Path(__file__).resolve().parents[3] / "pilot/bin/ocr_vision").exists(),
                      "needs ffmpeg and the OCR tool")
 class EndToEndTest(unittest.TestCase):
