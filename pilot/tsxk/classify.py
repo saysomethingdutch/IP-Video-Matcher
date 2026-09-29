@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import re
+import time
 
 from contextlib import nullcontext
 
@@ -196,6 +197,25 @@ def check(data: dict | None, y_fixed: str | None, fixed: dict, tl: dict | None, 
     return errors
 
 
+RATE_LIMIT_WAITS = (60, 180, 300)          # seconds before asking again after HTTP 429
+
+
+def ask_patiently(backend: str, prompt: str, system: str, waits=RATE_LIMIT_WAITS, sleep=time.sleep):
+    """One classification call. A rate limit (HTTP 429, "账户已达到速率限制") lowers the shared limit to 4 for
+    every process (D-058 ③) and the same prompt is asked again after a wait; it is not a validation retry."""
+    reply = None
+    for wait in (0, *waits):
+        if wait:
+            sleep(wait)
+        with THROTTLE.get(backend, nullcontext()):              # shares the provider limit with the timeline
+            reply = llm.ask(backend, prompt, system=system, required=("AC",), timeout=900)
+        if not reply.error.startswith("HTTP 429"):
+            break
+        if backend in THROTTLE:
+            THROTTLE[backend].limited()
+    return reply
+
+
 def classify(inputs: dict, led: dict | None, tl: dict | None, fixed: dict, hints: dict, system: str,
              backend: str = "zhipu", audio: dict | None = None) -> dict:
     """{"data", "errors", "calls", "prompt"}: the reply after at most one retry."""
@@ -205,8 +225,7 @@ def classify(inputs: dict, led: dict | None, tl: dict | None, fixed: dict, hints
     calls, errors, data = [], [], None
     for attempt in range(2):
         p = prompt if not errors else prompt + "\n\n上一次的回答有这些问题，请改正后重新输出完整 JSON：\n- " + "\n- ".join(errors)
-        with THROTTLE.get(backend, nullcontext()):              # shares the provider limit with the timeline
-            reply = llm.ask(backend, p, system=system, required=("AC",), timeout=900)
+        reply = ask_patiently(backend, p, system)
         calls.append({"backend": reply.backend, "model": reply.model, "seconds": reply.seconds, "usage": reply.usage,
                       "error": reply.error, "fallback": reply.fallback})
         data = reply.data

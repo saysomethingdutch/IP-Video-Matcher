@@ -359,5 +359,20 @@ class R3RulesTest(unittest.TestCase):
         self.assertEqual([p.name for p in case.check_lists()], ["tsxk_check30.csv", "tsxk_check30b.csv"])
 
 
+
+class RateLimitTest(unittest.TestCase):
+    def test_a_rate_limit_waits_lowers_the_limit_and_asks_again(self):
+        from unittest import mock
+        from pilot.semantic import llm
+        from pilot.timeline import cloud as C
+        limited = llm.Reply("zhipu", "glm", error='HTTP 429: {"error":{"code":"1302"}}')
+        good = llm.Reply("zhipu", "glm", data={"AC": {}})
+        waits = []
+        C.THROTTLE["zhipu"] = C.Throttle("zhipu")
+        with mock.patch.object(K.llm, "ask", side_effect=[limited, limited, good]):
+            reply = K.ask_patiently("zhipu", "p", "s", waits=(1, 2, 3), sleep=waits.append)
+        self.assertEqual((reply.data, waits, C.THROTTLE["zhipu"].cap()), ({"AC": {}}, [1, 2], 4))
+
+
 if __name__ == "__main__":
     unittest.main()
