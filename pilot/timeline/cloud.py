@@ -276,7 +276,8 @@ def ask_group(board: Path, legend: str, picture: Path, n: int,
         as no answer for these frames — they stay unknown and flagged — instead of failing the whole row."""
         try:
             with THROTTLE[backend]:
-                return llm.ask(backend, prompt, images=[board, picture], required=("frames",), timeout=600)
+                return llm.ask(backend, prompt, images=[board, picture], required=("frames",), timeout=600,
+                               label="collage")
         except Exception as exc:
             return llm.Reply(backend, llm.BACKENDS[backend].model, error=f"{type(exc).__name__}: {str(exc)[:200]}")
 
@@ -371,7 +372,8 @@ def arbitrate(frames: list[dict], board: Path, legend: str, cache_dir: Path, wor
             return json.loads(cached.read_text(encoding="utf-8"))["answer"], None
         try:
             with THROTTLE[backend]:
-                reply = llm.ask(backend, prompt, images=[board, Path(frame["path"])], required=("is_tsxk",), timeout=600)
+                reply = llm.ask(backend, prompt, images=[board, Path(frame["path"])], required=("is_tsxk",), timeout=600,
+                                label="arbitration")
         except Exception as exc:
             return None, {"backend": backend, "error": f"{type(exc).__name__}: {str(exc)[:200]}", "usage": {}}
         if reply.error.startswith("HTTP 429"):

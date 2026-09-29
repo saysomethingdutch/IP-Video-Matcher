@@ -4,6 +4,7 @@
     python -m pilot.tsxk samples cases/tsxk.yaml [--videos 13,16]      # the example recordings, for checking
     python -m pilot.tsxk check-list cases/tsxk.yaml                    # the 30-row list (input columns only)
     python -m pilot.tsxk check-score cases/tsxk.yaml --owner-approved  # reads the human columns: Owner only
+    python -m pilot.tsxk usage cases/tsxk.yaml [--since 2026-09-29T18:00]  # tokens and time per kind of call
 
 Needs the timelines first (python -m pilot.timeline …). Cloud calls: launch with zsh -lic '…'.
 """
@@ -22,6 +23,7 @@ from pilot.semantic import llm
 from pilot.timeline.cloud import share_slots
 
 from . import check as CK
+from . import usage as US
 from .config import TsxkCase
 from .pipeline import process_row, save, system_prompt
 from .samples import check_rows
@@ -60,7 +62,7 @@ def sample_inputs(case: TsxkCase) -> dict[str, dict]:
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(prog="python -m pilot.tsxk")
     sub = ap.add_subparsers(dest="cmd", required=True)
-    for name in ("run", "samples", "check-list", "check-run", "check-freeze", "check-score"):
+    for name in ("run", "samples", "check-list", "check-run", "check-freeze", "check-score", "usage"):
         p = sub.add_parser(name)
         p.add_argument("config")
         p.add_argument("--rows", default="")
@@ -70,10 +72,18 @@ def main(argv=None) -> int:
         p.add_argument("--owner-approved", action="store_true")
         p.add_argument("--machine", default="")
         p.add_argument("--set", default="a", choices=("a", "b"))
+        p.add_argument("--since", default="")
+        p.add_argument("--until", default="")
+        p.add_argument("--run", default="")
     args = ap.parse_args(argv)
     llm.LOCAL_ALLOWED = False                      # GLM only (D-037); never the local model (Codex's Ollama)
     case = TsxkCase(args.config)
     share_slots(case.case_dir / ".cloud_slots")     # one 8/4 limit per provider across processes (D-058)
+    llm.CALL_LOG = case.case_dir / "usage" / "calls.jsonl"     # every cloud request with its tokens (D-069)
+    llm.CALL_RUN = " ".join(["tsxk", args.cmd] + ([f"--set {args.set}"] if args.cmd.startswith("check") else []))
+    if args.cmd == "usage":
+        print(US.markdown(US.read(llm.CALL_LOG, args.since, args.until, args.run)))
+        return 0
     cs = case.check_set(args.set)
     if args.cmd == "check-list":
         if Path(cs["list"]).exists():                  # a drawn list is the Owner's record: never redraw over it

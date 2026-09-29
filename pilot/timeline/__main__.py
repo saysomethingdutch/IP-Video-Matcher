@@ -17,6 +17,7 @@ from pathlib import Path
 
 import cv2
 
+from pilot.semantic import llm
 from pilot.tsxk.config import TsxkCase
 from pilot.tsxk.samples import check_rows
 
@@ -65,6 +66,8 @@ def main(argv=None) -> int:
     args = ap.parse_args(argv)
     case = TsxkCase(args.case if args.cmd == "video" else args.config)
     C.share_slots(case.case_dir / ".cloud_slots")        # the 8/4 limit counts across processes (D-058)
+    llm.CALL_LOG = case.case_dir / "usage" / "calls.jsonl"     # every cloud request with its tokens (D-069)
+    llm.CALL_RUN = " ".join(["timeline", args.cmd] + ([f"--set {args.set}"] if args.cmd == "check" else []))
     tl = case.raw["timeline"]
     upload = bool(tl.get("allow_image_upload")) and not args.no_upload
     board, legend = board_for(case) if upload else (None, "")

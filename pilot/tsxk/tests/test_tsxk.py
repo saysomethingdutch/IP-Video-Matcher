@@ -1,5 +1,7 @@
 """WO-102 §1, §3, §4: rules file, code-decided columns, the reply checks, AC assembly, the check list and the
 scoring script — synthetic data only (no workbook, no model call)."""
+import json
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -388,6 +390,68 @@ class RateLimitTest(unittest.TestCase):
         with mock.patch.object(K.llm, "ask", side_effect=[limited, limited, good]):
             reply = K.ask_patiently("zhipu", "p", "s", waits=(1, 2, 3), sleep=waits.append)
         self.assertEqual((reply.data, waits, C.THROTTLE["zhipu"].cap()), ({"AC": {}}, [1, 2], 4))
+
+
+class UsageTest(unittest.TestCase):
+    """D-069: every cloud request is logged with its input, thinking and output tokens, and summed per kind."""
+
+    def setUp(self):
+        from pilot.semantic import llm
+        self.llm = llm
+        self.tmp = tempfile.TemporaryDirectory()
+        self.log = Path(self.tmp.name) / "usage" / "calls.jsonl"
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def lines(self):
+        return [json.loads(x) for x in self.log.read_text(encoding="utf-8").splitlines()]
+
+    def test_each_request_is_logged_with_its_tokens(self):
+        from unittest import mock
+        answer = {"choices": [{"message": {"content": '{"AC": {}}'}}],
+                  "usage": {"prompt_tokens": 5000, "completion_tokens": 9000,
+                            "completion_tokens_details": {"reasoning_tokens": 8300}}}
+        with mock.patch.object(self.llm, "CALL_LOG", self.log), mock.patch.object(self.llm, "CALL_RUN", "tsxk run"), \
+                mock.patch.dict("os.environ", {"ZHIPU_API_KEY": "x"}), mock.patch.object(self.llm, "_post", return_value=answer):
+            self.llm.ask("zhipu", "p", required=("AC",), label="classification")
+        (line,) = self.lines()
+        self.assertEqual({k: line[k] for k in ("run", "backend", "label", "input", "thinking", "output", "error")},
+                         {"run": "tsxk run", "backend": "zhipu", "label": "classification", "input": 5000,
+                          "thinking": 8300, "output": 700, "error": ""})
+
+    def test_a_failed_request_is_logged_too(self):
+        import http.client
+        from unittest import mock
+        with mock.patch.object(self.llm, "CALL_LOG", self.log), mock.patch.dict("os.environ", {"ZHIPU_API_KEY": "x"}), \
+                mock.patch.object(self.llm.time, "sleep"), \
+                mock.patch.object(self.llm, "_post", side_effect=http.client.IncompleteRead(b"")):
+            self.llm.ask("zhipu", "p", label="arbitration")
+        lines = self.lines()
+        self.assertEqual(len(lines), 3)                         # each billed attempt is one line
+        self.assertTrue(all(x["error"].startswith("IncompleteRead") for x in lines))
+
+    def test_no_log_unless_a_run_sets_one(self):
+        from unittest import mock
+        with mock.patch.dict("os.environ", {"ZHIPU_API_KEY": "x"}), \
+                mock.patch.object(self.llm, "_post", return_value={"choices": [{"message": {"content": "{}"}}]}):
+            self.llm.ask("zhipu", "p")
+        self.assertFalse(self.log.exists())
+
+    def test_summary_per_provider_and_kind(self):
+        from pilot.tsxk import usage as US
+        calls = [{"at": "2026-09-29T10:10:00", "backend": "zhipu", "label": "classification", "seconds": 600,
+                  "input": 5000, "cached": 0, "thinking": 8000, "output": 700, "error": ""},
+                 {"at": "2026-09-29T10:10:00", "backend": "zhipu", "label": "classification", "seconds": 600,
+                  "input": 5200, "cached": 0, "thinking": 9000, "output": 800, "error": ""},
+                 {"at": "2026-09-29T10:10:00", "backend": "zhipu", "label": "classification", "seconds": 5,
+                  "input": 0, "cached": 0, "thinking": 0, "output": 0, "error": "HTTP 429"}]
+        (s,) = US.summarize(calls)
+        self.assertEqual((s["calls"], s["errors"], s["thinking_sum"], s["thinking_median"]), (3, 1, 17000, 8500))
+        self.assertAlmostEqual(US.in_flight(calls)["zhipu"], 1205 / 600)   # two 10-minute calls side by side
+        text = US.markdown(calls)
+        self.assertIn("| GLM | 分类与意见 | 3 | 1 |", text)
+        self.assertIn("思考占 92%", text)
 
 
 if __name__ == "__main__":

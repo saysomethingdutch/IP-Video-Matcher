@@ -237,7 +237,7 @@ def ask_patiently(backend: str, prompt: str, system: str, waits=RATE_LIMIT_WAITS
         if wait:
             sleep(wait)
         with THROTTLE.get(backend, nullcontext()):              # shares the provider limit with the timeline
-            reply = llm.ask(backend, prompt, system=system, required=("AC",), timeout=900)
+            reply = llm.ask(backend, prompt, system=system, required=("AC",), timeout=900, label="classification")
         if not reply.error.startswith("HTTP 429"):
             break
         if backend in THROTTLE:
