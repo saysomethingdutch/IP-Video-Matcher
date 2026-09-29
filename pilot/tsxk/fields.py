@@ -157,16 +157,25 @@ def timeline_fields(tl: dict | None, led: dict | None, title: str, rules: dict) 
     if "动画剧场版" in s["forms"] and not s.get("film_watermark"):
         flags.append(flag("yellow", "T：画面像剧场版，但没有看到片名水印，T 不填剧场版（WO-102-R2 A5）"))
     hints = {"forms": forms, "y_fixed": None, "z_default": None, "ai_note": bool(s.get("ai_note_frames"))}
-    if not s["has_tsxk"]:
+    film_as_series = ((rules.get("policies") or {}).get("film_only") or {}).get("value", "按正片判") == "按正片判"
+    if not anime and s.get("disputed_pending"):                 # WO-102-R4 §1: nothing adopted, disputes remain
+        out["Q"] = _f(None, "timeline", f"争议帧复核后仍有 {s['disputed_pending']} 帧待定，一帧正片都没采用")
+        out["Y"] = _f(None, "code", "交人判断，不据此填完全无关（WO-102-R4 §1）")
+        hints["dispute_pending"] = True
+        flags.append(flag("red", f"争议帧复核后仍一帧都没采用（{s['disputed_pending']} 帧两家仍有分歧）：Q、Y 交人判断"))
+        return out, hints, flags
+    if not s["has_tsxk"] and not (s["has_film"] and film_as_series):   # D-068: films are judged like the series
         content = {k: v for k, v in secs.items() if k not in ("blank", "unknown")}
-        other_secs = content.get("tsxk_other", 0)
+        film_secs = sum(sg["end"] - sg["start"] + 1 for sg in tl["segments"]
+                        if sg["content"] == "tsxk_other" and sg.get("form") == "动画剧场版")
+        other_secs = content.get("tsxk_other", 0) - (film_secs if film_as_series else 0)
         total = sum(content.values()) or 1
         if platforms:
             hints["y_fixed"], basis = "引流", "没有吞噬星空动画，画面里有引流信息"
             if not is_related(title, rules):
                 flags.append(flag("yellow", "Y 判引流，但标题里没有吞噬星空相关字样"))
         elif other_secs and other_secs / total >= 0.8:
-            hints["y_fixed"], basis = "错权", f"没有吞噬星空动画正片，画面是吞噬星空的其他形式（{'、'.join(s['forms'])}）"
+            hints["y_fixed"], basis = "错权", f"没有吞噬星空动画，画面全是吞噬星空的其他形式（{'、'.join(s['forms'])}）"
         else:
             hints["y_fixed"], basis = "完全无关内容", "没有吞噬星空动画，也不是其他形式或引流"
             if other_secs:

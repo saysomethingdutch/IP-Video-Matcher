@@ -324,3 +324,80 @@ def label_frames(frames: list[dict], clock, board: Path, legend: str, outbox: Pa
                     if ans is not None:
                         store(f, digest, cache_dir, b, ans, by_backend.get(b, {}))
     return calls
+
+
+# ---------------------------------------------------------------- disputed frames (WO-102-R4 §1)
+
+ARBITRATION_PROMPT = """第一张图是参考图板：
+{legend}
+
+第二张图是一个视频里的一帧（只截了播放器画面）。
+问题：这一帧是不是《吞噬星空》动画画面（正片、官方预告、剧场版都算）？看台标、角色、画风。
+原片画面上叠了字幕、水印、弹幕或边框的，照样算；画中画里有这部动画的也算。
+《斗破苍穹》《完美世界》《斗罗大陆》《凡人修仙传》《仙逆》等国漫画风相近，人物、场景对不上参考图的不算。
+
+只输出 JSON：{{"is_tsxk": true 或 false, "why": "不超过20字"}}"""
+
+
+def is_series(answer: dict | None) -> bool:
+    """The answer says 吞噬星空 animation (the series, a trailer, or the films)."""
+    return bool(answer) and (answer["content"] == "tsxk" or
+                             (answer["content"] == "tsxk_other" and answer.get("form") in ("", "动画剧场版")))
+
+
+def disputed(frame: dict, backends=BACKENDS) -> bool:
+    """One provider says 吞噬星空 animation and the other does not."""
+    answers = ((frame.get("cloud") or {}).get("answers") or {})
+    got = [answers.get(b) for b in backends]
+    return all(got) and len({is_series(a) for a in got}) == 2
+
+
+def arbitrate(frames: list[dict], board: Path, legend: str, cache_dir: Path, workers: int = 4,
+              backends=BACKENDS) -> list[dict]:
+    """Ask both providers once more about each disputed frame, one frame at full crop size with the reference
+    board, as a yes/no question. Both yes: the series; both no: not; split: still undecided (flagged).
+    Sets frame["cloud"]["arbitration"] and rewrites its content; answers are cached per frame. Returns calls."""
+    prompt = ARBITRATION_PROMPT.format(legend=legend)
+    digest = hashlib.sha256((prompt + "arbitration").encode("utf-8") + Path(board).read_bytes()).hexdigest()[:16]
+
+    def ask_one(frame, backend):
+        key = frame_key(frame["path"], digest)
+        cached = cache_dir / f"{key}.{backend}.arb.json"
+        if cached.exists():
+            return json.loads(cached.read_text(encoding="utf-8"))["answer"], None
+        try:
+            with THROTTLE[backend]:
+                reply = llm.ask(backend, prompt, images=[board, Path(frame["path"])], required=("is_tsxk",), timeout=600)
+        except Exception as exc:
+            return None, {"backend": backend, "error": f"{type(exc).__name__}: {str(exc)[:200]}", "usage": {}}
+        if reply.error.startswith("HTTP 429"):
+            THROTTLE[backend].limited()
+        data = reply.data if isinstance(reply.data, dict) and isinstance(reply.data.get("is_tsxk"), bool) else None
+        call = {"backend": backend, "model": reply.model, "seconds": reply.seconds, "usage": reply.usage,
+                "error": reply.error, "picture": Path(frame["path"]).name, "kind": "arbitration"}
+        if data is not None:
+            cache_dir.mkdir(parents=True, exist_ok=True)
+            cached.write_text(json.dumps({"answer": data, "call": call}, ensure_ascii=False), encoding="utf-8")
+        return data, call
+
+    def one(frame):
+        return frame, {b: ask_one(frame, b) for b in backends}
+
+    calls = []
+    with ThreadPoolExecutor(max_workers=max(1, workers)) as ex:
+        for frame, got in ex.map(one, frames):
+            votes = {b: (ans or {}).get("is_tsxk") for b, (ans, _) in got.items()}
+            calls += [c for _, c in got.values() if c]
+            cl = frame["cloud"]
+            before = {b: a["content"] for b, a in cl["answers"].items() if a}
+            if all(v is True for v in votes.values()):
+                cl["content"], cl["form"], verdict = "tsxk", "", "两家复核都说是吞噬星空动画，采用"
+            elif all(v is False for v in votes.values()):
+                other = next((a["content"] for a in cl["answers"].values() if a and not is_series(a)), "unknown")
+                cl["content"], cl["form"], verdict = other, "", "两家复核都说不是吞噬星空动画，不采用"
+            else:
+                cl["content"], cl["form"], verdict = "unknown", "", "复核后两家仍有分歧，待定"
+            cl["arbitration"] = {"votes": votes, "before": before, "verdict": verdict,
+                                 "why": {b: (ans or {}).get("why", "") for b, (ans, _) in got.items()}}
+            cl["flags"] = [x for x in cl.get("flags", []) if "不一致" not in x] + [f"争议帧复核：{verdict}"]
+    return calls

@@ -19,7 +19,7 @@ from . import frames as F
 from . import local as Lc
 from . import segments as S
 
-VERSION = "wo102-6"
+VERSION = "wo102-7"
 TOP_BAND = [0, 0, 1, 0.2]           # OCR'd again at 2× for the AI label on the top edge (WO-102-R2 A4)
 SCENE_DIFF = 12.0                  # 64×36 grey mean absolute difference: below this a frame is the same scene
 llm.LOCAL_ALLOWED = False          # D-057 ④: the local vision model never decides a frame (and Ollama is Codex's)
@@ -193,6 +193,9 @@ def run_video(video: Path, out_dir: Path, rules: dict, *, row: str | None = None
         if probes:
             calls += C.label_frames(probes, clock, board, legend, out_dir / "cloud_outbox", cache, workers, backends)
             scene_votes = votes(members, probes)
+        contested = [f for f in send + probes if C.disputed(f, backends)]          # WO-102-R4 §1
+        if contested:
+            calls += C.arbitrate(contested, board, legend, cache, workers, backends)
     elif send:
         flags.append(_flag("yellow", f"{len(need)} 帧本地判不了，未送云端（{'未授权上传' if not upload else '缺参考图板'}）"))
 

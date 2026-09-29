@@ -58,7 +58,7 @@ def process_row(inputs: dict, led: dict | None, tl: dict | None, rules: dict, sy
     data = res["data"] or {}
     if res["errors"]:
         flags.append(FD.flag("red", "分类：" + "；".join(res["errors"])[:300]))
-    y = hints["y_fixed"] or data.get("Y")
+    y = hints["y_fixed"] or (None if hints.get("dispute_pending") else data.get("Y"))
     if not hints["y_fixed"] and hints.get("ai_note") and ((tl or {}).get("summary") or {}).get("has_tsxk"):
         if y != "二创（单IP混剪类）":                             # D-065 ⑤-3, as example 13 in the guidance table
             flags.append(FD.flag("yellow", f"Y：以吞噬星空画面为基础的 AI 创作归单IP混剪（D-065），模型原判{y}"))
@@ -72,8 +72,15 @@ def process_row(inputs: dict, led: dict | None, tl: dict | None, rules: dict, sy
             flags.append(FD.flag("yellow", "AI 创作：画面文字有\"AI虚构\"一类声明，按利用 AI 创作处理（二创，Z 高），请核实"))
         if default and data.get("Z") not in (None, default):
             flags.append(FD.flag("yellow", f"Z：模型给{data.get('Z')}，按指引示例（{y}）改为{default}"))
-        fields["Z"] = FD._f(default or data.get("Z"), "code" if default else "model",
-                            "指引 Z 的示例" if default else "GLM 按指引 Z 的高、中、低标准")
+        z = default or data.get("Z")
+        if z == "高" and not default and data.get("Z_basis") in ("知识解读", "深度分析") and \
+                sum(K.quote_found(q, res.get("sources") or []) for q in data.get("Z_quotes") or []) < 2:
+            z = "中"                                                # WO-102-R4 §2: no two real sentences, no 高
+            flags.append(FD.flag("yellow", "Z：摘出的句子核对不上，由高降为中（WO-102-R4 §2）；比对意见请按中核对"))
+        fields["Z"] = FD._f(z, "code" if default else "model",
+                            "指引 Z 的示例" if default else f"GLM 按指引 Z 的标准（{data.get('Z_basis') or ''}）")
+    if (fields.get("Z") or {}).get("value") == "高":
+        flags.append(FD.flag("yellow", "Z 高：合理使用可能性大，请人确认（WO-102-R4 §2）"))
         if y == "偷渡" and ((rules.get("policies") or {}).get("appended_unrelated") or {}).get("value") == "偷渡":
             flags.append(FD.flag("yellow", "偷渡：原片后面拼接了无关内容（口径开关 B3，待所有者确认），请核对"))
     fields["U"] = FD._f(data.get("U"), "model", "GLM：以配音或字幕讲解、分析剧情")

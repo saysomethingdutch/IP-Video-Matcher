@@ -156,5 +156,7 @@ def summary(frames: list[dict], segs: list[dict]) -> dict:
             "ai_note_frames": sum(1 for f in frames if f.get("ai_note")),
             "film_watermark": any((f.get("local") or {}).get("form") == "动画剧场版" for f in frames),   # WO-102-R2 A5
             "novel_frames": sum(1 for f in frames if f["content"] == "tsxk_other" and f.get("form") == "小说"),
+            "disputed_frames": sum(1 for f in frames if ((f.get("cloud") or {}).get("arbitration"))),     # WO-102-R4 §1
+            "disputed_pending": sum(1 for f in frames if ((f.get("cloud") or {}).get("arbitration") or {}).get("verdict", "").startswith("复核后")),
             "local_frames": sum(1 for f in frames if f["source"].startswith("本地")),
             "cloud_frames": sum(1 for f in frames if f["source"].startswith("云端"))}

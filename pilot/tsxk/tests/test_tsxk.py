@@ -86,9 +86,19 @@ class FieldsTest(unittest.TestCase):
         f, h, _ = FD.timeline_fields(drive, None, "吞噬星空236", RULES)
         self.assertEqual((f["Q"]["value"], f["Y"]["value"], f["Z"]["value"]), ("是", "引流", "低"))
         film = timeline([seg(0, 90, "tsxk_other", "动画剧场版")], forms=["动画剧场版"])
-        f, h, flags = FD.timeline_fields(film, None, "决战原始星PV", RULES)
-        self.assertEqual((f["Q"]["value"], f["Y"]["value"], f["Z"]["value"]), ("否", "错权", "低"))   # 示例 16047
+        f, h, flags = FD.timeline_fields(film, None, "决战原始星PV", RULES)            # D-068: judged like the series
+        self.assertEqual((f["Q"]["value"], h["y_fixed"]), ("否", None))
+        literal = {**RULES, "policies": {**RULES["policies"], "film_only": {"value": "错权"}}}
+        f, h, flags = FD.timeline_fields(film, None, "决战原始星PV", literal)          # the other switch position
+        self.assertEqual((f["Q"]["value"], f["Y"]["value"], f["Z"]["value"]), ("否", "错权", "低"))
         self.assertTrue(any("指引没有给错权" in x["reason"] for x in flags))
+        manga = timeline([seg(0, 90, "tsxk_other", "漫画")], forms=["漫画"])
+        self.assertEqual(FD.timeline_fields(manga, None, "吞噬星空漫画", RULES)[0]["Y"]["value"], "错权")
+        pending = timeline([seg(0, 90, "unknown")], unknown=9)
+        pending["summary"].update(disputed_frames=9, disputed_pending=6)
+        f, h, flags = FD.timeline_fields(pending, None, "吞噬星空", RULES)             # WO-102-R4 §1
+        self.assertEqual((f["Q"]["value"], f["Y"]["value"], h.get("dispute_pending")), (None, None, True))
+        self.assertTrue(any(x["level"] == "red" for x in flags))
         other = timeline([seg(0, 300, "unrelated")])
         f, h, flags = FD.timeline_fields(other, None, "谆提身陨", RULES)
         self.assertEqual((f["Y"]["value"], f["Z"]["value"]), ("完全无关内容", "高"))              # 示例 11802
@@ -345,7 +355,13 @@ class R3RulesTest(unittest.TestCase):
     def test_high_needs_one_of_the_four_cases(self):
         fixed, tl = {"W": {"value": "否"}}, {"segments": [seg(0, 60, "tsxk")], "summary": {}}
         self.assertIn("填高只限", "".join(K.check(self.reply(), None, fixed, tl)))
-        self.assertEqual(K.check(self.reply(Z_basis="知识解读"), None, fixed, tl), [])
+        speech = ["这里其实和原著里罗峰的心境完全不一样", "动画把虚拟宇宙的设定讲得更清楚了"]
+        good = self.reply(Z_basis="知识解读", Z_quotes=speech)
+        self.assertEqual(K.check(good, None, fixed, tl, sources=speech), [])                   # WO-102-R4 §2
+        made_up = self.reply(Z_basis="知识解读", Z_quotes=["UP主深刻分析了宇宙规则的本质", "他认为这是神作"])
+        self.assertIn("核对上 0 句", "".join(K.check(made_up, None, fixed, tl, sources=speech)))
+        mismatch = self.reply(Z="中", AC=dict(self.reply()["AC"], 比对意见="合理使用可能性较高。"))
+        self.assertIn("要和 Z（中）一致", "".join(K.check(mismatch, None, fixed, tl)))
         self.assertIn("没有 AI 创作声明", "".join(K.check(self.reply(Z_basis="AI创作"), None, fixed, tl)))
         self.assertEqual(K.check(self.reply(Z="中"), None, fixed, tl), [])
 

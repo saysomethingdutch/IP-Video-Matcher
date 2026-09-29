@@ -319,6 +319,41 @@ class R3Test(unittest.TestCase):
         self.assertEqual(P.choose_platforms(["other"], {"tencent"}), ["other"])
 
 
+class R4ArbitrationTest(unittest.TestCase):
+    """WO-102-R4 §1: disputed frames are asked again, one frame at a time, yes or no."""
+
+    def answer(self, content, form=""):
+        return {"content": content, "form": form, "traffic": "none", "face": False, "text": False, "why": ""}
+
+    def frame(self, tmp, name, a, b):
+        pic = Path(tmp) / f"{name}.jpg"
+        cv2.imwrite(str(pic), np.full((72, 128, 3), hash(name) % 200, np.uint8))
+        answers = {"zhipu": self.answer(*a), "deepseek": self.answer(*b)}
+        return {"t": 1.0, "path": str(pic), "cloud": {"answers": answers, **C.cross(answers)}}
+
+    def test_disputed_frames_and_the_three_outcomes(self):
+        from unittest import mock
+        with tempfile.TemporaryDirectory() as tmp:
+            board = Path(tmp) / "board.jpg"
+            cv2.imwrite(str(board), np.full((72, 128, 3), 30, np.uint8))
+            yes = self.frame(tmp, "yes", ("unrelated",), ("tsxk",))
+            no = self.frame(tmp, "no", ("unrelated",), ("tsxk",))
+            split = self.frame(tmp, "split", ("creator",), ("tsxk_other", "动画剧场版"))
+            agreed = self.frame(tmp, "agreed", ("tsxk",), ("tsxk",))
+            self.assertEqual([C.disputed(f) for f in (yes, no, split, agreed)], [True, True, True, False])
+            replies = {"yes": (True, True), "no": (False, False), "split": (True, False)}
+
+            def fake(backend, prompt, images, **kw):
+                name = Path(images[1]).stem
+                return C.llm.Reply(backend, "m", data={"is_tsxk": replies[name][0 if backend == "zhipu" else 1], "why": ""})
+            with mock.patch.object(C.llm, "ask", side_effect=fake):
+                C.arbitrate([yes, no, split], board, "R1", Path(tmp) / "cache", workers=1)
+            self.assertEqual([f["cloud"]["content"] for f in (yes, no, split)], ["tsxk", "unrelated", "unknown"])
+            self.assertIn("待定", split["cloud"]["arbitration"]["verdict"])
+            with mock.patch.object(C.llm, "ask", side_effect=AssertionError("cached")):   # answers are cached
+                C.arbitrate([yes], board, "R1", Path(tmp) / "cache", workers=1)
+
+
 @unittest.skipUnless(__import__("shutil").which("ffmpeg") and P.compile_ocr and (Path(__file__).resolve().parents[3] / "pilot/bin/ocr_vision").exists(),
                      "needs ffmpeg and the OCR tool")
 class EndToEndTest(unittest.TestCase):
