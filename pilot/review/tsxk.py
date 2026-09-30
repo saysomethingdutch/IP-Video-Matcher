@@ -224,7 +224,7 @@ class TsxkReviewStore:
     def cleanup_preview(self) -> dict:
         """Read-only proposal. The manifest token makes a stale confirmation fail."""
         import hashlib
-        from pilot.tsxk.ac_filter import cleanup_other
+        from pilot.tsxk.ac_filter import cleanup_other, sync_z_opinion, Z_WORDS
         result = []
         with self.lock:
             for rid in self.row_ids:
@@ -233,10 +233,37 @@ class TsxkReviewStore:
                     continue
                 current = str(event["new"])
                 replacement, removed = cleanup_other(current)
+                fields = {f['column']:f for f in self.fields(rid)}
+                final = {c:f['value'] for c,f in fields.items()}
+                fixes = {}
+                def offer(col, new, reason):
+                    if final[col] != new:fixes[col]={'old':final[col],'new':new,'reason':reason}
+                y = final['Y'].replace('二创（单IP混剪）','二创（单IP混剪类）')
+                if rid in ('7819','7841','7906') and y=='二创（单IP混剪类）' and final['U']=='是':
+                    offer('U','否','所有者已改为单IP混剪，U 与 Y 不一致')
+                if rid=='7813' and y=='二创（解说类）' and final['U']=='否':
+                    offer('U','是','Y 为解说，U 与 Y 不一致')
+                if rid=='7906':offer('Y',y,'补齐单IP混剪类别中的“类”字')
+                if rid in ('7909','7898') and final['W']=='是':
+                    from pilot.timeline.owner_feedback import repair
+                    from pilot.tsxk.fields import timeline_fields
+                    tl=self._timeline(rid)
+                    if tl:
+                        fixed,_,_=timeline_fields(repair(tl),self.ledger(rid),final['D'],self.config.rules())
+                        if fixed['W']['value']=='否':offer('W','否','缓存修正后没有无关或其他新增画面，W 仍为是')
+                opinion = next(p['text'] for p in parse_ac(replacement) if p['key']=='比对意见')
+                def grade(match):
+                    return next((z for z in ('不涉及','高','中','低') if z in match.group()),None)
+                if final['Z'] in ('高','中','低','不涉及') and any(grade(m)!=final['Z'] for m in Z_WORDS.finditer(opinion)):
+                    replacement=sync_z_opinion(replacement,final['Z'])
+                    fixes['AC']={'old':current,'new':replacement,'reason':'比对意见中的合理使用等级与已核 Z 不一致'}
                 if removed:
-                    result.append({"row": rid, "old": current, "new": replacement, "removed": removed})
+                    fixes['AC']={'old':current,'new':replacement,'reason':'清理【其他】模型说明，并同步已核 Z 的等级表述'}
+                if fixes:
+                    result.append({"row": rid, "old": current, "new": replacement, "removed": removed, 'edits':fixes})
         token = hashlib.sha256(json.dumps(result, ensure_ascii=False, sort_keys=True).encode()).hexdigest()
-        return {"rows": result, "row_count": len(result), "sentence_count": sum(len(r['removed']) for r in result), "token": token}
+        return {"rows": result, "row_count": len(result), "sentence_count": sum(len(r['removed']) for r in result),
+                'cell_count':sum(len(r['edits']) for r in result), "token": token}
 
     def cleanup_confirm(self, token: str, actor: str, confirmed: bool) -> dict:
         if confirmed is not True:
@@ -250,14 +277,48 @@ class TsxkReviewStore:
                 raise ValueError("清单已变化，请重新查看后确认")
             events = []
             for row in proposal["rows"]:
-                current = self.latest[row['row']]['AC']
-                events.append({"when": datetime.now(timezone.utc).isoformat(), "who": actor, "row": row['row'],
-                               "field": "AC", "action": "modify", "old": row['old'], "new": row['new'],
-                               "machine": current.get('machine', ''), "retain_mark": current.get('retain_mark', False),
-                               "mark_note": current.get('mark_note', ''), "reason": "所有者确认：清理【其他】中的模型说明"})
+                for col,edit in row['edits'].items():
+                    current = self.latest[row['row']].get(col,{})
+                    events.append({"when": datetime.now(timezone.utc).isoformat(), "who": actor, "row": row['row'],
+                                   "field": col, "action": "modify", "old": edit['old'], "new": edit['new'],
+                                   "machine": current.get('machine', ''), "retain_mark": current.get('retain_mark', False),
+                                   "mark_note": current.get('mark_note', ''), "reason": "所有者确认："+edit['reason']})
             if events:
                 self._write_events(events)
-            return {"rows": len(events), "sentences": proposal['sentence_count']}
+            return {"rows": proposal['row_count'], 'cells':len(events), "sentences": proposal['sentence_count']}
+
+    def alternative(self, rid: str) -> dict:
+        import hashlib
+        from pilot.tsxk.safe_feedback import VERSION, SINGLE, SPEECH
+        fields={f['column']:f for f in self.fields(rid)}
+        if fields['Y']['value']!=SPEECH:return {'eligible':False,'ready':False}
+        if (self.machine(rid) or {}).get('fields',{}).get('Y',{}).get('value')!=SPEECH:
+            return {'eligible':False,'ready':False}
+        plan=self._load(self.case/'v2/r1plan.json') or {}
+        if rid in plan.get('protected',[]):return {'eligible':False,'ready':False}
+        alternative=self._load(self.case/'v2/alt'/f'{rid}.json')
+        columns=('Y','U','V','Z','AC')
+        if not alternative or alternative.get('safe_feedback_version')!=VERSION:
+            return {'eligible':True,'ready':False}
+        values={c:alternative.get('fields',{}).get(c,{}).get('value') for c in columns}
+        if values['Y']!=SINGLE or values['U']!='否' or any(values[c] not in self.allowed_values(c) for c in ('V','Z')) or not values['AC']:
+            return {'eligible':True,'ready':False}
+        token=hashlib.sha256(json.dumps({'new':values,'old':{c:fields[c]['value'] for c in columns}},ensure_ascii=False,sort_keys=True).encode()).hexdigest()
+        return {'eligible':True,'ready':True,'values':values,'token':token}
+
+    def apply_alternative(self, rid: str, actor: str, token: str) -> dict:
+        actor=str(actor or '').strip()
+        if not 1<=len(actor)<=80 or actor=='WO104 临时试跑':raise ValueError('请填写自己的核验人名字')
+        with self.lock:
+            alt=self.alternative(rid)
+            if not alt.get('ready') or not token or token!=alt['token']:raise ValueError('备用版或当前值已变化，请重新打开本行')
+            fields={f['column']:f for f in self.fields(rid)};stamp=datetime.now(timezone.utc).isoformat()
+            events=[{'when':stamp,'who':actor,'row':rid,'field':c,'action':'modify',
+                     'old':fields[c]['value'],'new':new,'machine':fields[c]['machine_value'],
+                     'retain_mark':fields[c]['retain_mark'],'mark_note':fields[c]['mark_note'],
+                     'reason':'所有者点击采用预备的单IP混剪版'} for c,new in alt['values'].items()]
+            self._write_events(events)
+            return self.summary(rid)
 
     def summary(self, rid: str) -> dict:
         if rid not in self.excel_rows:
@@ -317,6 +378,7 @@ class TsxkReviewStore:
                             | {"thumbnail": thumb})
         speech = [s for s in sound.get("segments") or [] if s.get("kind") == "uploader"]
         return {**self.summary(rid), "fields": self.fields(rid, machine, flags),
+                'alternative':self.alternative(rid),
                 "view_count": view_count_detail(self.config, rid),
                 "flags": flags, "history": self.events[rid], "excel_row": self.excel_rows[rid],
                 "bilibili_url": self.inputs.get(rid, {}).get("E") or ledger.get("address"),
@@ -346,7 +408,8 @@ class TsxkReviewStore:
             self.events[rid].append(event)
 
     def decide(self, rid: str, action: str, edits: dict | None = None, actor: str | None = None,
-               retain_mark: bool = False, mark_note: str = "") -> dict:
+               retain_mark: bool = False, mark_note: str = "", opinion_preview: str | None = None,
+               opinion_base: str | None = None) -> dict:
         if rid not in self.excel_rows or action not in ("approve", "modify", "mark"):
             raise ValueError("invalid row or action")
         actor = str(actor or "").strip()
@@ -382,7 +445,18 @@ class TsxkReviewStore:
                      "row": rid, "field": col, "action": action, "old": old, "new": new,
                      "machine": field["machine_value"], "retain_mark": retain_mark,
                      "mark_note": mark_note if retain_mark else ""}
-            self._write_events([event])
+            events=[event]
+            if col=='Z' and action=='modify':
+                from pilot.tsxk.ac_filter import sync_z_opinion
+                ac=next(f for f in self.fields(rid) if f['column']=='AC')
+                if opinion_base is not None and opinion_base!=ac['value']:raise ValueError('视频说明已变化，请重新打开本行')
+                replacement=sync_z_opinion(ac['value'] if opinion_preview is None else opinion_preview,new)
+                if replacement!=ac['value']:
+                    events.append({'when':event['when'],'who':actor,'row':rid,'field':'AC','action':'modify',
+                                   'old':ac['value'],'new':replacement,'machine':ac['machine_value'],
+                                   'retain_mark':ac['retain_mark'],'mark_note':ac['mark_note'],
+                                   'reason':'随所有者 Z 修改同步比对意见（已预览）'})
+            self._write_events(events)
             return self.summary(rid)
 
     def approve_row(self, rid: str, actor: str | None = None) -> dict:

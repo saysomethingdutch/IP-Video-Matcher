@@ -241,7 +241,7 @@ class SoundTest(unittest.TestCase):
         audio = {"status": "ok", "audio_chunks": [self.chunk(40, 44, ["Speech"], "大家好")], "uploader_speech": ["大家好"]}
         m = SD.music_evidence(audio, self.tl([], [seg(40, 44, "tsxk")]))
         self.assertEqual(m["verdict"], "否")
-        self.assertEqual(SD.section(audio, m), "【声音】人声转写 1 句（本案没有原片台词可对照，可能是原片配音或旁白，也可能是 UP 主口播）：大家好；疑似UP主配乐：否")
+        self.assertEqual(SD.section(audio, m), "【声音】人声转写 1 句（人声和字幕里可能既有原片台词，也有 UP 主的讲述，请按句子本身判断）：大家好；疑似UP主配乐：否")
         self.assertIsNone(SD.music_evidence(None, None)["verdict"])
         self.assertIn("未提供", SD.section(None, SD.music_evidence(None, None)))
 
@@ -252,7 +252,7 @@ class SoundTest(unittest.TestCase):
         fixed = {"W": {"value": "否"}}
         self.assertIn("没有 UP 主配乐的旁证", "".join(K.check(reply, None, fixed, tl, {"verdict": "无旁证"})))
         self.assertEqual(K.check(reply, None, fixed, tl, {"verdict": "是"}), [])
-        self.assertEqual(K.check(reply, None, fixed, tl, {"verdict": "是"}, speech=3), [])  # candidates do not prove uploader narration
+        self.assertIn("V：", "".join(K.check(reply, None, fixed, tl, {"verdict": "是"}, speech=3)))  # D-078 restores the speech guard
 
     def test_ledger_same_as_input_flags_and_certificate_time(self):
         led = {"title": "OCR 读错的标题", "title_same_as_input": True, "address": "https://x", "address_same_as_input": False,

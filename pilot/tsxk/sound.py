@@ -147,7 +147,7 @@ def section(audio: dict | None, music: dict) -> str:
     speech = uploader_speech(audio)
     secs = audio.get("uploader_speech_seconds")
     said = f"人声转写 {len(speech)} 句" + (f"（约 {round(secs)} 秒）" if secs else "") + \
-        "（本案没有原片台词可对照，可能是原片配音或旁白，也可能是 UP 主口播）" + \
+        "（人声和字幕里可能既有原片台词，也有 UP 主的讲述，请按句子本身判断）" + \
         ("：" + " / ".join(speech[:24]) if speech else "")
     parts = [said]
     if (rd := redubs(audio)):

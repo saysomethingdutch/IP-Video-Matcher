@@ -10,6 +10,7 @@ BANNED = re.compile(r"剧场版|血洛|原始星|结束页|重播|连播|推荐(
                     r"未能判定|无法确认|难以认定|依据不足|不据此|未据此|不计入|不判为|不认定|"
                     r"非\s*UP\s*主新增|属平台|水印|建议核实|需注意|如经|若经|不按.{0,12}(?:处理|认定)|不影响类别认定|未检出UP主|非其他作品内容", re.I)
 SENTENCES = re.compile(r"[^。！？!?\n]+[。！？!?]?")
+CLAUSES = re.compile(r"[^，,；;。！？!?\n]+[，,；;。！？!?]?")
 CODE_OTHER = re.compile(r"^(?:录屏未显示(?:标签|简介)区|标题标注第\d+集|\d+:\d+(?::\d+)?(?:[-–]\d+:\d+(?::\d+)?)?(?:为无关内容|为《吞噬星空》|出现))")
 
 
@@ -28,7 +29,7 @@ def filter_ac(sections: dict, fixed: dict | None = None, timeline: dict | None =
     out, removed = deepcopy(sections), []
     for key in ("主题概括", "段落情节", "新增创作要素", "比对意见", "其他"):
         listed = key in ("新增创作要素", "其他")
-        chunks = list(out.get(key) or []) if listed else SENTENCES.findall(str(out.get(key) or ""))
+        chunks = list(out.get(key) or []) if listed else CLAUSES.findall(str(out.get(key) or ""))
         keep = []
         for chunk in chunks:
             why = "模型不填写其他" if key == "其他" else ("禁用说法" if BANNED.search(chunk) else "")
@@ -44,8 +45,26 @@ def filter_ac(sections: dict, fixed: dict | None = None, timeline: dict | None =
                 removed.append({"section": key, "text": chunk.strip(), "reason": why})
             else:
                 keep.append(chunk)
-        out[key] = keep if listed else "".join(keep).strip()
+        text = "".join(keep).strip()
+        if not listed and len(keep) != len(chunks):
+            text = re.sub(r"[，,；;]+$", "。", text).strip("，,；; ")
+        out[key] = keep if listed else text
     return out, removed
+
+
+Z_WORDS = re.compile(r"合理使用(?:的)?可能性\s*(?:评估为|为|属于|属|[：:])?\s*(?:较高|高|中等|中|较低|低|不涉及)|合理使用判断不涉及")
+
+
+def sync_z_opinion(text: str, z: str) -> str:
+    """Only synchronize an explicit grade in 比对意见; do not rewrite reasoning."""
+    if z not in ('高', '中', '低', '不涉及'):
+        raise ValueError('Z 不在可选值里')
+    parts = re.split(r'(【[^】]+】)', str(text or ''))
+    replacement = '合理使用判断不涉及' if z == '不涉及' else '合理使用可能性为' + ('中等' if z == '中' else z)
+    for i in range(1, len(parts)-1, 2):
+        if parts[i] == '【比对意见】':
+            parts[i+1] = Z_WORDS.sub(replacement, parts[i+1])
+    return ''.join(parts)
 
 
 def cleanup_other(text: str) -> tuple[str, list[str]]:

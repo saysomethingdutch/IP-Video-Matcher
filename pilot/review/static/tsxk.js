@@ -44,6 +44,7 @@ function listPage(){
     <p><button type="button" id="cleanup-preview">查看已核行【其他】清理清单</button> <span class="muted">查看不修改；确认后才记录为你的修改。</span></p><div class="filters"><label>提示 <select id="flag-filter"><option value="all">全部</option><option value="focus">待核重点</option><option value="red">有标红</option><option value="technical">有技术说明</option></select></label><label>核验 <select id="state-filter"><option value="all">全部</option><option value="unreviewed">只看未核验</option></select></label><label>类别 <select id="category-filter"><option value="all">全部类别</option>${categories.map(c=>`<option value="${esc(c)}">${esc(c)}</option>`).join('')}</select></label><label>搜索 <input id="query-filter" value="${esc(filters.query)}" placeholder="序号或标题"></label></div>
     <div class="tablewrap"><table><thead><tr><th>序号</th><th>视频标题</th><th>类别</th><th>核验</th><th>提示</th></tr></thead><tbody>${visible.map(r=>`<tr><td><a href="/row/${r.row_id}">${r.row_id}</a></td><td><a href="/row/${r.row_id}">${esc(r.title||'（无标题）')}</a></td><td>${esc(r.category)}</td><td>${r.reviewed}/${r.total} ${esc(r.status)}</td><td>${pills(r)}</td></tr>`).join('')}</tbody></table></div>`;
   document.getElementById('cleanup-preview').onclick=cleanupPage;
+  document.getElementById('cleanup-preview').textContent='查看已核行清理与一致性修改清单';
   watchRowLayout();
   for(const [id,key] of [['flag-filter','flag'],['state-filter','state'],['category-filter','category']]){const node=document.getElementById(id);node.value=filters[key];node.onchange=()=>{filters[key]=node.value;listPage()}}
   document.getElementById('query-filter').oninput=e=>{filters.query=e.target.value;const start=e.target.selectionStart;listPage();const next=document.getElementById('query-filter');next.focus();next.setSelectionRange(start,start)};
@@ -91,12 +92,44 @@ function viewCountHTML(view){
   const value=view.value === '' ? '待核' : String(view.value);
   return `<section class="field views-card" id="view-count" aria-label="AD 播放量"><div class="fieldtop"><h3>AD · 播放量</h3><span class="state">${view.reviewed?'已确认':'待确认'}</span></div><p class="views-value">${esc(value)}</p><p class="muted">页面读数：${esc(view.raw||'未读到')}${view.reviewed?' · 所有者已确认':''} · 随工作簿副本导出</p>${view.crop_url?`<details><summary>查看播放量截图</summary><a href="${esc(view.crop_url)}" target="_blank" rel="noopener"><img class="views-crop" src="${esc(view.crop_url)}" loading="lazy" alt="本行标题下方的播放量截图"></a></details>`:''}</section>`;
 }
+function alternativeHTML(alt){
+  if(!alt?.eligible)return '';
+  return `<div class="alternative-block"><button type="button" id="apply-alternative" ${alt.ready?'':'disabled'}>${alt.ready?'改判单IP混剪（换用备好的版本）':'备用版生成中'}</button>${alt.ready?`<details><summary>预览备用版</summary><p>Y：${esc(alt.values.Y)} · U：${esc(alt.values.U)} · V：${esc(alt.values.V)} · Z：${esc(alt.values.Z)}</p><pre>${esc(alt.values.AC)}</pre></details>`:''}</div>`;
+}
+async function applyAlternative(){
+  if(app.querySelector('.field[data-dirty="1"]')){notify('先保存当前修改，再换用备用版');return}
+  const who=actor.value.trim();if(!who||who==='WO104 临时试跑'){actor.focus();notify('请先填写自己的核验人名字');return}
+  const button=document.getElementById('apply-alternative');button.disabled=true;
+  try{
+    const rid=current.row_id;
+    await api('/api/alternative',{method:'POST',body:JSON.stringify({row_id:rid,actor:who,token:current.alternative.token})});
+    await reloadRows();await loadRow(rid);notify('已换用备好的单IP混剪版，Y、U、V、Z、AC 记为你的修改');
+  }catch(e){notify(e.message)}finally{if(button.isConnected)button.disabled=false}
+}
+let opinionSequence=0;
+async function previewOpinion(input){
+  const card=app.querySelector('.field[data-col="AC"]'),zCard=input.closest('.field'),rid=current.row_id,z=input.value,sequence=++opinionSequence;
+  const button=zCard.querySelector('[data-action="modify"]');button.disabled=true;zCard.dataset.previewPending='1';
+  try{
+    const result=await api('/api/opinion-preview',{method:'POST',body:JSON.stringify({AC:fieldValue(card,'AC'),Z:z})});
+    if(current?.row_id!==rid||sequence!==opinionSequence)return;
+    const opinion=result.AC.split('【比对意见】')[1]?.split('【其他】')[0]?.trim();
+    const node=card.querySelector('[data-ac-heading="【比对意见】"]');
+    if(opinion!==undefined&&node.value!==opinion){node.value=opinion;card.dataset.dirty='1'}
+    let note=zCard.querySelector('.opinion-sync');if(!note){note=document.createElement('p');note.className='opinion-sync muted';zCard.append(note)}
+    note.textContent='比对意见预览：'+opinion+'（保存 Z 时一并记录）';
+    zCard.dataset.previewPending='0';button.disabled=false;
+  }catch(e){notify('比对意见预览失败：'+e.message)}
+}
 function rowPage(d){current=d;const pos=rows.findIndex(r=>r.row_id===d.row_id);const before=rows[pos-1],after=rows[pos+1],bili=safeBili(d.bilibili_url),focusFlags=d.flags.filter(f=>f.tier==='focus'),technicalFlags=d.flags.filter(f=>f.tier==='technical');app.innerHTML=`<div class="pagehead"><div><a href="/">← 返回列表</a><h1>${d.row_id} · ${esc(d.title)}</h1><p>${bili?`<a href="${esc(bili)}" target="_blank" rel="noopener">B 站播放页</a> · `:''}沈瑞曦表第 ${d.excel_row} 行 · ${d.reviewed}/${d.total} 列已核</p></div><div class="nav">${before?`<a href="/row/${before.row_id}">← 上一行</a>`:''}${after?`<a href="/row/${after.row_id}">下一行 →</a>`:''}</div></div>
     ${rowToolsHTML(d,before,after,focusFlags)}
     ${focusFlags.length?`<div class="flagbox"><b>重点核对</b>${focusHTML(focusFlags)}</div>`:''}
     ${technicalFlags.length?`<details class="flagbox technical"><summary>技术说明（${technicalFlags.length}，不标色）</summary>${technicalFlags.map(f=>`<p>${esc(f.reason)} <small>${esc(f.columns.join('、'))}</small></p>`).join('')}</details>`:''}
     <div class="review-grid">${evidenceHTML(d)}<div><section class="panel"><h2>机器填值与逐列核验</h2><p class="muted">批准或保存修改会立即写入本地追加记录。AC 分五段编辑，导出时合为一个单元格。</p><div class="fields">${d.fields.map(fieldHTML).join('')}${viewCountHTML(d.view_count)}</div></section><section class="panel"><h2>修改与批准记录</h2>${d.history.length?`<div class="history">${d.history.map(e=>`<p><b>${esc(e.field)}</b> ${esc(e.action==='modify'?'修改':e.action==='mark'?'导出标记':'批准')} · ${esc(e.who)} · ${esc(e.when)}${e.retain_mark?' · 保留标记：'+esc(e.mark_note):''}<br>${esc(e.old)} → ${esc(e.new)}</p>`).join('')}</div>`:'<p class="muted">尚无记录</p>'}</section></div></div>`;
   watchRowLayout();
+  const yCard=app.querySelector('.field[data-col="Y"]');yCard.querySelector('.fieldactions').insertAdjacentHTML('beforebegin',alternativeHTML(d.alternative));
+  const altButton=document.getElementById('apply-alternative');if(altButton&&d.alternative?.ready)altButton.onclick=applyAlternative;
+  app.querySelector('.field[data-col="Z"] [data-value]').onchange=e=>previewOpinion(e.target);
   app.querySelectorAll('.field button[data-action]').forEach(button=>button.onclick=()=>saveField(button.closest('.field'),button.dataset.action));
   app.querySelectorAll('.field [data-value],.field textarea[data-ac-heading]').forEach(input=>input.oninput=()=>{input.closest('.field').dataset.dirty='1'});
   app.querySelectorAll('[data-delete-item]').forEach(button=>button.onclick=()=>deleteItem(button));
@@ -123,7 +156,7 @@ async function deleteItem(button){
 async function cleanupPage(){
   try{
     const proposal=await api('/api/cleanup-other');current=null;
-    app.innerHTML=`<div class="pagehead"><div><a href="/">← 返回列表</a><h1>已核行【其他】清理清单</h1><p>${proposal.row_count} 行 · ${proposal.sentence_count} 条。只删除下面列出的模型说明，保留程序事实。</p></div></div><div class="cleanup-list">${proposal.rows.map(r=>`<section class="panel"><h2>${esc(r.row)}</h2><ul>${r.removed.map(s=>`<li>${esc(s)}</li>`).join('')}</ul></section>`).join('')}</div><section class="panel"><label><input id="cleanup-consent" type="checkbox">我已查看清单，同意将这些删除记为我的修改</label><p><button id="cleanup-confirm" type="button" disabled>确认清理这 ${proposal.row_count} 行</button></p></section>`;
+    app.innerHTML=`<div class="pagehead"><div><a href="/">← 返回列表</a><h1>已核行清理与一致性修改清单</h1><p>${proposal.row_count} 行 · ${proposal.sentence_count} 条模型说明 · ${proposal.cell_count} 格修改。确认后才生效。</p></div></div><div class="cleanup-list">${proposal.rows.map(r=>`<section class="panel"><h2>${esc(r.row)}</h2><ul>${r.removed.map(s=>`<li>删除：${esc(s)}</li>`).join('')}${Object.entries(r.edits).map(([col,e])=>`<li>${esc(col)}：${esc(e.reason)}${col==='AC'?'':`（${esc(e.old)} → ${esc(e.new)}）`}</li>`).join('')}</ul>${r.edits.AC?`<details><summary>预览清理后的完整视频说明</summary><pre>${esc(r.edits.AC.new)}</pre></details>`:''}</section>`).join('')}</div><section class="panel"><label><input id="cleanup-consent" type="checkbox">我已查看清单，同意将这些修改记为我的核验结果</label><p><button id="cleanup-confirm" type="button" disabled>确认修改这 ${proposal.row_count} 行</button></p></section>`;
     watchRowLayout();document.getElementById('cleanup-consent').onchange=e=>document.getElementById('cleanup-confirm').disabled=!e.target.checked||!proposal.row_count;
     document.getElementById('cleanup-confirm').onclick=async()=>{
       const who=actor.value.trim();if(!who||who==='WO104 临时试跑'){actor.focus();notify('请先填写自己的核验人名字');return}
@@ -137,6 +170,8 @@ async function saveField(card,action){
   if(!current)return;
   const who=actor.value.trim();if(!who){actor.focus();notify('请先填写核验人');return}
   const col=card.dataset.col, f=current.fields.find(x=>x.column===col), changed=card.dataset.dirty==='1';
+  if(col==='AC'&&app.querySelector('.field[data-col="Z"][data-dirty="1"]')){notify('请先保存 Z；视频说明会同时保存');return}
+  if(col==='Z'&&card.dataset.previewPending==='1'){notify('正在生成比对意见预览');return}
   const value=action==='modify'?fieldValue(card,col):f.value;
   if(action==='modify'&&(!changed||value===f.value)){notify('内容没有变化');return}
   if(action!=='modify'&&changed){notify('内容已修改，请先点“保存修改”');return}
@@ -145,7 +180,8 @@ async function saveField(card,action){
   if(retain_mark&&!mark_note){notify('保留标记时请填写所有者说明');return}
   const button=card.querySelector(`[data-action="${action}"]`);button.disabled=true;
   try{
-    await api('/api/decision',{method:'POST',body:JSON.stringify({row_id:current.row_id,action,actor:who,edits:{[col]:value},retain_mark,mark_note})});
+    const coupled=col==='Z'&&action==='modify'?{opinion_preview:fieldValue(app.querySelector('.field[data-col="AC"]'),'AC'),opinion_base:current.fields.find(x=>x.column==='AC').value}:{};
+    await api('/api/decision',{method:'POST',body:JSON.stringify({row_id:current.row_id,action,actor:who,edits:{[col]:value},retain_mark,mark_note,...coupled})});
     const rid=current.row_id;await reloadRows();await loadRow(rid);
     notify(`${rid} ${col} 已${action==='modify'?'修改':action==='mark'?'保存导出标记':'批准'}`);
   }catch(e){notify(e.message)}finally{button.disabled=false}

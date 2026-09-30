@@ -30,6 +30,18 @@ def verify_staged(case, ids):
         pending = {c for c in ('Q', 'Y') if v[c] in (None, '') and
                    any(w in row['fields'][c].get('basis', '') for w in ('争议', '交人', '待定')) and
                    any(f.get('level') == 'red' for f in row.get('flags', []))}
+        # Y remains undecided whenever the disputed Q is explicitly referred
+        # together with Y to the owner. Its generic model basis need not repeat
+        # the frame dispute; the linked red flag is the evidence.
+        if 'Q' in pending and v['Y'] in (None, '') and any(
+                f.get('level') == 'red' and all(c in f.get('reason', '') for c in ('Q', 'Y')) and
+                any(w in f.get('reason', '') for w in ('交人', '待定'))
+                for f in row.get('flags', [])):
+            pending.add('Y')
+        if v['R'] in (None,'') and row['fields']['R'].get('by')=='webledger' and any(
+                f.get('level')=='yellow' and str(f.get('reason','')).startswith('R') and
+                any(w in f['reason'] for w in ('判不了','待核','需复核')) for f in row.get('flags',[])):
+            pending.add('R')  # a deliberately undecided ledger value; preserve it for owner review
         if any(v[c] in (None, '') for c in COLUMNS if c != 'AC' and c not in pending):
             raise ValueError(f'blank staged column {rid}')
         if BANNED.search(v['AC']) or parse(v['AC'])['其他'] != row.get('ac_code_lines'):
@@ -51,9 +63,9 @@ def metrics(case, ids, old_dir, new_dir):
             'focus_rows': sum(any(f['tier'] == 'focus' for f in normalize_flags(x, None)) for x in new.values())}
 
 
-def install(case, plan):
+def install(case, plan, *, score_path=None):
     root = case.case_dir
-    score = load(root / 'v2/check/score.json')
+    score = load(score_path or root / 'v2/check/score.json')
     if not score['passed']:
         raise ValueError('self-check failed; installation forbidden')
     record = root / 'review/decisions.jsonl'
