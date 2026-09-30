@@ -80,12 +80,8 @@ def lone_unrelated(frames: list[dict]) -> list[dict]:
 
 
 def unrelated_block(frames: list[dict]) -> bool:
-    """D-072: unrelated content that can make a 偷渡 — two or more frames in a row, or any frame before the first or
-    after the last frame of 吞噬星空 animation (片头、片尾)."""
-    series = [i for i, f in enumerate(frames) if _series(f)]
-    return any(f["content"] == "unrelated" and (not series or i < series[0] or i > series[-1] or
-                                                (i + 1 < len(frames) and frames[i + 1]["content"] == "unrelated"))
-               for i, f in enumerate(frames))
+    """D-077: at least two consecutive adopted unrelated frames, including at either end."""
+    return any(a["content"] == b["content"] == "unrelated" for a, b in zip(frames, frames[1:]))
 
 
 def _boundary(a: dict, b: dict, probe: Callable[[float], float | None] | None) -> float:

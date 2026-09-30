@@ -54,6 +54,8 @@ def fixture(tmp_path):
                   "flags": [{"level": "red" if rid == "7813" else "yellow",
                              "reason": "Q：自造画面证据待复核" if rid == "7813" else "T：自造类型待复核"}],
                   "evidence": []}
+        for col, value in {"Q":"否", "R":"是", "T":"否", "U":"否", "V":"否", "W":"否", "X":"否", "Y":"二创（单IP混剪类）", "Z":"低"}.items():
+            result["fields"][col]["value"] = value
         result["fields"]["AC"]["value"] = "\n\n".join(
             f"{heading}\n{rid} 的 {key}" for key, heading in
             (("主题概括", "【主题概括】"), ("段落情节", "【段落情节】"),
@@ -80,7 +82,7 @@ def fixture(tmp_path):
                      "output_columns": list(OUTPUT)},
         "evidence": {"dir": str(evidence), "pattern": "{row}.mp4"},
         "webledger": {"dir": str(data / "webledger")},
-        "output": {"dir": str(data)}, "rules": str(tmp_path / "unused.yaml")
+        "output": {"dir": str(data)}, "rules": str(Path(__file__).parents[1] / "semantic/rules_tsxk.yaml")
     }, allow_unicode=True))
     return source, config, data
 

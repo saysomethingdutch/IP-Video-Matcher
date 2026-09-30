@@ -373,8 +373,8 @@ class D072Test(unittest.TestCase):
 
     def test_what_can_make_a_tochdu(self):
         self.assertTrue(S.unrelated_block(self.frames("tsxk", "unrelated", "unrelated", "tsxk")))   # two in a row
-        self.assertTrue(S.unrelated_block(self.frames("tsxk", "tsxk", "unrelated")))                # at the end
-        self.assertTrue(S.unrelated_block(self.frames("unrelated", "tsxk", "tsxk")))                # at the start
+        self.assertFalse(S.unrelated_block(self.frames("tsxk", "tsxk", "unrelated")))                # at the end
+        self.assertFalse(S.unrelated_block(self.frames("unrelated", "tsxk", "tsxk")))                # at the start
         self.assertEqual(S.lone_unrelated(self.frames("tsxk", "tsxk", "unrelated")), [])
 
 

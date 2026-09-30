@@ -103,6 +103,8 @@ def serve(case: Path, port: int = 8765, config=None, store=None):
                 return self.send_file(STATIC / "style.css")
             if path == "/api/rows":
                 return self.send_json(store.all_summaries())
+            if path == "/api/cleanup-other" and tsxk:
+                return self.send_json(store.cleanup_preview())
             match = re.fullmatch(r"/api/row/(\d+)", path)
             if match:
                 try:
@@ -162,6 +164,8 @@ def serve(case: Path, port: int = 8765, config=None, store=None):
                         answer = store.decide(str(payload["row_id"]), payload["action"], payload.get("edits"))
                 elif path == "/api/approve-row" and tsxk:
                     answer = store.approve_row(str(payload["row_id"]), payload.get("actor"))
+                elif path == "/api/cleanup-other" and tsxk:
+                    answer = store.cleanup_confirm(payload.get("token", ""), payload.get("actor", ""), payload.get("confirmed"))
                 elif path == "/api/batch":
                     if tsxk:
                         return self.send_error(404)

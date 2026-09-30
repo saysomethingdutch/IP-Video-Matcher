@@ -103,7 +103,7 @@ class FieldsTest(unittest.TestCase):
         self.assertTrue(any(x["level"] == "red" for x in flags))
         other = timeline([seg(0, 300, "unrelated")])
         f, h, flags = FD.timeline_fields(other, None, "谆提身陨", RULES)
-        self.assertEqual((f["Y"]["value"], f["Z"]["value"]), ("完全无关内容", "高"))              # 示例 11802
+        self.assertEqual((f["Y"]["value"], f["Z"]["value"]), ("完全无关内容", "不涉及"))              # 示例 11802
 
     def test_w_counts_non_official_pictures_by_default_and_third_party_on_the_other_switch(self):
         tl = timeline([seg(0, 33, "tsxk_other", "手游"), seg(34, 400, "tsxk")], forms=["手游"])
@@ -124,9 +124,9 @@ class FieldsTest(unittest.TestCase):
         film = timeline([seg(0, 90, "tsxk"), seg(91, 120, "tsxk_other", "动画剧场版")], forms=["动画剧场版"])
         f, h, flags = FD.timeline_fields(film, None, "x", RULES)                          # WO-102-R2 A5
         self.assertEqual(h["forms"], [])
-        self.assertTrue(any("没有看到片名水印" in x["reason"] for x in flags))
+        self.assertFalse(any("剧场版" in x["reason"] for x in flags))
         film["summary"]["film_watermark"] = True
-        self.assertEqual(FD.timeline_fields(film, None, "x", RULES)[1]["forms"], ["动画剧场版"])
+        self.assertEqual(FD.timeline_fields(film, None, "x", RULES)[1]["forms"], [])
 
     def test_r_needs_review_is_flagged(self):
         _, flags = FD.ledger_fields({"C": "t"}, {"title": "t", "complete": True, "complete_needs_review": True})
@@ -241,7 +241,7 @@ class SoundTest(unittest.TestCase):
         audio = {"status": "ok", "audio_chunks": [self.chunk(40, 44, ["Speech"], "大家好")], "uploader_speech": ["大家好"]}
         m = SD.music_evidence(audio, self.tl([], [seg(40, 44, "tsxk")]))
         self.assertEqual(m["verdict"], "否")
-        self.assertEqual(SD.section(audio, m), "【声音】UP主口播（过滤后）1 句：大家好；疑似UP主配乐：否")
+        self.assertEqual(SD.section(audio, m), "【声音】人声转写 1 句（本案没有原片台词可对照，可能是原片配音或旁白，也可能是 UP 主口播）：大家好；疑似UP主配乐：否")
         self.assertIsNone(SD.music_evidence(None, None)["verdict"])
         self.assertIn("未提供", SD.section(None, SD.music_evidence(None, None)))
 
@@ -252,7 +252,7 @@ class SoundTest(unittest.TestCase):
         fixed = {"W": {"value": "否"}}
         self.assertIn("没有 UP 主配乐的旁证", "".join(K.check(reply, None, fixed, tl, {"verdict": "无旁证"})))
         self.assertEqual(K.check(reply, None, fixed, tl, {"verdict": "是"}), [])
-        self.assertIn("口播", "".join(K.check(reply, None, fixed, tl, {"verdict": "是"}, speech=3)))
+        self.assertEqual(K.check(reply, None, fixed, tl, {"verdict": "是"}, speech=3), [])  # candidates do not prove uploader narration
 
     def test_ledger_same_as_input_flags_and_certificate_time(self):
         led = {"title": "OCR 读错的标题", "title_same_as_input": True, "address": "https://x", "address_same_as_input": False,
@@ -341,7 +341,7 @@ class R2FixesTest(unittest.TestCase):
         text = K.standards(RULES)
         self.assertIn("口径（WO-102-R2 B", text)
         self.assertIn("归二创（单IP混剪类）", text)
-        self.assertIn("水印", text)
+        self.assertIn("自己的讲述或点评", text)
 
 
 
@@ -416,11 +416,11 @@ class D072Test(unittest.TestCase):
         fixed = {"W": {"value": "是"}}
         reply = {**R3RulesTest().reply(), "Y": "偷渡", "U": "否", "Z": "低"}
         lone = {"segments": [seg(0, 60, "tsxk")], "summary": {"unrelated_block": False}}
-        self.assertIn("零星一帧不算", "".join(K.check(reply, None, fixed, lone)))
+        self.assertIn("片头片尾单帧也不算", "".join(K.check(reply, None, fixed, lone)))
         block = {"segments": [seg(0, 60, "tsxk"), seg(61, 90, "unrelated")], "summary": {"unrelated_block": True}}
-        self.assertNotIn("零星一帧不算", "".join(K.check(reply, None, fixed, block)))
+        self.assertNotIn("片头片尾单帧也不算", "".join(K.check(reply, None, fixed, block)))
         older = {"segments": [seg(0, 60, "tsxk")], "summary": {}}               # a timeline from before D-072
-        self.assertNotIn("零星一帧不算", "".join(K.check(reply, None, fixed, older)))
+        self.assertNotIn("片头片尾单帧也不算", "".join(K.check(reply, None, fixed, older)))
 
 
 class RateLimitTest(unittest.TestCase):

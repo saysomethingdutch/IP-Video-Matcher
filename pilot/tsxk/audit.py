@@ -124,8 +124,8 @@ def _novel_text(case_dir: Path, rid: str) -> str:
     return " ".join(texts)
 
 
-def run(case: TsxkCase, out_dir: Path) -> dict:
-    source = case.read_inputs(rows=case.rows)  # Only configured input columns on 沈瑞曦.
+def run(case: TsxkCase, out_dir: Path, inputs: dict | None = None) -> dict:
+    source = case.read_inputs(rows=case.rows) if inputs is None else inputs  # Only configured input columns on 沈瑞曦.
     rows_dir = case.case_dir / "rows"
     results = []
     for rid in case.rows:

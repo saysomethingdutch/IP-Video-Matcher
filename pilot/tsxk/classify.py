@@ -16,12 +16,13 @@ from pilot.semantic import llm
 from pilot.timeline.cloud import THROTTLE
 
 from . import sound as SD
+from .ac_filter import BANNED
 from .fields import NO, YES
 
 SECTIONS = ("主题概括", "段落情节", "新增创作要素", "比对意见", "其他")
 Z_HIGH = ("知识解读", "深度分析", "多作品对比", "AI创作")
 ANIME_Y = ("纯cut", "偷渡", "二创（解说类）", "二创（单IP混剪类）", "二创（多IP混剪类）", "二创（reaction类）", "二创（其他类）")
-FORMS = ("漫画", "动画剧场版", "手游", "小说", "有声书")
+FORMS = ("漫画", "手游", "小说", "有声书")
 QUOTE = re.compile(r"“([^”]+)”|\"([^\"]+)\"|「([^」]+)」")
 SENTENCE = re.compile(r"[^。！？!?]+[。！？!?]?")
 LABEL = {"tsxk": "《吞噬星空》动画画面", "tsxk_other": "《吞噬星空》{form}", "creator": "UP主自制画面", "unrelated": "无关内容",
@@ -36,14 +37,22 @@ SYSTEM = """你为短视频比对表填写几项判断和"视频说明"。判断
 2. 不写任何数字：时间段、时间点、集数、时长、比例都由程序另行填写。
 3. 不直接引用视频里的原话，用概括转述。
 4. 只写事实里有的东西：画面依据【画面时间线】【画面描述】，文字依据【画面文字】。事实不够时写得概括些，不要编造情节或人物。
-5. 新增创作要素、其他两段写成列表，每条一句；没有就给空列表。【其他】只写前面没有涵盖、可能影响认定的特殊情况。
+5. 新增创作要素写成列表，每条一句；没有就给空列表。【其他】一律为空列表，程序会填写事实。
 6. 比对意见结合各项判断和视频内容，说明合理使用可能性高、中或低的理由。
+7. 解说必须能指出 UP 主自己的讲述或点评：第三人称概括剧情、介绍背景设定、分析点评、向观众提问或玩梗。
+角色对话、角色自述、原片旁白、重新打上的原片台词字幕都不算；顶部标题条是标题。
+人声转写和字幕不保证来自 UP 主。看不出哪句是 UP 主自己的，按二创（单IP混剪类），U 填否。
+8. 单IP混剪一般 Z 填低；完全无关内容 Z 填不涉及。
+9. 只写观察到的内容，不写否定句、防御性或解释性说明。禁止提剧场版、血洛、原始星、结束页、重播、连播、推荐界面、
+登录框、水印、官方台标、画面未能判定；不写无法确认、难以认定、依据不足、不据此、未据此、不计入、不判为、不认定、
+非 UP 主新增、属平台、建议核实、需注意、如经、若经。
+10. 新增创作要素：引流/广告只在程序 X 不为否时写；无关内容/其他作品只在时间线有无关片段时写；真人出镜至少两帧才写。
 
 示例（程序填写的时间和集数已去掉）：
 {examples}
 
 只输出一个 JSON 对象：
-{{"Y": "…", "U": "是或否", "V": "是或否", "Z": "高、中或低", "Z_basis": "Z 填高时写知识解读、深度分析、多作品对比或AI创作，否则留空", "T_extra": [], "AC": {{"主题概括": "…", "段落情节": "…", "新增创作要素": ["…"], "比对意见": "…", "其他": []}}, "evidence": [{{"point": "判断要点", "basis": "依据的事实"}}]}}"""
+{{"Y": "…", "U": "是或否", "V": "是或否", "Z": "高、中、低或不涉及", "Z_basis": "Z 填高时写知识解读、深度分析、多作品对比或AI创作，否则留空", "T_extra": [], "AC": {{"主题概括": "…", "段落情节": "…", "新增创作要素": ["…"], "比对意见": "…", "其他": []}}, "evidence": [{{"point": "判断要点", "basis": "依据的事实"}}]}}"""
 
 
 def standards(rules: dict) -> str:
@@ -51,7 +60,7 @@ def standards(rules: dict) -> str:
     pol = {k: (v or {}).get("value") for k, v in (rules.get("policies") or {}).items()}
     opt = lambda k: ((rules.get("policies") or {}).get(k) or {}).get("options", {}).get(pol.get(k), "")
     lines = [f"U 是否为解说：{c['U']['rule']}", f"V 是否仅增加背景音乐：{c['V']['rule']}",
-             f"V 的旁证：{c['V']['evidence']}", f"V 与水印：{c['V']['watermark']}",
+             f"V 的旁证：{c['V']['evidence']}",
              "Y 类别（有吞噬星空动画画面时，在下面几类里选）："]
     lines += [f"- {k}：{v}" for k, v in c["Y"]["categories"].items() if k in ANIME_Y]
     lines += ["Z 合理使用可能性："] + [f"- {k}：{v}" for k, v in c["Z"]["levels"].items()]
@@ -101,7 +110,8 @@ def facts_text(inputs: dict, led: dict | None, tl: dict | None, fixed: dict, hin
             if f.get("ignored"):                   # outside the actual playback, or B站's login popup
                 continue
             answers = ((f.get("cloud") or {}).get("answers") or {}).values()
-            why = "；".join(dict.fromkeys(a["why"] for a in answers if a and a.get("why")))
+            why = "；".join(dict.fromkeys(a["why"].replace("解说字幕", "字幕") for a in answers
+                       if a and a.get("why") and "剧场版" not in a["why"] and a.get("content") == f.get("content")))
             if why and why not in seen:
                 seen.add(why)
                 notes.append(f"{mmss(f['t'])} {why}")
@@ -109,7 +119,7 @@ def facts_text(inputs: dict, led: dict | None, tl: dict | None, fixed: dict, hin
             lines.append("【画面描述】" + " | ".join(notes[:30]))
         s = tl["summary"]
         inside = [f for f in tl["frames"] if not f.get("ignored")]
-        lines.append(f"【真人出镜】{s['face_frames']} 帧；【作者字幕或大段文字】{s['text_frames']} 帧（共 {len(inside)} 帧）")
+        lines.append(f"【真人出镜】{s['face_frames']} 帧；【有字幕或文字的帧】{s['text_frames']} 帧（共 {len(inside)} 帧；字幕可能是原片自带的，也可能是 UP 主加的）")
         if s.get("ai_note_frames"):
             lines.append(f"【AI 声明】画面文字里有\"AI虚构\"\"AI生成\"一类声明（{s['ai_note_frames']} 帧），按利用 AI 创作处理")
         texts = []
@@ -151,10 +161,10 @@ def check(data: dict | None, y_fixed: str | None, fixed: dict, tl: dict | None, 
     for k in ("U", "V"):
         if data.get(k) not in (YES, NO):
             errors.append(f"{k}：只能填是或否")
-    if data.get("Z") not in ("高", "中", "低"):
-        errors.append("Z：只能填高、中、低")
+    if data.get("Z") not in ("高", "中", "低", "不涉及") or data.get("Z") == "不涉及" and y_fixed != "完全无关内容":
+        errors.append("Z：高、中、低；仅完全无关内容可填不涉及")
     if any(t not in FORMS for t in data.get("T_extra") or []):
-        errors.append("T_extra：只能写漫画、动画剧场版、手游、小说、有声书")
+        errors.append("T_extra：只能写漫画、手游、小说、有声书")
     ac = data.get("AC")
     if not isinstance(ac, dict) or any(k not in ac for k in SECTIONS):
         return errors + ["AC：五段不全"]
@@ -169,6 +179,10 @@ def check(data: dict | None, y_fixed: str | None, fixed: dict, tl: dict | None, 
         if not isinstance(ac.get(k), list) or len(ac[k]) > 6:
             errors.append(f"AC：{k}要写成列表，最多 6 条")
     text = "".join(_strings(ac))
+    if ac.get("其他"):
+        errors.append("AC：【其他】必须为空列表，由程序填写")
+    if BANNED.search(text):
+        errors.append("AC：命中禁用说法，请删除相关句子：" + "、".join(dict.fromkeys(BANNED.findall(text))))
     if re.search(r"\d", text):
         errors.append("AC：不要写数字（时间、集数、比例由程序填）")
     if len(QUOTE.findall(text)) > 1:
@@ -177,7 +191,7 @@ def check(data: dict | None, y_fixed: str | None, fixed: dict, tl: dict | None, 
     if not y_fixed and y in ("偷渡", "二创（多IP混剪类）") and w == NO:
         errors.append(f"Y：{y}要有无关或其他 IP 的内容，但时间线里没有（W=否）")
     elif not y_fixed and y == "偷渡" and ((tl or {}).get("summary") or {}).get("unrelated_block") is False:
-        errors.append("Y：偷渡要有连续两帧以上的无关内容，或无关内容在片头、片尾；零星一帧不算（D-072）")
+        errors.append("Y：偷渡要有连续两帧以上的无关内容，片头片尾单帧也不算（D-077）")
     if not y_fixed and y == "纯cut" and (data.get("U") == YES or data.get("V") == YES):
         errors.append("Y：纯cut 不能同时是解说或加了背景音乐（纯cut 的 V 填否）")
     if not y_fixed and y == "二创（解说类）" and data.get("U") != YES:
@@ -194,7 +208,7 @@ def check(data: dict | None, y_fixed: str | None, fixed: dict, tl: dict | None, 
         others = {s["content"] for s in (tl or {}).get("segments", [])} & {"unrelated", "creator", "traffic", "tsxk_other"}
         if (music or {}).get("verdict") != YES:
             errors.append("V：没有 UP 主配乐的旁证（原片画面加纯音乐不算），V 应为否")
-        elif others or speech or data.get("U") == YES:
+        elif others or data.get("U") == YES:
             errors.append("V：除配乐外还有其他新增内容（非原片画面、口播或解说），V 应为否")
     return errors
 

@@ -74,3 +74,12 @@
 @media(max-width:1050px){
   .field{scroll-margin-top:calc(var(--review-sticky-top) + var(--review-player-height,0px) + 24px)}
 }
+
+/* WO-107: explicit editing controls and owner confirmation */
+.actor-warning { background:#fff3d5;color:#8a4a06;padding:.6rem 1.5rem; }
+.actor-warning[hidden] { display:none; }
+.field select { width:100%;padding:.75rem;border:1px solid #b7ccce;border-radius:6px;background:#fff;font:inherit;color:inherit; }
+.invalid-value { color:#b72d33;font-weight:600; }
+.ac-item-buttons p { display:flex;align-items:flex-start;gap:.6rem;margin:.5rem 0;padding:.4rem;background:#f4f7f7;border-radius:4px; }
+.ac-item-buttons span { flex:1; }
+.ac-item-buttons button { flex-shrink:0;color:#a33333; }

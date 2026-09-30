@@ -87,8 +87,8 @@ def normalize_flags(machine: dict | None, ledger: dict | None,
         reason = str(item.get("reason") or item.get("message") or "").strip()
         level = "red" if str(item.get("level") or "").lower() in ("red", "error") else "yellow"
         columns = flag_columns(item)
-        tier = "focus" if level == "red" or item.get("tier") == "focus" or FOCUS_REASON.search(reason) or (
-            "Z 高" in reason or "Q=是" in reason) else "technical"
+        tier = "focus" if level == "red" or item.get("tier") != "technical" and (item.get("tier") == "focus" or FOCUS_REASON.search(reason) or (
+            "Z 高" in reason or "Q=是" in reason)) else "technical"
         key = (level, reason, tuple(columns))
         if not reason or key in seen:
             continue
@@ -192,6 +192,8 @@ class TsxkReviewStore:
             level = max((flag["level"] for flag in focus), key=lambda x: LEVELS[x], default=None)
             index = openpyxl.utils.column_index_from_string(col) - 1
             modified = any(e["field"] == col and e["action"] == "modify" for e in self.events[rid])
+            options = self.allowed_values(col)
+            invalid = bool(options is not None and final not in options)
             result.append({"column": col, "name": str(self.headers[index] or col),
                            "machine_value": machine_value, "value": final,
                            "by": raw.get("by") or "", "basis": raw.get("basis") or "",
@@ -203,8 +205,59 @@ class TsxkReviewStore:
                            "flag_level": level, "flag_reasons": [x["reason"] for x in focus],
                            "technical_reasons": [x["reason"] for x in technical],
                            "flag_details": [{"level": x["level"], "reason": x["reason"]} for x in focus],
-                           "sections": parse_ac(final) if col == "AC" else None})
+                           "sections": parse_ac(final) if col == "AC" else None,
+                           "options": options, "invalid_value": invalid})
         return result
+
+    def allowed_values(self, col: str) -> list[str] | None:
+        if col not in ("Q", "R", "T", "U", "V", "W", "X", "Y", "Z"):
+            return None
+        if col == "T":
+            from itertools import combinations
+            forms = ("漫画", "手游", "小说", "有声书")
+            return ["否"] + [f"是（{'、'.join(group)}）" for n in range(1, len(forms)+1) for group in combinations(forms, n)]
+        if not hasattr(self, "_allowed_rules"):
+            self._allowed_rules = self.config.rules()["columns"]
+        rules = self._allowed_rules
+        return list(rules[col]["values"])
+
+    def cleanup_preview(self) -> dict:
+        """Read-only proposal. The manifest token makes a stale confirmation fail."""
+        import hashlib
+        from pilot.tsxk.ac_filter import cleanup_other
+        result = []
+        with self.lock:
+            for rid in self.row_ids:
+                event = self.latest[rid].get("AC")
+                if not event:
+                    continue
+                current = str(event["new"])
+                replacement, removed = cleanup_other(current)
+                if removed:
+                    result.append({"row": rid, "old": current, "new": replacement, "removed": removed})
+        token = hashlib.sha256(json.dumps(result, ensure_ascii=False, sort_keys=True).encode()).hexdigest()
+        return {"rows": result, "row_count": len(result), "sentence_count": sum(len(r['removed']) for r in result), "token": token}
+
+    def cleanup_confirm(self, token: str, actor: str, confirmed: bool) -> dict:
+        if confirmed is not True:
+            raise ValueError("请先查看清单，再明确确认清理")
+        actor = str(actor or "").strip()
+        if not actor or actor == "WO104 临时试跑" or len(actor) > 80:
+            raise ValueError("请填写自己的核验人名字")
+        with self.lock:
+            proposal = self.cleanup_preview()
+            if token != proposal["token"]:
+                raise ValueError("清单已变化，请重新查看后确认")
+            events = []
+            for row in proposal["rows"]:
+                current = self.latest[row['row']]['AC']
+                events.append({"when": datetime.now(timezone.utc).isoformat(), "who": actor, "row": row['row'],
+                               "field": "AC", "action": "modify", "old": row['old'], "new": row['new'],
+                               "machine": current.get('machine', ''), "retain_mark": current.get('retain_mark', False),
+                               "mark_note": current.get('mark_note', ''), "reason": "所有者确认：清理【其他】中的模型说明"})
+            if events:
+                self._write_events(events)
+            return {"rows": len(events), "sentences": proposal['sentence_count']}
 
     def summary(self, rid: str) -> dict:
         if rid not in self.excel_rows:
@@ -282,6 +335,8 @@ class TsxkReviewStore:
     def _write_events(self, events: list[dict]) -> None:
         self.decisions_path.parent.mkdir(parents=True, exist_ok=True)
         with self.decisions_path.open("a", encoding="utf-8") as handle:
+            import fcntl
+            fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
             handle.write("".join(json.dumps(event, ensure_ascii=False) + "\n" for event in events))
             handle.flush()
             os.fsync(handle.fileno())
@@ -312,6 +367,9 @@ class TsxkReviewStore:
             field = next(x for x in self.fields(rid) if x["column"] == col)
             old = field["value"]
             new = str(requested) if action == "modify" else old
+            options = self.allowed_values(col)
+            if action != "mark" and options is not None and new not in options:
+                raise ValueError(f"{col} 当前值不合规，请从下拉框重选并保存")
             if action == "modify" and new == old:
                 raise ValueError("修改值与当前值相同")
             if action == "mark" and not field["reviewed"]:
@@ -339,6 +397,8 @@ class TsxkReviewStore:
                        "action": "approve", "old": field["value"], "new": field["value"],
                        "machine": field["machine_value"], "retain_mark": False, "mark_note": ""}
                       for field in self.fields(rid) if not field["reviewed"]]
+            if any(f["invalid_value"] for f in self.fields(rid) if not f["reviewed"]):
+                raise ValueError("本行有不合规值，请从下拉框重选并保存后批准")
             if events:
                 self._write_events(events)
             return {**self.summary(rid), "approved_now": len(events)}
