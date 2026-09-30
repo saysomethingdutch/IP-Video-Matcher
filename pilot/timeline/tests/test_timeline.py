@@ -56,7 +56,7 @@ class LocalScreenTest(unittest.TestCase):
         self.assertEqual(self.s.traffic([], ["https://pan.quark.cn/s/abc"])["kinds"], ["网盘二维码"])
         self.assertEqual(self.s.traffic([], ["https://weixin.qq.com/g/abc"])["platforms"], ["tencent"])
         self.assertIsNone(self.s.traffic([], ["https://passport.bilibili.com/qrcode"]))
-        self.assertEqual(self.s.traffic([], [""])["evidence"], ["二维码：未能解码"])
+        self.assertIsNone(self.s.traffic([], [""]))            # WO-102-R2 A3: an unreadable code alone goes to the cloud
 
     def test_opencv_reads_a_code_laid_over_the_picture(self):
         self.assertEqual(Lc.qr_codes(qr_image("https://pan.quark.cn/s/cc8e")), ["https://pan.quark.cn/s/cc8e"])
@@ -195,6 +195,209 @@ class SegmentsTest(unittest.TestCase):
         self.assertEqual(P.votes(members, probes)[0]["content"], "unrelated")
         probes[1]["cloud"]["content"] = "creator"
         self.assertEqual(P.votes(members, probes), {})
+
+
+
+class R1Test(unittest.TestCase):
+    """WO-102-R1: frames on a fixed grid and answers cached per frame, so a shorter span costs nothing again."""
+
+    def test_grid_pick_is_a_subset_when_the_span_shrinks(self):
+        keys = [t + 0.27 for t in range(0, 300, 5)]
+        long = F.grid_pick(keys, (40.0, 290.0), 10)
+        short = F.grid_pick(keys, (45.0, 200.0), 10)
+        self.assertTrue(set(short) <= set(long))
+        self.assertEqual(long[0], (40.0, 40.27))
+        self.assertEqual(F.grid_pick([], (0.0, 20.0), 10), [(0.0, None), (10.0, None), (20.0, None)])   # exact seeks
+
+    def test_answers_are_cached_per_frame_and_seeded_from_the_last_timeline(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            pic = Path(tmp) / "00081.27.jpg"
+            cv2.imwrite(str(pic), np.full((72, 128, 3), 77, np.uint8))
+            frame, cache = {"t": 81.27, "path": str(pic)}, Path(tmp) / "cache"
+            answer = {"content": "tsxk", "form": "", "traffic": "none", "face": False, "text": False, "why": ""}
+            self.assertIsNone(C.cached(frame, "d1", cache))
+            C.store(frame, "d1", cache, "zhipu", answer, {})
+            self.assertIsNone(C.cached(frame, "d1", cache))                   # both providers are needed
+            C.store(frame, "d1", cache, "deepseek", answer, {})
+            self.assertEqual(C.cached(frame, "d1", cache)["zhipu"]["content"], "tsxk")
+            self.assertIsNone(C.cached(frame, "d2", cache))                   # another prompt or board
+            prev = {"version": "wo102-2", "frames": [{"t": 81.27, "cloud": {"answers": {"zhipu": answer, "deepseek": answer}}}]}
+            frame2, cache2 = {"t": 81.27, "path": str(pic)}, Path(tmp) / "cache2"
+            self.assertEqual(P.seed_cache(prev, [frame2], "d3", cache2, C.BACKENDS), 1)
+            self.assertIsNotNone(C.cached(frame2, "d3", cache2))
+
+    def test_throttle_drops_to_four_after_a_rate_limit_across_processes(self):
+        t = C.Throttle("zhipu")
+        self.assertEqual(t.cap(), 8)
+        t.limited()
+        self.assertEqual(t.cap(), 4)
+        with tempfile.TemporaryDirectory() as tmp:
+            a, b = C.Throttle("zhipu", slot_dir=Path(tmp)), C.Throttle("zhipu", slot_dir=Path(tmp))
+            self.assertEqual(a.cap(), 8)
+            a.limited()
+            self.assertEqual(b.cap(), 4)                     # another process sees the lower limit
+            with a:
+                self.assertTrue(any(Path(tmp).glob("zhipu.*.lock")))
+
+    def test_a_broken_reply_is_no_answer_not_a_failed_row(self):
+        from unittest import mock
+        with tempfile.TemporaryDirectory() as tmp:
+            pic = Path(tmp) / "c.jpg"
+            cv2.imwrite(str(pic), np.full((72, 128, 3), 50, np.uint8))
+            with mock.patch.object(C.llm, "ask", side_effect=AttributeError("'NoneType' object has no attribute 'get'")):
+                answers, calls = C.ask_group(pic, "R1", pic, 1)
+        self.assertEqual(answers, {"zhipu": None, "deepseek": None})
+        self.assertTrue(all(c["error"].startswith("AttributeError") for c in calls))
+
+    def test_captions_music_chip_and_lyrics_are_recorded(self):
+        s, f = Lc.Screen(RULES), {"t": 1.0}
+        s.screen(f, [item("就点名要布洛琳", y=0.85), item("J 海阔天空", y=0.9), item("词：黄家驹", y=0.4)],
+                 np.full((90, 160, 3), 90, np.uint8))
+        self.assertEqual((f["captions"], f["music_tag"], f["lyric"]), (["就点名要布洛琳"], True, True))
+
+
+
+class R2Test(unittest.TestCase):
+    """WO-102-R2 A1–A4 in the timeline."""
+
+    def test_login_popup_is_neither_traffic_nor_content(self):
+        s, f = Lc.Screen(RULES), {"t": 1.0}
+        loc = s.screen(f, [item("扫描二维码登录"), item("微信登录"), item("QQ登录")], np.full((90, 160, 3), 90, np.uint8))
+        self.assertEqual((loc.get("login_box"), loc["traffic"]), (True, None))
+        self.assertFalse(s.login_box([item("微信登录")], []))                      # one method and no code: not enough
+        self.assertTrue(s.login_box([item("密码登录")], ["https://passport.bilibili.com/x"]))
+
+    def test_unreadable_code_is_asked_in_the_cloud(self):
+        s, f = Lc.Screen(RULES), {"t": 1.0}
+        with tempfile.TemporaryDirectory():
+            img = qr_image("x")
+            img[300:340, 540:580] = 255                                           # damage it
+        loc = s.screen(f, [], np.full((90, 160, 3), 90, np.uint8))
+        self.assertIsNone(loc["traffic"])
+
+    def test_ai_note_is_recorded(self):
+        s, f = Lc.Screen(RULES), {"t": 1.0}
+        s.screen(f, [item("AI虚构无不良导向")], np.full((90, 160, 3), 90, np.uint8))
+        self.assertTrue(f["ai_note"])
+        for misread in ("创陰博元不於守向", "山鸡相无不段守购", "A 应相 不员守向"):            # the label cut at the top edge
+            f = {"t": 1.0}
+            s.screen(f, [item(misread, y=0.01)], np.full((90, 160, 3), 90, np.uint8))
+            self.assertTrue(f["ai_note"], misread)
+        f = {"t": 1.0}
+        s.screen(f, [item("无不良导向", y=0.85)], np.full((90, 160, 3), 90, np.uint8))    # a caption lower down: no
+        self.assertFalse(f["ai_note"])
+        f = {"t": 1.0}                                                            # the top band OCR'd again at 2×
+        s.screen(f, [item("A 应相光快子向", y=0.01)], np.full((90, 160, 3), 90, np.uint8), [item("A 应材光不供守向")])
+        self.assertTrue(f["ai_note"])
+
+    def test_frames_outside_the_actual_playback_and_login_popups_decide_nothing(self):
+        frames = [{"t": 40.0, "local": {}}, {"t": 50.0, "local": {"login_box": True}}, {"t": 60.0, "dup_of": 50.0},
+                  {"t": 70.0, "local": {}}, {"t": 120.0, "local": {}}]
+        P.mark_ignored(frames, (45.0, 100.0))
+        self.assertEqual([f.get("ignored") for f in frames],
+                         ["内容区间外", "B站登录弹窗", "B站登录弹窗", None, "内容区间外"])
+
+
+
+class R3Test(unittest.TestCase):
+    """WO-102-R3 (D-065 ⑤): the last small rules in the timeline."""
+
+    def answer(self, content, form=""):
+        return {"content": content, "form": form, "traffic": "none", "face": False, "text": False, "why": ""}
+
+    def test_film_or_series_counts_as_the_series_animation(self):
+        got = C.cross({"zhipu": self.answer("tsxk_other", "动画剧场版"), "deepseek": self.answer("tsxk")})
+        self.assertEqual(got["content"], "tsxk")
+        self.assertIn("正片还是剧场版", got["flags"][0])
+        self.assertEqual(C.cross({"zhipu": self.answer("tsxk_other", "手游"), "deepseek": self.answer("tsxk")})["content"], "unknown")
+
+    def test_platform_with_text_evidence_wins(self):
+        s = Lc.Screen(RULES)
+        self.assertEqual(s.text_platforms(["汁源抠裙645266305"]), {"tencent"})              # 资源扣群 (8455)
+        self.assertEqual(P.choose_platforms(["other", "tencent"], {"tencent"}), ["tencent"])
+        self.assertEqual(P.choose_platforms(["other", "tencent"], set()), ["other", "tencent"])
+        self.assertEqual(P.choose_platforms(["other"], {"tencent"}), ["other"])
+
+
+class R4ArbitrationTest(unittest.TestCase):
+    """WO-102-R4 §1: disputed frames are asked again, one frame at a time, yes or no."""
+
+    def answer(self, content, form=""):
+        return {"content": content, "form": form, "traffic": "none", "face": False, "text": False, "why": ""}
+
+    def frame(self, tmp, name, a, b):
+        pic = Path(tmp) / f"{name}.jpg"
+        cv2.imwrite(str(pic), np.full((72, 128, 3), hash(name) % 200, np.uint8))
+        answers = {"zhipu": self.answer(*a), "deepseek": self.answer(*b)}
+        return {"t": 1.0, "path": str(pic), "cloud": {"answers": answers, **C.cross(answers)}}
+
+    def test_disputed_frames_and_the_three_outcomes(self):
+        from unittest import mock
+        with tempfile.TemporaryDirectory() as tmp:
+            board = Path(tmp) / "board.jpg"
+            cv2.imwrite(str(board), np.full((72, 128, 3), 30, np.uint8))
+            yes = self.frame(tmp, "yes", ("unrelated",), ("tsxk",))
+            no = self.frame(tmp, "no", ("unrelated",), ("tsxk",))
+            split = self.frame(tmp, "split", ("creator",), ("tsxk_other", "动画剧场版"))
+            agreed = self.frame(tmp, "agreed", ("tsxk",), ("tsxk",))
+            self.assertEqual([C.disputed(f) for f in (yes, no, split, agreed)], [True, True, True, False])
+            replies = {"yes": (True, True), "no": (False, False), "split": (True, False)}
+
+            def fake(backend, prompt, images, **kw):
+                name = Path(images[1]).stem
+                return C.llm.Reply(backend, "m", data={"is_tsxk": replies[name][0 if backend == "zhipu" else 1], "why": ""})
+            with mock.patch.object(C.llm, "ask", side_effect=fake):
+                C.arbitrate([yes, no, split], board, "R1", Path(tmp) / "cache", workers=1)
+            self.assertEqual([f["cloud"]["content"] for f in (yes, no, split)], ["tsxk", "unrelated", "unknown"])
+            self.assertIn("待定", split["cloud"]["arbitration"]["verdict"])
+            with mock.patch.object(C.llm, "ask", side_effect=AssertionError("cached")):   # answers are cached
+                C.arbitrate([yes], board, "R1", Path(tmp) / "cache", workers=1)
+
+
+class D072Test(unittest.TestCase):
+    """D-072: a single unrelated frame between frames of the series is undetermined; a 偷渡 needs two unrelated
+    frames in a row, or unrelated content before or after the series."""
+
+    def frames(self, *contents):
+        return [{"t": 10.0 * i, "content": c.split("/")[0], "form": (c.split("/") + [""])[1], "source": "云端"}
+                for i, c in enumerate(contents)]
+
+    def test_a_lone_frame_between_the_series_is_undetermined(self):
+        fr = self.frames("tsxk", "unrelated", "tsxk", "unrelated", "tsxk_other/动画剧场版")
+        self.assertEqual([f["t"] for f in S.lone_unrelated(fr)], [10.0, 30.0])
+        self.assertEqual([f["content"] for f in fr], ["tsxk", "unknown", "tsxk", "unknown", "tsxk_other"])
+        self.assertFalse(S.unrelated_block(fr))
+        next_to_unknown = self.frames("tsxk", "unrelated", "unknown", "tsxk")
+        self.assertEqual(S.lone_unrelated(next_to_unknown), [])                        # not between the series
+        self.assertFalse(S.unrelated_block(next_to_unknown))                           # but one frame is no 偷渡
+
+    def test_what_can_make_a_tochdu(self):
+        self.assertTrue(S.unrelated_block(self.frames("tsxk", "unrelated", "unrelated", "tsxk")))   # two in a row
+        self.assertTrue(S.unrelated_block(self.frames("tsxk", "tsxk", "unrelated")))                # at the end
+        self.assertTrue(S.unrelated_block(self.frames("unrelated", "tsxk", "tsxk")))                # at the start
+        self.assertEqual(S.lone_unrelated(self.frames("tsxk", "tsxk", "unrelated")), [])
+
+
+@unittest.skipUnless(__import__("shutil").which("ffmpeg") and P.compile_ocr and (Path(__file__).resolve().parents[3] / "pilot/bin/ocr_vision").exists(),
+                     "needs ffmpeg and the OCR tool")
+class EndToEndTest(unittest.TestCase):
+    """run_video end to end on a generated 30 s recording, locally (no cloud): the content span decides."""
+
+    def test_content_span_and_ignored_frames(self):
+        import subprocess
+        with tempfile.TemporaryDirectory() as tmp:
+            video = Path(tmp) / "t.mp4"
+            subprocess.run(["ffmpeg", "-v", "error", "-f", "lavfi", "-i", "testsrc=duration=30:size=1920x1080:rate=10",
+                            "-g", "50", "-pix_fmt", "yuv420p", str(video)], check=True)
+            r = P.run_video(video, Path(tmp) / "out", RULES, row="t", span=(0.0, 30.0), content=(5.0, 25.0), upload=False,
+                            log=lambda *a: None)
+            self.assertEqual(r["content_span"], [5.0, 25.0])
+            self.assertEqual(set(r["frames_ignored"]), {"内容区间外"})
+            self.assertTrue(r["segments"] and r["segments"][0]["start"] >= 5 and r["segments"][-1]["end"] <= 25)
+            again = P.run_video(video, Path(tmp) / "out", RULES, row="t", span=(0.0, 30.0), content=None, upload=False,
+                                log=lambda *a: None)
+            self.assertIsNone(again["content_span"])
+            self.assertTrue(any("没有内容区间" in f["reason"] for f in again["flags"]))
 
 
 if __name__ == "__main__":

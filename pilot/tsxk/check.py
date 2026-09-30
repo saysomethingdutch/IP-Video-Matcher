@@ -148,3 +148,71 @@ def markdown(report: dict) -> str:
         lines.append(f"- **{c}**：机器 {v['machine']}；人工 {v['human']}；不同 {len(v['differ'])} 行")
     lines += ["", f"机器判偷渡、人工不是：{len(report['tou_du'])} 行；AA 机器一律无法判断，人工分布 {report['AA']['human']}"]
     return "\n".join(lines) + "\n"
+
+
+# ---------------------------------------------------------------- the list the Owner rules on (WO-102-R1 §2.3)
+
+def evidence_frames(tl_dir: Path, tl: dict | None, col: str, limit: int = 4) -> list[str]:
+    """Frame paths that show what the column rests on: traffic frames for X, captioned frames for U and V,
+    other-form frames for T, and one frame per timeline segment for Q, W, Y and Z."""
+    if not tl:
+        return []
+    frames = [f for f in tl["frames"] if not f.get("dup_of")]
+    path = lambda f: str(tl_dir / "frames" / f"{f['t']:08.2f}.jpg")
+    if col == "X":
+        pick = [f for f in frames if f.get("traffic")]
+    elif col in ("U", "V"):
+        pick = [f for f in frames if f.get("captions") or f.get("text")]
+    elif col == "T":
+        pick = [f for f in frames if f.get("content") == "tsxk_other"]
+    else:
+        pick = []
+        for sg in tl["segments"]:
+            f = next((f for f in frames if f["t"] >= sg["start"] - 0.5 and f.get("content") == sg["content"]), None)
+            if f and f not in pick:
+                pick.append(f)
+    if not pick:
+        step = max(1, len(frames) // limit)
+        pick = frames[::step]
+    return [path(f) for f in pick[:limit]]
+
+
+def disagreements(report: dict, machine_rows: dict[str, dict], timelines: dict[str, tuple[Path, dict | None]],
+                  audio_paths: dict[str, Path], notes: dict[str, str]) -> list[dict]:
+    """Every disagreement, scored or listed, with the machine's basis and its evidence (D-058, WO-102-R1 §2.3)."""
+    out = []
+    groups = [(c, v["disagree"], True) for c, v in report["scored"].items()] + \
+             [(c, v["differ"], False) for c, v in report["guidance_over_human"].items()]
+    for col, items, scored in groups:
+        for d in items:
+            rid = d["row"]
+            fields = machine_rows[rid]["fields"]
+            tl_dir, tl = timelines.get(rid, (None, None))
+            entry = {"row": rid, "column": col, "scored": scored, "machine": d["machine"], "human": d["human"],
+                     "basis": (fields.get(col) or {}).get("basis"),
+                     "frames": evidence_frames(tl_dir, tl, col) if tl_dir and col not in ("R", "S", "AB") else [],
+                     "audio": str(audio_paths[rid]) if col in ("U", "V", "X", "Y", "Z") and rid in audio_paths else None,
+                     "note": notes.get(rid, "")}
+            if col == "R":
+                entry["note"] = "；".join(x for x in (entry["note"], "R 在返工（WO-101-R2），只列分歧不计分") if x)
+            out.append(entry)
+    return sorted(out, key=lambda e: (int(e["row"]), e["column"]))
+
+
+def disagreements_md(items: list[dict]) -> str:
+    lines = ["# 吞噬星空检验：分歧清单（交 Owner 逐条裁定）", "",
+             "每条：机器值 / 人工值、机器依据、证据帧。裁定栏请填：机器对 / 人工对 / 都不对（写正确值）。", ""]
+    for e in items:
+        tag = "计分" if e["scored"] else "不计分，按指引列出"
+        lines.append(f"## {e['row']} · {e['column']}（{tag}）")
+        lines.append(f"- 机器：{e['machine']}　人工：{e['human']}")
+        if e.get("basis"):
+            lines.append(f"- 机器依据：{e['basis']}")
+        if e.get("note"):
+            lines.append(f"- 注意：{e['note']}")
+        for f in e["frames"]:
+            lines.append(f"- 证据帧：`{f}`")
+        if e.get("audio"):
+            lines.append(f"- 声音：`{e['audio']}`")
+        lines += ["- 裁定：", ""]
+    return "\n".join(lines)

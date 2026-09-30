@@ -66,6 +66,28 @@ def fill_from_neighbours(frames: list[dict]) -> None:
             f["content"] = "traffic" if f.get("traffic") else "unknown"
 
 
+def _series(f: dict) -> bool:
+    return f["content"] == "tsxk" or (f["content"] == "tsxk_other" and f.get("form") == "动画剧场版")
+
+
+def lone_unrelated(frames: list[dict]) -> list[dict]:
+    """D-072: one unrelated frame with 吞噬星空 animation right before and right after it is undetermined, not
+    unrelated content (a single frame does not make a 偷渡). Rewrites those frames and returns them."""
+    lone = [b for a, b, c in zip(frames, frames[1:], frames[2:]) if b["content"] == "unrelated" and _series(a) and _series(c)]
+    for f in lone:
+        f.update(content="unknown", form="", source=f["source"] + "+单帧无关改待定")
+    return lone
+
+
+def unrelated_block(frames: list[dict]) -> bool:
+    """D-072: unrelated content that can make a 偷渡 — two or more frames in a row, or any frame before the first or
+    after the last frame of 吞噬星空 animation (片头、片尾)."""
+    series = [i for i, f in enumerate(frames) if _series(f)]
+    return any(f["content"] == "unrelated" and (not series or i < series[0] or i > series[-1] or
+                                                (i + 1 < len(frames) and frames[i + 1]["content"] == "unrelated"))
+               for i, f in enumerate(frames))
+
+
 def _boundary(a: dict, b: dict, probe: Callable[[float], float | None] | None) -> float:
     """First recording second in (a, b] that looks more like b than a; b's time when probing is impossible."""
     if probe is None or a["content"] not in SETTLED or b["content"] not in SETTLED or b["t"] - a["t"] <= 1.5:
@@ -79,7 +101,7 @@ def _boundary(a: dict, b: dict, probe: Callable[[float], float | None] | None) -
     return b["t"]
 
 
-def segments(frames: list[dict], clock: Clock, stop: float, probe=None) -> list[dict]:
+def segments(frames: list[dict], clock: Clock, stop: float, probe=None, start: float | None = None) -> list[dict]:
     """[{start, end, content, form, frames, sources}] on `clock`; `stop` = where playback ends (recording s).
     probe(a, b) gives a function t → (> 0 when the picture at t looks more like frame b than frame a)."""
     runs = []
@@ -89,7 +111,8 @@ def segments(frames: list[dict], clock: Clock, stop: float, probe=None) -> list[
             runs[-1]["frames"].append(f)
         else:
             runs.append({"key": key, "frames": [f]})
-    starts = [runs[0]["frames"][0]["t"]]
+    first = runs[0]["frames"][0]["t"]
+    starts = [min(first, start) if start is not None else first]           # content starts when playback does
     for p, r in zip(runs, runs[1:]):
         a, b = p["frames"][-1], r["frames"][0]
         starts.append(_boundary(a, b, probe(a, b) if probe else None))
@@ -151,5 +174,13 @@ def summary(frames: list[dict], segs: list[dict]) -> dict:
             "traffic_platforms": sorted({p for f in frames for p in f.get("traffic") or ()}),
             "unknown_frames": sum(1 for f in frames if f["content"] == "unknown"),
             "face_frames": sum(1 for f in frames if f.get("face")), "text_frames": sum(1 for f in frames if f.get("text")),
+            "creator_frames": sum(1 for f in frames if f["content"] == "creator"),
+            "ai_note_frames": sum(1 for f in frames if f.get("ai_note")),
+            "film_watermark": any((f.get("local") or {}).get("form") == "动画剧场版" for f in frames),   # WO-102-R2 A5
+            "novel_frames": sum(1 for f in frames if f["content"] == "tsxk_other" and f.get("form") == "小说"),
+            "unrelated_block": unrelated_block(frames),                                                 # D-072
+            "lone_unrelated": sum(1 for f in frames if f["source"].endswith("单帧无关改待定")),
+            "disputed_frames": sum(1 for f in frames if ((f.get("cloud") or {}).get("arbitration"))),     # WO-102-R4 §1
+            "disputed_pending": sum(1 for f in frames if ((f.get("cloud") or {}).get("arbitration") or {}).get("verdict", "").startswith("复核后")),
             "local_frames": sum(1 for f in frames if f["source"].startswith("本地")),
             "cloud_frames": sum(1 for f in frames if f["source"].startswith("云端"))}
