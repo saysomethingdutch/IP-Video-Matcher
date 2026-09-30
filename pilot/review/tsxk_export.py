@@ -156,7 +156,10 @@ def _explanation(store: TsxkReviewStore, dest: Path, pending: list[tuple[str, li
              "已核验的格子默认不带机器标记；勾选保留的格子按原级别上色，批注为所有者说明。", "",
              f"## 未核验（{len(pending)} 行）", ""]
     if views is not None:
-        lines[7:7] = ["AD 来自独立播放量核对表 views.csv，不计入逐列核验。读数待核的 AD 带黄标与批注。",
+        approval_note = ("AD 全部已由所有者确认，导出不加机器颜色与批注。" if
+                         all(field["reviewed"] for field in views.values()) else
+                         "读数待核的 AD 带黄标与批注。")
+        lines[7:7] = ["AD 来自独立播放量核对表 views.csv，不计入逐列核验。" + approval_note,
                       "副本补上 AD1 表头“播放量”。原表未改。" if header_added else "AD1 原有“播放量”表头保留。", ""]
     lines += [f"- {rid}：{'、'.join(columns)}" for rid, columns in pending] or ["无"]
     changes = store.corrections()

@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 import csv
+import hashlib
+import json
 import re
 
 from pilot.tsxk.config import TsxkCase
@@ -9,9 +11,15 @@ from pilot.tsxk.config import TsxkCase
 
 def load_views(case: TsxkCase) -> dict[str, dict] | None:
     config = case.raw.get("views")
-    if not config:
+    path = case.path_of(config["csv"]) if config else case.case_dir / "views.csv"
+    if not config and not path.is_file():
         return None
-    path = case.path_of(config["csv"])
+    approval_path = case.case_dir / "views" / "approval.json"
+    approval = json.loads(approval_path.read_text(encoding="utf-8")) if approval_path.is_file() else {}
+    approved = (approval.get("schema") == "tsxk-views-approval-1" and
+                approval.get("approved") is True and
+                approval.get("csv_sha256") == hashlib.sha256(path.read_bytes()).hexdigest() and
+                approval.get("rows") == case.rows)
     result = {}
     with path.open(encoding="utf-8-sig", newline="") as file:
         for row in csv.DictReader(file):
@@ -21,8 +29,8 @@ def load_views(case: TsxkCase) -> dict[str, dict] | None:
             if value and not re.fullmatch(r"\d+", value):
                 raise ValueError(f"invalid AD for {rid}: expected a nonnegative integer")
             confidence = row["把握程度"].strip()
-            needs_review = confidence != "多帧一致" or not value
-            result[rid] = {"value": int(value) if value else "", "reviewed": False,
+            needs_review = not approved and (confidence != "多帧一致" or not value)
+            result[rid] = {"value": int(value) if value else "", "reviewed": approved,
                            "retain_mark": False, "column": "AD", "mark_note": "",
                            "flag_level": "yellow" if needs_review else None,
                            "flag_details": [{"level": "yellow", "reason":

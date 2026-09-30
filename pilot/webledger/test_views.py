@@ -1,5 +1,6 @@
 """Playback counts: icon ambiguity, page boundaries, votes and numeric AD export."""
 import csv
+import hashlib
 import json
 import zipfile
 from types import SimpleNamespace
@@ -13,6 +14,7 @@ from pilot.review.test_tsxk_review import fixture
 from pilot.review.tsxk import OUTPUT, TsxkReviewStore
 from pilot.review.tsxk_export import export_tsxk
 from pilot.review.tsxk_trial_verify import run
+from pilot.review.tsxk_views import load_views
 from pilot.tsxk.config import TsxkCase
 from pilot.webledger.views import COLUMNS, count_box, parse_count, reread, summarize, target_observations
 
@@ -131,3 +133,30 @@ def test_export_rejects_partial_views_not_silently_skipped(tmp_path):
     with pytest.raises(ValueError, match="missing"):
         export_tsxk(TsxkReviewStore(TsxkCase(config)),tmp_path / "bad.xlsx")
     assert not (tmp_path / "bad.xlsx").exists()
+
+
+def test_owner_approval_clears_only_ad_marks_and_is_bound_to_csv(tmp_path):
+    _, config, data = views_fixture(tmp_path)
+    folder = data / "views"
+    folder.mkdir()
+    csv_path = data / "views.csv"
+    approval = {"schema":"tsxk-views-approval-1", "approved":True,
+                "csv_sha256":hashlib.sha256(csv_path.read_bytes()).hexdigest(),
+                "rows":["7813","7814"],"actor":"Owner"}
+    (folder / "approval.json").write_text(json.dumps(approval))
+    case = TsxkCase(config)
+    store = TsxkReviewStore(case, decisions_path=tmp_path / "temporary-decisions.jsonl")
+    assert len(store.fields("7813")) == 16 and store.summary("7813")["reviewed"] == 0
+    dest = export_tsxk(store,tmp_path / "approved.xlsx")
+    book = openpyxl.load_workbook(dest)
+    sheet = book["沈瑞曦"]
+    assert sheet["AD3"].value == 100000
+    assert sheet["AD3"].comment is None and sheet["AD3"].fill.patternType is None
+    assert sheet["Q2"].comment is not None  # other pending cells retain their marks
+    book.close()
+    assert "AD 全部已由所有者确认" in dest.with_suffix(".md").read_text()
+    # Any CSV change invalidates approval rather than accepting a changed count.
+    csv_path.write_text(csv_path.read_text(encoding="utf-8-sig").replace("100000","110000"))
+    assert not load_views(case)["7814"]["reviewed"]
+    assert load_views(case)["7814"]["flag_level"] == "yellow"
+    assert not (data / "review").exists()
