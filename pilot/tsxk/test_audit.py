@@ -27,6 +27,14 @@ class AuditTests(unittest.TestCase):
         self.assertNotIn("V_OTHER_ELEMENTS", codes)
         self.assertNotIn("W_AC_VISUAL", codes)
 
+    def test_original_novel_wording_satisfies_form_description(self):
+        machine = row("【段落情节】\n结合原著结局说明人物去向。\n"
+                      "【新增创作要素情况】\n新增解说字幕\n"
+                      "【比对意见】\n合理使用可能性中等。", T="是（小说）")
+        codes = {item[0] for item in issues(machine, {}, "口播明确提到原著结局")}
+        self.assertNotIn("FORM_AC", codes)
+        self.assertNotIn("NOVEL_EVIDENCE", codes)
+
     def test_category_and_time_checks_report_without_changing_values(self):
         machine = row("【新增创作要素情况】\n无\n【比对意见】\n合理使用可能性较低。",
                       Y="偷渡", U="否", W="否", Z="中", X="是（其他）")
