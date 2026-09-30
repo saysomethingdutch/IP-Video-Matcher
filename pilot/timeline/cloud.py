@@ -7,12 +7,17 @@ give the same class, otherwise it stays "unknown" and is flagged. The prompt nev
 is for (target-blind), and never gives the video title (it would pull every frame towards 吞噬星空).
 
 Only player crops are sent (D-057 ③: for accuracy — the sidebar thumbnails would read as other works). Every
-picture sent is written to cloud_outbox/ first; answers are cached by picture hash, so a rerun costs nothing.
+picture sent is written to cloud_outbox/ first. Answers are cached per frame (by the frame picture, the prompt
+and the board), so a rerun, a shorter play span or a regrouped collage costs nothing again (WO-102-R1 §0).
 """
 from __future__ import annotations
 
+import fcntl
 import hashlib
 import json
+import os
+import threading
+import time
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
@@ -134,7 +139,13 @@ def cross(answers: dict[str, dict | None]) -> dict:
         missing = "、".join(NAMES[k] for k in BACKENDS if not answers.get(k))
         out["flags"].append(f"云端：{missing} 没有给出可用的回答")
         return out
-    if a["content"] == b["content"]:
+    pair = {a["content"], b["content"]}
+    film_or_series = pair == {"tsxk", "tsxk_other"} and \
+        all(x["form"] in ("", "动画剧场版") for x in (a, b) if x["content"] == "tsxk_other")
+    if film_or_series:                                          # D-065 ⑤-1: animation either way (T still needs the watermark)
+        out["content"] = "tsxk"
+        out["flags"].append("两家都认出吞噬星空动画，正片还是剧场版说法不一，按动画画面计")
+    elif a["content"] == b["content"]:
         out["content"] = a["content"]
         if a["content"] == "tsxk_other":
             out["form"] = a["form"] if a["form"] == b["form"] else ""
@@ -151,56 +162,248 @@ def cross(answers: dict[str, dict | None]) -> dict:
     return out
 
 
-def _digest(*paths: Path, extra: str = "") -> str:
-    h = hashlib.sha256(extra.encode("utf-8"))
-    for p in paths:
-        h.update(Path(p).read_bytes())
-    return h.hexdigest()[:20]
+SLOT_POLL = 0.05    # s between looks for a free slot; at 0.5 s a caller that freed a slot and asked again at once
+                    # always won, and the 400-row run kept all four GLM slots from the check-set review (WO-102-R4)
 
 
-def ask_group(board: Path, legend: str, picture: Path, n: int, cache_dir: Path,
+class Throttle:
+    """At most `high` calls at a time to one provider, across every process that points at the same slot
+    directory (the 400-row run, the check set and the samples may run together); after a rate-limit reply
+    (HTTP 429) at most `low` for everyone (D-058 ③: 8 at once, 4 when throttled). Slots are lock files held
+    with flock, so a crashed process frees its slot. Without a slot directory the limit is per process."""
+
+    def __init__(self, backend: str, high: int = 8, low: int = 4, slot_dir: Path | None = None):
+        self.backend, self.high, self.low = backend, high, low
+        self.slot_dir = slot_dir
+        self.cap_local, self.active = high, 0
+        self.cond = threading.Condition()
+        self.held = threading.local()
+
+    def cap(self) -> int:
+        if self.slot_dir is None:
+            return self.cap_local
+        f = self.slot_dir / f"{self.backend}.cap"
+        try:
+            return max(1, min(self.high, int(f.read_text().strip())))
+        except (OSError, ValueError):
+            return self.high
+
+    def __enter__(self):
+        if self.slot_dir is None:
+            with self.cond:
+                while self.active >= self.cap_local:
+                    self.cond.wait()
+                self.active += 1
+            return self
+        self.slot_dir.mkdir(parents=True, exist_ok=True)
+        while True:
+            for i in range(self.cap()):
+                fd = os.open(self.slot_dir / f"{self.backend}.{i}.lock", os.O_CREAT | os.O_RDWR, 0o644)
+                try:
+                    fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                except BlockingIOError:
+                    os.close(fd)
+                    continue
+                self.held.fd = fd
+                return self
+            time.sleep(SLOT_POLL)
+
+    def __exit__(self, *exc):
+        if self.slot_dir is None:
+            with self.cond:
+                self.active -= 1
+                self.cond.notify_all()
+            return
+        fd = getattr(self.held, "fd", None)
+        if fd is not None:
+            fcntl.flock(fd, fcntl.LOCK_UN)
+            os.close(fd)
+            self.held.fd = None
+
+    def limited(self) -> None:
+        if self.slot_dir is None:
+            with self.cond:
+                self.cap_local = min(self.cap_local, self.low)
+            return
+        (self.slot_dir / f"{self.backend}.cap").write_text(str(self.low))
+
+
+THROTTLE = {b: Throttle(b) for b in BACKENDS}
+
+
+def share_slots(slot_dir: Path) -> None:
+    """Make every provider's limit count across processes (call once at start-up)."""
+    for b in BACKENDS:
+        THROTTLE[b] = Throttle(b, slot_dir=slot_dir)
+
+
+def prompt_digest(board: Path, legend: str) -> str:
+    """What an answer depends on besides the frame itself: the prompt and the reference board."""
+    h = hashlib.sha256(PROMPT.format(legend=legend, n=4).encode("utf-8"))
+    h.update(Path(board).read_bytes())
+    return h.hexdigest()[:16]
+
+
+def frame_key(path: str, digest: str) -> str:
+    return hashlib.sha256(Path(path).read_bytes() + digest.encode("ascii")).hexdigest()[:24]
+
+
+def cached(frame: dict, digest: str, cache_dir: Path, backends=BACKENDS) -> dict | None:
+    """Both providers' earlier answers for this very picture, or None. Answers are kept per frame, so a
+    shorter play span or a new grouping of the collages costs nothing again (WO-102-R1 §0)."""
+    key, out = frame_key(frame["path"], digest), {}
+    for b in backends:
+        p = cache_dir / f"{key}.{b}.json"
+        if not p.exists():
+            return None
+        out[b] = json.loads(p.read_text(encoding="utf-8"))["answer"]
+    return out
+
+
+def store(frame: dict, digest: str, cache_dir: Path, backend: str, answer: dict, call: dict) -> None:
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    (cache_dir / f"{frame_key(frame['path'], digest)}.{backend}.json").write_text(
+        json.dumps({"answer": answer, "call": call}, ensure_ascii=False), encoding="utf-8")
+
+
+def ask_group(board: Path, legend: str, picture: Path, n: int,
               backends=BACKENDS) -> tuple[dict[str, list[dict] | None], list[dict]]:
-    """Both backends on one collage (cached): ({backend: per-tile answers}, [call records])."""
+    """Both providers on one collage, in parallel, each under its throttle: ({backend: answers}, [calls])."""
     prompt = PROMPT.format(legend=legend, n=n)
-    key = _digest(board, picture, extra=prompt)
+
+    def call(backend):
+        """One provider call. A malformed reply that breaks the adapter (an empty JSON body under load) counts
+        as no answer for these frames — they stay unknown and flagged — instead of failing the whole row."""
+        try:
+            with THROTTLE[backend]:
+                return llm.ask(backend, prompt, images=[board, picture], required=("frames",), timeout=600,
+                               label="collage")
+        except Exception as exc:
+            return llm.Reply(backend, llm.BACKENDS[backend].model, error=f"{type(exc).__name__}: {str(exc)[:200]}")
 
     def one(backend):
-        cached = cache_dir / f"{key}.{backend}.json"
-        if cached.exists():
-            rec = json.loads(cached.read_text(encoding="utf-8"))
-            return backend, rec["answers"], {**rec["call"], "cached": True}
-        reply = llm.ask(backend, prompt, images=[board, picture], required=("frames",), timeout=600)
+        reply = call(backend)
+        if reply.error.startswith("HTTP 429"):
+            THROTTLE[backend].limited()
         parsed = parse(reply.data, n)
         if parsed is None and not reply.error:                      # a reply that misses tiles: ask once more
-            reply = llm.ask(backend, prompt, images=[board, picture], required=("frames",), timeout=600)
+            reply = call(backend)
             parsed = parse(reply.data, n)
-        call = {"backend": backend, "model": reply.model, "seconds": reply.seconds, "usage": reply.usage,
-                "error": reply.error, "fallback": reply.fallback, "picture": picture.name}
-        if parsed is not None:
-            cache_dir.mkdir(parents=True, exist_ok=True)
-            cached.write_text(json.dumps({"answers": parsed, "call": call}, ensure_ascii=False), encoding="utf-8")
-        return backend, parsed, call
+        return backend, parsed, {"backend": backend, "model": reply.model, "seconds": reply.seconds,
+                                 "usage": reply.usage, "error": reply.error, "fallback": reply.fallback,
+                                 "picture": picture.name}
 
-    with ThreadPoolExecutor(max_workers=len(backends)) as ex:       # the two providers in parallel
+    with ThreadPoolExecutor(max_workers=len(backends)) as ex:
         results = list(ex.map(one, backends))
     return {b: parsed for b, parsed, _ in results}, [call for _, _, call in results]
 
 
 def label_frames(frames: list[dict], clock, board: Path, legend: str, outbox: Path, cache_dir: Path,
-                 workers: int = 2, backends=BACKENDS) -> list[dict]:
-    """Cross-check `frames` (dicts with t and path) in collages of four; sets frame["cloud"]; returns calls."""
-    groups = [frames[i:i + 4] for i in range(0, len(frames), 4)]
+                 workers: int = 4, backends=BACKENDS) -> list[dict]:
+    """Cross-check `frames` (dicts with t and path): cached pictures first, the rest in collages of four.
+    Sets frame["cloud"]; returns the calls made."""
+    digest = prompt_digest(board, legend)
+    todo = []
+    for f in frames:
+        got = cached(f, digest, cache_dir, backends)
+        if got:
+            f["cloud"] = {"collage": "逐帧缓存", "answers": got, "cached": True, **cross(got)}
+        else:
+            todo.append(f)
+    groups = [todo[i:i + 4] for i in range(0, len(todo), 4)]
 
     def one(group):
         pic = collage([f["path"] for f in group], [clock(f["t"]) for f in group],
                       outbox / f"collage_{group[0]['t']:08.2f}.jpg")
-        return group, pic, *ask_group(board, legend, pic, len(group), cache_dir, backends)
+        return group, pic, *ask_group(board, legend, pic, len(group), backends)
 
     calls = []
     with ThreadPoolExecutor(max_workers=max(1, workers)) as ex:
         for group, pic, answers, group_calls in ex.map(one, groups):
             calls += group_calls
+            by_backend = {c["backend"]: c for c in group_calls}
             for k, f in enumerate(group):
                 per = {b: (answers.get(b) or [None] * len(group))[k] for b in backends}
                 f["cloud"] = {"collage": pic.name, "answers": per, **cross(per)}
+                for b, ans in per.items():
+                    if ans is not None:
+                        store(f, digest, cache_dir, b, ans, by_backend.get(b, {}))
+    return calls
+
+
+# ---------------------------------------------------------------- disputed frames (WO-102-R4 §1)
+
+ARBITRATION_PROMPT = """第一张图是参考图板：
+{legend}
+
+第二张图是一个视频里的一帧（只截了播放器画面）。
+问题：这一帧是不是《吞噬星空》动画画面（正片、官方预告、剧场版都算）？看台标、角色、画风。
+原片画面上叠了字幕、水印、弹幕或边框的，照样算；画中画里有这部动画的也算。
+《斗破苍穹》《完美世界》《斗罗大陆》《凡人修仙传》《仙逆》等国漫画风相近，人物、场景对不上参考图的不算。
+
+只输出 JSON：{{"is_tsxk": true 或 false, "why": "不超过20字"}}"""
+
+
+def is_series(answer: dict | None) -> bool:
+    """The answer says 吞噬星空 animation (the series, a trailer, or the films)."""
+    return bool(answer) and (answer["content"] == "tsxk" or
+                             (answer["content"] == "tsxk_other" and answer.get("form") in ("", "动画剧场版")))
+
+
+def disputed(frame: dict, backends=BACKENDS) -> bool:
+    """One provider says 吞噬星空 animation and the other does not."""
+    answers = ((frame.get("cloud") or {}).get("answers") or {})
+    got = [answers.get(b) for b in backends]
+    return all(got) and len({is_series(a) for a in got}) == 2
+
+
+def arbitrate(frames: list[dict], board: Path, legend: str, cache_dir: Path, workers: int = 4,
+              backends=BACKENDS) -> list[dict]:
+    """Ask both providers once more about each disputed frame, one frame at full crop size with the reference
+    board, as a yes/no question. Both yes: the series; both no: not; split: still undecided (flagged).
+    Sets frame["cloud"]["arbitration"] and rewrites its content; answers are cached per frame. Returns calls."""
+    prompt = ARBITRATION_PROMPT.format(legend=legend)
+    digest = hashlib.sha256((prompt + "arbitration").encode("utf-8") + Path(board).read_bytes()).hexdigest()[:16]
+
+    def ask_one(frame, backend):
+        key = frame_key(frame["path"], digest)
+        cached = cache_dir / f"{key}.{backend}.arb.json"
+        if cached.exists():
+            return json.loads(cached.read_text(encoding="utf-8"))["answer"], None
+        try:
+            with THROTTLE[backend]:
+                reply = llm.ask(backend, prompt, images=[board, Path(frame["path"])], required=("is_tsxk",), timeout=600,
+                                label="arbitration")
+        except Exception as exc:
+            return None, {"backend": backend, "error": f"{type(exc).__name__}: {str(exc)[:200]}", "usage": {}}
+        if reply.error.startswith("HTTP 429"):
+            THROTTLE[backend].limited()
+        data = reply.data if isinstance(reply.data, dict) and isinstance(reply.data.get("is_tsxk"), bool) else None
+        call = {"backend": backend, "model": reply.model, "seconds": reply.seconds, "usage": reply.usage,
+                "error": reply.error, "picture": Path(frame["path"]).name, "kind": "arbitration"}
+        if data is not None:
+            cache_dir.mkdir(parents=True, exist_ok=True)
+            cached.write_text(json.dumps({"answer": data, "call": call}, ensure_ascii=False), encoding="utf-8")
+        return data, call
+
+    def one(frame):
+        return frame, {b: ask_one(frame, b) for b in backends}
+
+    calls = []
+    with ThreadPoolExecutor(max_workers=max(1, workers)) as ex:
+        for frame, got in ex.map(one, frames):
+            votes = {b: (ans or {}).get("is_tsxk") for b, (ans, _) in got.items()}
+            calls += [c for _, c in got.values() if c]
+            cl = frame["cloud"]
+            before = {b: a["content"] for b, a in cl["answers"].items() if a}
+            if all(v is True for v in votes.values()):
+                cl["content"], cl["form"], verdict = "tsxk", "", "两家复核都说是吞噬星空动画，采用"
+            elif all(v is False for v in votes.values()):
+                other = next((a["content"] for a in cl["answers"].values() if a and not is_series(a)), "unknown")
+                cl["content"], cl["form"], verdict = other, "", "两家复核都说不是吞噬星空动画，不采用"
+            else:
+                cl["content"], cl["form"], verdict = "unknown", "", "复核后两家仍有分歧，待定"
+            cl["arbitration"] = {"votes": votes, "before": before, "verdict": verdict,
+                                 "why": {b: (ans or {}).get("why", "") for b, (ans, _) in got.items()}}
+            cl["flags"] = [x for x in cl.get("flags", []) if "不一致" not in x] + [f"争议帧复核：{verdict}"]
     return calls

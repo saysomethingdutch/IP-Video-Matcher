@@ -1,6 +1,9 @@
 """WO-102 §1, §3, §4: rules file, code-decided columns, the reply checks, AC assembly, the check list and the
 scoring script — synthetic data only (no workbook, no model call)."""
+import json
+import tempfile
 import unittest
+from pathlib import Path
 
 from pilot.timeline import local as Lc
 from pilot.tsxk import ac as A
@@ -8,6 +11,7 @@ from pilot.tsxk import check as CK
 from pilot.tsxk import classify as K
 from pilot.tsxk import fields as FD
 from pilot.tsxk import samples as SM
+from pilot.tsxk import sound as SD
 
 RULES = Lc.load_rules()
 
@@ -84,19 +88,49 @@ class FieldsTest(unittest.TestCase):
         f, h, _ = FD.timeline_fields(drive, None, "吞噬星空236", RULES)
         self.assertEqual((f["Q"]["value"], f["Y"]["value"], f["Z"]["value"]), ("是", "引流", "低"))
         film = timeline([seg(0, 90, "tsxk_other", "动画剧场版")], forms=["动画剧场版"])
-        f, h, flags = FD.timeline_fields(film, None, "决战原始星PV", RULES)
-        self.assertEqual((f["Q"]["value"], f["Y"]["value"], f["Z"]["value"]), ("否", "错权", "低"))   # 示例 16047
+        f, h, flags = FD.timeline_fields(film, None, "决战原始星PV", RULES)            # D-068: judged like the series
+        self.assertEqual((f["Q"]["value"], h["y_fixed"]), ("否", None))
+        literal = {**RULES, "policies": {**RULES["policies"], "film_only": {"value": "错权"}}}
+        f, h, flags = FD.timeline_fields(film, None, "决战原始星PV", literal)          # the other switch position
+        self.assertEqual((f["Q"]["value"], f["Y"]["value"], f["Z"]["value"]), ("否", "错权", "低"))
         self.assertTrue(any("指引没有给错权" in x["reason"] for x in flags))
+        manga = timeline([seg(0, 90, "tsxk_other", "漫画")], forms=["漫画"])
+        self.assertEqual(FD.timeline_fields(manga, None, "吞噬星空漫画", RULES)[0]["Y"]["value"], "错权")
+        pending = timeline([seg(0, 90, "unknown")], unknown=9)
+        pending["summary"].update(disputed_frames=9, disputed_pending=6)
+        f, h, flags = FD.timeline_fields(pending, None, "吞噬星空", RULES)             # WO-102-R4 §1
+        self.assertEqual((f["Q"]["value"], f["Y"]["value"], h.get("dispute_pending")), (None, None, True))
+        self.assertTrue(any(x["level"] == "red" for x in flags))
         other = timeline([seg(0, 300, "unrelated")])
         f, h, flags = FD.timeline_fields(other, None, "谆提身陨", RULES)
         self.assertEqual((f["Y"]["value"], f["Z"]["value"]), ("完全无关内容", "高"))              # 示例 11802
 
-    def test_other_forms_do_not_count_as_unrelated_but_are_flagged(self):
+    def test_w_counts_non_official_pictures_by_default_and_third_party_on_the_other_switch(self):
         tl = timeline([seg(0, 33, "tsxk_other", "手游"), seg(34, 400, "tsxk")], forms=["手游"])
-        f, h, flags = FD.timeline_fields(tl, None, "吞噬星空动漫吐槽", RULES)
-        self.assertEqual((f["W"]["value"], h["forms"]), ("否", ["手游"]))
-        self.assertTrue(any("W 按" in x["reason"] for x in flags))
+        f, h, flags = FD.timeline_fields(tl, None, "吞噬星空动漫吐槽", RULES)           # WO-102-R2 B2
+        self.assertEqual((f["W"]["value"], h["forms"]), ("是", ["手游"]))
+        self.assertIn("吞噬星空其他形式（手游）", f["W"]["basis"])
         self.assertEqual(FD.time_lines(tl, f, "二创（其他类）"), ["00:00-00:33为《吞噬星空》手游内容"])
+        narrow = {**RULES, "policies": {**RULES["policies"], "w_scope": {"value": "third_party"}}}
+        f, _, _ = FD.timeline_fields(tl, None, "吞噬星空动漫吐槽", narrow)               # D-058 ④
+        self.assertEqual(f["W"]["value"], "否")
+        creator = timeline([seg(0, 20, "creator"), seg(21, 300, "tsxk")])
+        creator["summary"]["creator_frames"] = 2
+        self.assertEqual(FD.timeline_fields(creator, None, "x", RULES)[0]["W"]["value"], "是")
+        official = timeline([seg(0, 300, "tsxk")])
+        self.assertEqual(FD.timeline_fields(official, None, "x", RULES)[0]["W"]["value"], "否")
+
+    def test_t_needs_evidence(self):
+        film = timeline([seg(0, 90, "tsxk"), seg(91, 120, "tsxk_other", "动画剧场版")], forms=["动画剧场版"])
+        f, h, flags = FD.timeline_fields(film, None, "x", RULES)                          # WO-102-R2 A5
+        self.assertEqual(h["forms"], [])
+        self.assertTrue(any("没有看到片名水印" in x["reason"] for x in flags))
+        film["summary"]["film_watermark"] = True
+        self.assertEqual(FD.timeline_fields(film, None, "x", RULES)[1]["forms"], ["动画剧场版"])
+
+    def test_r_needs_review_is_flagged(self):
+        _, flags = FD.ledger_fields({"C": "t"}, {"title": "t", "complete": True, "complete_needs_review": True})
+        self.assertTrue(any("需复核" in x["reason"] for x in flags))
 
     def test_episode_note(self):
         self.assertEqual(FD.episode_note("吞噬星空第52集看点"), "标题标注第52集")
@@ -172,6 +206,297 @@ class SamplesTest(unittest.TestCase):
     def test_scrub_takes_out_times_episodes_and_shares(self):
         text = "【其他】\n1.02:47-5:17无关内容\n2.第108集的内容\n3.80%以上为无关内容"
         self.assertEqual(SM.scrub(text), "【其他】\n1.相关集数的内容\n2.大部分为无关内容")
+
+
+
+class SoundTest(unittest.TestCase):
+    """WO-102-R1 §1.2, §1.5: what the prompt hears, and the evidence that music was added by the uploader."""
+
+    def chunk(self, a, b, tags, text=""):
+        return {"recording_start": a, "recording_end": b, "tags": tags, "text": text}
+
+    def tl(self, frames, segs):
+        return {"segments": segs, "frames": frames}
+
+    def test_series_with_pure_music_is_no_evidence(self):
+        audio = {"status": "ok", "audio_chunks": [self.chunk(40, 60, ["BGM"])], "uploader_speech": []}
+        tl = self.tl([{"t": 50, "content": "tsxk", "captions": []}], [seg(40, 60, "tsxk")])
+        m = SD.music_evidence(audio, tl)
+        self.assertEqual((m["verdict"], m["series_music_seconds"]), ("无旁证", 20))
+        self.assertIn("只有原片画面加纯音乐", SD.section(audio, m))
+        self.assertNotIn("BGM", SD.section(audio, m))                       # never the raw share (D-047)
+
+    def test_the_four_kinds_of_evidence(self):
+        audio = {"status": "ok", "audio_chunks": [self.chunk(40, 60, ["BGM"]), self.chunk(60, 80, ["BGM"])]}
+        off = self.tl([{"t": 70, "content": "unrelated"}], [seg(40, 59, "tsxk"), seg(60, 80, "unrelated")])
+        self.assertIn("非吞噬星空画面上的配乐", SD.music_evidence(audio, off)["evidence"][0])
+        silent = self.tl([{"t": 50, "content": "tsxk", "captions": ["就点名要布洛琳"]}], [seg(40, 80, "tsxk")])
+        self.assertIn("听不到人声", SD.music_evidence(audio, silent)["evidence"][0])
+        lyric = self.tl([{"t": 50, "content": "creator", "lyric": True}], [seg(40, 80, "tsxk")])
+        self.assertIn("歌词字幕", "".join(SD.music_evidence(audio, lyric)["evidence"]))
+        chip = self.tl([{"t": 50, "content": "tsxk", "music_tag": True}], [seg(40, 80, "tsxk")])
+        self.assertEqual(SD.music_evidence(audio, chip)["evidence"], ["B站音乐标签"])
+
+    def test_no_music_no_audio_and_the_speech_line(self):
+        audio = {"status": "ok", "audio_chunks": [self.chunk(40, 44, ["Speech"], "大家好")], "uploader_speech": ["大家好"]}
+        m = SD.music_evidence(audio, self.tl([], [seg(40, 44, "tsxk")]))
+        self.assertEqual(m["verdict"], "否")
+        self.assertEqual(SD.section(audio, m), "【声音】UP主口播（过滤后）1 句：大家好；疑似UP主配乐：否")
+        self.assertIsNone(SD.music_evidence(None, None)["verdict"])
+        self.assertIn("未提供", SD.section(None, SD.music_evidence(None, None)))
+
+    def test_v_yes_needs_evidence_and_nothing_else_added(self):
+        reply = {"Y": "二创（单IP混剪类）", "U": "否", "V": "是", "Z": "中", "T_extra": [],
+                 "AC": {"主题概括": "混剪。", "段落情节": "打斗。", "新增创作要素": ["背景音乐"], "比对意见": "中等。", "其他": []}}
+        tl = {"segments": [seg(0, 60, "tsxk")]}
+        fixed = {"W": {"value": "否"}}
+        self.assertIn("没有 UP 主配乐的旁证", "".join(K.check(reply, None, fixed, tl, {"verdict": "无旁证"})))
+        self.assertEqual(K.check(reply, None, fixed, tl, {"verdict": "是"}), [])
+        self.assertIn("口播", "".join(K.check(reply, None, fixed, tl, {"verdict": "是"}, speech=3)))
+
+    def test_ledger_same_as_input_flags_and_certificate_time(self):
+        led = {"title": "OCR 读错的标题", "title_same_as_input": True, "address": "https://x", "address_same_as_input": False,
+               "complete": None, "finished_witness_time": None, "certificate_finished_time": "2026-04-01 09:05:01"}
+        fields, flags = FD.ledger_fields({"C": "原表标题", "E": "https://e"}, led)
+        self.assertEqual((fields["D"]["value"], fields["F"]["value"], fields["L"]["value"]),
+                         ("原表标题", "https://x", "2026/4/1 09:05:01"))
+        self.assertTrue(any(f["reason"].startswith("R：") for f in flags))
+
+
+
+class Step2Test(unittest.TestCase):
+    """WO-102-R1 step 2: WO-103-R1 facts, promotional speech as an X clue, the Owner's disagreement list."""
+
+    def audio(self, **facts):
+        base = {"music_only_spans": [], "lyric_subtitle_spans": [], "bilibili_music_tags": [], "subtitle_without_speech_spans": []}
+        base.update(facts)
+        return {"status": "ok", "segments": [{"text": "x"}], "uploader_speech": [], "music_facts": base}
+
+    def test_music_facts_give_the_four_kinds_of_evidence(self):
+        tl = {"segments": [seg(40, 99, "tsxk"), seg(100, 200, "unrelated")], "frames": []}
+        self.assertEqual(SD.music_evidence(self.audio(music_only_spans=[[50, 90]]), tl)["verdict"], "无旁证")
+        self.assertEqual(SD.music_evidence(self.audio(), tl)["verdict"], "否")
+        self.assertIn("非吞噬星空画面上的配乐", SD.music_evidence(self.audio(music_only_spans=[[120, 180]]), tl)["evidence"][0])
+        self.assertIn("听不到人声", SD.music_evidence(self.audio(subtitle_without_speech_spans=[[60, 70]]), tl)["evidence"][0])
+        self.assertIn("歌词字幕", SD.music_evidence(self.audio(lyric_subtitle_spans=[[150, 160]]), tl)["evidence"][0])
+        self.assertEqual(SD.music_evidence(self.audio(bilibili_music_tags=[{"t": 50}]), tl)["evidence"], ["B站音乐标签"])
+
+    def test_promotions_merge_and_are_labelled(self):
+        audio = {"status": "ok", "segments": [{"text": "x"}], "promotional_speech": [
+            {"text": "本视频需要一个硬币才能观看", "recording_start": 52.76, "recording_end": 55.24},
+            {"text": "喜欢的话欢迎关注投币支持一下", "recording_start": 56.0, "recording_end": 60.0},
+            {"text": "想提前看更多后续的不要再到处找资源了", "recording_start": 300.0, "recording_end": 304.0}]}
+        pr = SD.promotions(audio)
+        self.assertEqual([(round(p["start"]), round(p["end"])) for p in pr], [(53, 60), (300, 304)])
+        self.assertEqual(pr[0]["kinds"], ["要求投币或付费才能观看"])
+        self.assertEqual(pr[1]["kinds"], ["引导观众去别处找后续资源"])
+        line = SD.section({**audio, "uploader_speech": [], "redub_candidates": [{"text": "a"}]}, {"verdict": "否", "evidence": [],
+                                                                                                "series_music_seconds": 0})
+        self.assertIn("改配音候选 1 句", line)
+        self.assertIn("推广口播 3 句", line)
+
+    def test_uploader_speech_accepts_strings_or_objects(self):
+        self.assertEqual(SD.uploader_speech({"status": "ok", "segments": [{}], "uploader_speech": ["甲", {"text": "乙"}]}),
+                         ["甲", "乙"])
+
+    def test_disagreements_carry_basis_frames_and_notes(self):
+        from pathlib import Path as P
+        tl = {"segments": [seg(40, 80, "tsxk"), seg(81, 120, "unrelated")],
+              "frames": [{"t": 40.0, "content": "tsxk"}, {"t": 90.0, "content": "unrelated", "traffic": ["other"]}]}
+        report = {"scored": {"Y": {"disagree": [{"row": "8454", "machine": "偷渡", "human": "纯cut"}]}},
+                  "guidance_over_human": {"X": {"differ": [{"row": "8454", "machine": "是（其他）", "human": "否"}]},
+                                          "R": {"differ": [{"row": "8454", "machine": "是", "human": "否"}]}}}
+        rows = {"8454": {"fields": {"Y": {"basis": "GLM"}, "X": {"basis": "画面"}, "R": {"basis": "进度条"}}}}
+        items = CK.disagreements(report, rows, {"8454": (P("/t/8454"), tl)}, {"8454": P("/a/8454.json")},
+                                 {"8454": "声音不可靠"})
+        by = {e["column"]: e for e in items}
+        self.assertEqual(by["Y"]["frames"], ["/t/8454/frames/00040.00.jpg", "/t/8454/frames/00090.00.jpg"])
+        self.assertEqual(by["X"]["frames"], ["/t/8454/frames/00090.00.jpg"])
+        self.assertEqual((by["R"]["frames"], by["R"]["scored"]), ([], False))
+        self.assertIn("WO-101-R2", by["R"]["note"])
+        self.assertIn("声音不可靠", by["Y"]["note"])
+        self.assertIn("裁定：", CK.disagreements_md(items))
+
+
+
+class R2FixesTest(unittest.TestCase):
+    """WO-102-R2 A4, A5 in the classification."""
+
+    def test_novel_needs_words_inside_the_actual_playback(self):
+        from pilot.tsxk.pipeline import text_evidence
+        tl = {"frames": [{"ocr": ["这里和原著小说不一样"]}, {"ocr": ["有声书"], "ignored": "内容区间外"}]}
+        self.assertEqual(text_evidence(tl, None), {"小说": True, "有声书": False})
+        self.assertEqual(text_evidence({"frames": [{"ocr": ["罗峰出场"]}]}, None)["小说"], False)
+        speech = {"status": "ok", "segments": [{}], "uploader_speech": ["小说里写得更细"]}
+        self.assertTrue(text_evidence({"frames": []}, speech)["小说"])
+
+    def test_ai_note_keeps_y_among_the_derivative_kinds(self):
+        reply = {"Y": "纯cut", "U": "否", "V": "否", "Z": "低", "T_extra": [],
+                 "AC": {"主题概括": "片段。", "段落情节": "罗峰。", "新增创作要素": [], "比对意见": "低。", "其他": []}}
+        tl = {"segments": [seg(0, 60, "tsxk")], "summary": {"ai_note_frames": 2}}
+        self.assertIn("AI 创作声明", "".join(K.check(reply, None, {"W": {"value": "是"}}, tl)))
+        self.assertNotIn("AI 创作声明", "".join(K.check(dict(reply, Y="二创（单IP混剪类）"), None, {"W": {"value": "是"}}, tl)))
+
+    def test_policies_are_in_the_prompt(self):
+        text = K.standards(RULES)
+        self.assertIn("口径（WO-102-R2 B", text)
+        self.assertIn("归二创（单IP混剪类）", text)
+        self.assertIn("水印", text)
+
+
+
+class R3RulesTest(unittest.TestCase):
+    """WO-102-R3 (D-065 ⑤-4): Z 高 only in four cases; the two check sets."""
+
+    def reply(self, **kw):
+        base = {"Y": "二创（解说类）", "U": "是", "V": "否", "Z": "高", "Z_basis": "", "T_extra": [],
+                "AC": {"主题概括": "解说。", "段落情节": "罗峰。", "新增创作要素": ["配音"], "比对意见": "高。", "其他": []}}
+        base.update(kw)
+        return base
+
+    def test_high_needs_one_of_the_four_cases(self):
+        fixed, tl = {"W": {"value": "否"}}, {"segments": [seg(0, 60, "tsxk")], "summary": {}}
+        self.assertIn("填高只限", "".join(K.check(self.reply(), None, fixed, tl)))
+        self.assertEqual(K.check(self.reply(Z_basis="知识解读"), None, fixed, tl), [])     # D-071: no quotes asked for
+        self.assertIn("没有 AI 创作声明", "".join(K.check(self.reply(Z_basis="AI创作"), None, fixed, tl)))
+        self.assertEqual(K.check(self.reply(Z="中"), None, fixed, tl), [])
+
+    def test_two_check_sets_and_every_list_excluded_from_style(self):
+        from pilot.tsxk.config import TsxkCase
+        case = TsxkCase(Path(__file__).resolve().parents[3] / "cases" / "tsxk.yaml")
+        a, b = case.check_set("a"), case.check_set("b")
+        self.assertEqual((a["out"].name, b["out"].name), ("check", "check30b"))
+        self.assertEqual((a["list"].name, b["list"].name), ("tsxk_check30.csv", "tsxk_check30b.csv"))
+        self.assertEqual(b["known_unreliable"], {})
+        self.assertEqual([p.name for p in case.check_lists()], ["tsxk_check30.csv", "tsxk_check30b.csv"])
+
+
+class D071FlagsTest(unittest.TestCase):
+    """D-071: Z judged as in R3; only flags added — every 高 yellow, a 高 still on a wrong basis after the retry
+    lowered to 中 (yellow, not red), every Q=是 row red."""
+
+    def row(self, tl, reply, errors=()):
+        from unittest import mock
+        from pilot.tsxk import pipeline as PL
+        res = {"data": reply, "errors": list(errors), "calls": [], "prompt": "", "speech": 0,
+               "music": {"verdict": "无旁证", "evidence": [], "series_music_seconds": 0}}
+        with mock.patch.object(PL.K, "classify", return_value=res):
+            out = PL.process_row({}, None, tl, RULES, "s")
+        return out["fields"]["Z"]["value"], out["flags"], out["fields"]["Q"]["value"]
+
+    def reply(self, **kw):
+        return {**R3RulesTest().reply(), **kw}
+
+    def test_a_high_on_a_wrong_basis_after_the_retry_is_lowered(self):
+        z, flags, _ = self.row(timeline([seg(0, 60, "tsxk")]), self.reply(Z_basis="知识解读（预告解析）"),
+                               ["Z：填高只限知识解读、深度分析、多作品对比、有声明的 AI 创作，请在 Z_basis 写明，否则改为中"])
+        self.assertEqual(z, "中")
+        self.assertTrue(any("降为中" in f["reason"] and f["level"] == "yellow" for f in flags))
+        self.assertFalse(any(f["level"] == "red" for f in flags))
+
+    def test_every_high_is_yellow(self):
+        z, flags, _ = self.row(timeline([seg(0, 60, "tsxk")]), self.reply(Z_basis="知识解读"))
+        self.assertEqual(z, "高")
+        self.assertTrue(any(f["reason"].startswith("Z 高") and f["level"] == "yellow" for f in flags))
+
+    def test_every_row_without_the_series_is_red(self):
+        _, flags, q = self.row(timeline([seg(0, 300, "unrelated")]), self.reply(Z="中"))
+        self.assertEqual(q, "是")
+        self.assertTrue(any(f["reason"].startswith("Q=是") and f["level"] == "red" for f in flags))
+        _, flags, q = self.row(timeline([seg(0, 60, "tsxk")]), self.reply(Z="中"))
+        self.assertFalse(any(f["reason"].startswith("Q=是") for f in flags))
+
+    def test_the_appended_unrelated_flag_does_not_need_a_high(self):
+        _, flags, _ = self.row(timeline([seg(0, 60, "tsxk"), seg(61, 90, "unrelated")]), self.reply(Y="偷渡", Z="低"))
+        self.assertTrue(any(f["reason"].startswith("偷渡：") for f in flags))
+
+
+class D072Test(unittest.TestCase):
+    def test_a_tochdu_needs_more_than_one_unrelated_frame(self):
+        fixed = {"W": {"value": "是"}}
+        reply = {**R3RulesTest().reply(), "Y": "偷渡", "U": "否", "Z": "低"}
+        lone = {"segments": [seg(0, 60, "tsxk")], "summary": {"unrelated_block": False}}
+        self.assertIn("零星一帧不算", "".join(K.check(reply, None, fixed, lone)))
+        block = {"segments": [seg(0, 60, "tsxk"), seg(61, 90, "unrelated")], "summary": {"unrelated_block": True}}
+        self.assertNotIn("零星一帧不算", "".join(K.check(reply, None, fixed, block)))
+        older = {"segments": [seg(0, 60, "tsxk")], "summary": {}}               # a timeline from before D-072
+        self.assertNotIn("零星一帧不算", "".join(K.check(reply, None, fixed, older)))
+
+
+class RateLimitTest(unittest.TestCase):
+    def test_a_rate_limit_waits_lowers_the_limit_and_asks_again(self):
+        from unittest import mock
+        from pilot.semantic import llm
+        from pilot.timeline import cloud as C
+        limited = llm.Reply("zhipu", "glm", error='HTTP 429: {"error":{"code":"1302"}}')
+        good = llm.Reply("zhipu", "glm", data={"AC": {}})
+        waits = []
+        C.THROTTLE["zhipu"] = C.Throttle("zhipu")
+        with mock.patch.object(K.llm, "ask", side_effect=[limited, limited, good]):
+            reply = K.ask_patiently("zhipu", "p", "s", waits=(1, 2, 3), sleep=waits.append)
+        self.assertEqual((reply.data, waits, C.THROTTLE["zhipu"].cap()), ({"AC": {}}, [1, 2], 4))
+
+
+class UsageTest(unittest.TestCase):
+    """D-069: every cloud request is logged with its input, thinking and output tokens, and summed per kind."""
+
+    def setUp(self):
+        from pilot.semantic import llm
+        self.llm = llm
+        self.tmp = tempfile.TemporaryDirectory()
+        self.log = Path(self.tmp.name) / "usage" / "calls.jsonl"
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def lines(self):
+        return [json.loads(x) for x in self.log.read_text(encoding="utf-8").splitlines()]
+
+    def test_each_request_is_logged_with_its_tokens(self):
+        from unittest import mock
+        answer = {"choices": [{"message": {"content": '{"AC": {}}'}}],
+                  "usage": {"prompt_tokens": 5000, "completion_tokens": 9000,
+                            "completion_tokens_details": {"reasoning_tokens": 8300}}}
+        with mock.patch.object(self.llm, "CALL_LOG", self.log), mock.patch.object(self.llm, "CALL_RUN", "tsxk run"), \
+                mock.patch.dict("os.environ", {"ZHIPU_API_KEY": "x"}), mock.patch.object(self.llm, "_post", return_value=answer):
+            self.llm.ask("zhipu", "p", required=("AC",), label="classification")
+        (line,) = self.lines()
+        self.assertEqual({k: line[k] for k in ("run", "backend", "label", "input", "thinking", "output", "error")},
+                         {"run": "tsxk run", "backend": "zhipu", "label": "classification", "input": 5000,
+                          "thinking": 8300, "output": 700, "error": ""})
+
+    def test_a_failed_request_is_logged_too(self):
+        import http.client
+        from unittest import mock
+        with mock.patch.object(self.llm, "CALL_LOG", self.log), mock.patch.dict("os.environ", {"ZHIPU_API_KEY": "x"}), \
+                mock.patch.object(self.llm.time, "sleep"), \
+                mock.patch.object(self.llm, "_post", side_effect=http.client.IncompleteRead(b"")):
+            self.llm.ask("zhipu", "p", label="arbitration")
+        lines = self.lines()
+        self.assertEqual(len(lines), 3)                         # each billed attempt is one line
+        self.assertTrue(all(x["error"].startswith("IncompleteRead") for x in lines))
+
+    def test_no_log_unless_a_run_sets_one(self):
+        from unittest import mock
+        with mock.patch.dict("os.environ", {"ZHIPU_API_KEY": "x"}), \
+                mock.patch.object(self.llm, "_post", return_value={"choices": [{"message": {"content": "{}"}}]}):
+            self.llm.ask("zhipu", "p")
+        self.assertFalse(self.log.exists())
+
+    def test_summary_per_provider_and_kind(self):
+        from pilot.tsxk import usage as US
+        calls = [{"at": "2026-09-29T10:10:00", "backend": "zhipu", "label": "classification", "seconds": 600,
+                  "input": 5000, "cached": 0, "thinking": 8000, "output": 700, "error": ""},
+                 {"at": "2026-09-29T10:10:00", "backend": "zhipu", "label": "classification", "seconds": 600,
+                  "input": 5200, "cached": 0, "thinking": 9000, "output": 800, "error": ""},
+                 {"at": "2026-09-29T10:10:00", "backend": "zhipu", "label": "classification", "seconds": 5,
+                  "input": 0, "cached": 0, "thinking": 0, "output": 0, "error": "HTTP 429"}]
+        (s,) = US.summarize(calls)
+        self.assertEqual((s["calls"], s["errors"], s["thinking_sum"], s["thinking_median"]), (3, 1, 17000, 8500))
+        self.assertAlmostEqual(US.in_flight(calls)["zhipu"], 1205 / 600)   # two 10-minute calls side by side
+        text = US.markdown(calls)
+        self.assertIn("| GLM | 分类与意见 | 3 | 1 |", text)
+        self.assertIn("思考占 92%", text)
 
 
 if __name__ == "__main__":

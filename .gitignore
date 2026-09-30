@@ -2,7 +2,7 @@ input/
 real_test/
 workspace/
 output/
-models/
+models
 *.mp4
 *.mkv
 *.mov

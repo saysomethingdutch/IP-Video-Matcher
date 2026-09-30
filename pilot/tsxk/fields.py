@@ -61,16 +61,27 @@ def ledger_fields(inputs: dict, led: dict | None) -> tuple[dict, list[dict]]:
                 [flag("yellow", "D、F、L、R 待台账（WO-101）")])
     out, flags = {}, []
     title = led.get("title")
-    out["D"] = _f(inputs.get("C") if _same(title, inputs.get("C")) else title, "webledger",
-                  "与 C 列一致，照抄" if _same(title, inputs.get("C")) else "播放页标题与 C 列不同，填播放页的")
+    same_title = led["title_same_as_input"] if isinstance(led.get("title_same_as_input"), bool) else _same(title, inputs.get("C"))
+    out["D"] = _f(inputs.get("C") if same_title else title, "webledger",
+                  "台账判定与 C 列一致，照抄" if same_title else "播放页标题与 C 列不同，填播放页的")
     addr = led.get("address")
-    out["F"] = _f("未显示" if not addr else (inputs.get("E") if _same(addr, inputs.get("E")) else addr), "webledger",
-                  "地址栏未显示" if not addr else ("与 E 列一致，照抄" if _same(addr, inputs.get("E")) else "地址与 E 列不同，填播放页的"))
-    out["L"] = _f(witness_time(led.get("finished_witness_time")), "webledger", "取证完成时间（证书或接口）")
+    same_addr = led["address_same_as_input"] if isinstance(led.get("address_same_as_input"), bool) else _same(addr, inputs.get("E"))
+    out["F"] = _f("未显示" if not addr else (inputs.get("E") if same_addr else addr), "webledger",
+                  "地址栏未显示" if not addr else ("台账判定与 E 列一致，照抄" if same_addr else "地址与 E 列不同，填播放页的"))
+    when = witness_time(led.get("finished_witness_time")) or witness_time(led.get("certificate_finished_time"))
+    out["L"] = _f(when, "webledger", "证书上的取证完成时间（WO-101-R1）")
+    if not when:
+        flags.append(flag("yellow", "L：台账没有取证完成时间"))
     complete = led.get("complete")
-    out["R"] = _f({True: YES, False: NO}.get(complete), "webledger", "台账按内容时长和播放器读数判断")
+    basis = "；".join(str(v) for k, v in led.items() if k.startswith("complete_") and v not in (None, "", [], {}))[:200]
+    prog = led.get("progress")
+    if isinstance(prog, list) and prog and all(isinstance(x, (list, tuple)) and len(x) == 2 for x in prog):
+        basis = (basis + "；" if basis else "") + f"进度条 {prog[0][1]:.1%} → {prog[-1][1]:.1%}（{len(prog)} 点，WO-101-R1）"
+    out["R"] = _f({True: YES, False: NO}.get(complete), "webledger", basis or "台账按进度条、播放器读数和时长判断")
     if complete is None:
         flags.append(flag("yellow", "R：台账判不了是否完整播放"))
+    if led.get("complete_needs_review"):
+        flags.append(flag("yellow", "R：台账标注需复核（靠外推且实测进度不到 90%，或页面何时结束拿不准）"))
     return out, flags
 
 
@@ -123,26 +134,48 @@ def timeline_fields(tl: dict | None, led: dict | None, title: str, rules: dict) 
         flags.append(flag("yellow", "标题与吞噬星空相关，但画面里没有认出吞噬星空动画，请核对 Q、Y"))
     platforms = set(s["traffic_platforms"]) | {p for p in ((led or {}).get("comments") or {}).get("traffic") or ()}
     unrelated = secs.get("unrelated", 0) > 0
-    out["W"] = _f(YES if unrelated or platforms else NO, "timeline",
-                  "有无关内容或引流画面" if unrelated or platforms else "画面都来自吞噬星空（含 UP 主自制画面）")
-    if s["forms"] and out["W"]["value"] == NO:
-        flags.append(flag("yellow", f"含吞噬星空其他形式（{'、'.join(s['forms'])}），W 按“第三方无关内容”口径填否，请所有者确认"))
+    scope = ((rules.get("policies") or {}).get("w_scope") or {}).get("value", "non_official")
+    if scope == "third_party":                                  # D-058 ④, kept as the other switch position
+        w = bool(unrelated or platforms)
+        basis = "有无关内容或引流画面" if w else "画面都来自吞噬星空（含 UP 主自制画面）"
+    else:                                                       # WO-102-R2 B2 (default)
+        extra = [x for x, on in (("其他作品或无关画面", unrelated), ("引流画面", platforms),
+                                 ("UP 主自制画面", s.get("creator_frames")), ("真人出镜", s.get("face_frames")),
+                                 ("AI 生成画面（有 AI 创作声明）", s.get("ai_note_frames")),
+                                 ("吞噬星空其他形式（" + "、".join(f for f in s["forms"] if f != "动画剧场版") + "）",
+                                  [f for f in s["forms"] if f != "动画剧场版"])) if on]
+        w = bool(extra)
+        basis = ("有不属于官方动画素材的画面：" + "；".join(extra)) if w else "画面都来自吞噬星空官方动画素材"
+    out["W"] = _f(YES if w else NO, "timeline", basis + f"（口径：{scope}）")
     if platforms:
         label = "、".join(x for x, k in (("腾讯", "tencent"), ("其他", "other")) if k in platforms)
         out["X"] = _f(f"是（{label}）", "timeline", "画面" + ("或评论区" if (led or {}).get("comments", {}).get("traffic") else "") + "里有引流信息")
     else:
         out["X"] = _f(NO, "timeline", "画面里没有引流信息" + ("" if ((led or {}).get("comments") or {}).get("visible") else "；录屏未显示评论区"))
-    hints = {"forms": list(s["forms"]), "y_fixed": None, "z_default": None}
-    if not s["has_tsxk"]:
+    forms = (["动画剧场版"] if s.get("film_watermark") else []) + \
+        [f for f in s["forms"] if f in ("漫画", "手游", "有声书")] + (["小说"] if s.get("novel_frames") else [])
+    if "动画剧场版" in s["forms"] and not s.get("film_watermark"):
+        flags.append(flag("yellow", "T：画面像剧场版，但没有看到片名水印，T 不填剧场版（WO-102-R2 A5）"))
+    hints = {"forms": forms, "y_fixed": None, "z_default": None, "ai_note": bool(s.get("ai_note_frames"))}
+    film_as_series = ((rules.get("policies") or {}).get("film_only") or {}).get("value", "按正片判") == "按正片判"
+    if not anime and s.get("disputed_pending"):                 # WO-102-R4 §1: nothing adopted, disputes remain
+        out["Q"] = _f(None, "timeline", f"争议帧复核后仍有 {s['disputed_pending']} 帧待定，一帧正片都没采用")
+        out["Y"] = _f(None, "code", "交人判断，不据此填完全无关（WO-102-R4 §1）")
+        hints["dispute_pending"] = True
+        flags.append(flag("red", f"争议帧复核后仍一帧都没采用（{s['disputed_pending']} 帧两家仍有分歧）：Q、Y 交人判断"))
+        return out, hints, flags
+    if not s["has_tsxk"] and not (s["has_film"] and film_as_series):   # D-068: films are judged like the series
         content = {k: v for k, v in secs.items() if k not in ("blank", "unknown")}
-        other_secs = content.get("tsxk_other", 0)
+        film_secs = sum(sg["end"] - sg["start"] + 1 for sg in tl["segments"]
+                        if sg["content"] == "tsxk_other" and sg.get("form") == "动画剧场版")
+        other_secs = content.get("tsxk_other", 0) - (film_secs if film_as_series else 0)
         total = sum(content.values()) or 1
         if platforms:
             hints["y_fixed"], basis = "引流", "没有吞噬星空动画，画面里有引流信息"
             if not is_related(title, rules):
                 flags.append(flag("yellow", "Y 判引流，但标题里没有吞噬星空相关字样"))
         elif other_secs and other_secs / total >= 0.8:
-            hints["y_fixed"], basis = "错权", f"没有吞噬星空动画正片，画面是吞噬星空的其他形式（{'、'.join(s['forms'])}）"
+            hints["y_fixed"], basis = "错权", f"没有吞噬星空动画，画面全是吞噬星空的其他形式（{'、'.join(s['forms'])}）"
         else:
             hints["y_fixed"], basis = "完全无关内容", "没有吞噬星空动画，也不是其他形式或引流"
             if other_secs:

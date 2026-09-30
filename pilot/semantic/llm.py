@@ -19,6 +19,8 @@ from pathlib import Path
 
 OLLAMA_URL = "http://127.0.0.1:11434/api/chat"
 LOCAL_ALLOWED = True        # False while the local Ollama is reserved for other work (D-026): no local call, no fallback
+CALL_LOG: Path | None = None    # set by a run: each cloud request is appended here as one JSON line (D-069)
+CALL_RUN = ""                   # what the run is doing, written on each line
 LOCAL_TEXT = "qwen3:4b-instruct"
 LOCAL_VISION = "qwen3-vl:8b-instruct-q4_K_M"
 
@@ -106,13 +108,29 @@ def _image_b64(path: Path) -> str:
     return base64.b64encode(path.read_bytes()).decode("ascii")
 
 
+def _log_call(b: Backend, label: str, seconds: float, usage: dict, error: str) -> None:
+    """One line per billed request: input, thinking and output tokens and the time it took (D-069)."""
+    if CALL_LOG is None or b.url == OLLAMA_URL:
+        return
+    thinking = usage.get("reasoning") or 0
+    line = {"at": time.strftime("%Y-%m-%dT%H:%M:%S"), "run": CALL_RUN, "pid": os.getpid(), "backend": b.name,
+            "model": b.model, "label": label, "seconds": round(seconds, 2), "input": usage.get("prompt") or 0,
+            "cached": usage.get("cached") or 0, "thinking": thinking,
+            "output": max(0, (usage.get("completion") or 0) - thinking), "error": error[:120]}
+    CALL_LOG.parent.mkdir(parents=True, exist_ok=True)
+    with CALL_LOG.open("a", encoding="utf-8") as f:
+        f.write(json.dumps(line, ensure_ascii=False) + "\n")
+
+
 def ask(backend_name: str, prompt: str, images: list[Path] = (), json_mode: bool = True,
         timeout: float = 300.0, retries: int = 1, max_tokens: int | None = None,
-        required: tuple[str, ...] = (), system: str | None = None, temperature: float = 0.0) -> Reply:
+        required: tuple[str, ...] = (), system: str | None = None, temperature: float = 0.0,
+        reasoning_effort: str | None = None, label: str = "") -> Reply:
     """max_tokens caps a local reply: qwen3:4b in JSON mode sometimes loops until the timeout, so a capped
     reply that does not parse is retried once without JSON mode. Cloud replies are not capped (their
     thinking tokens count against the cap). A system prompt goes first, so a provider that caches prompt
-    prefixes (DeepSeek) reuses it across rows; cached input tokens are counted in usage["cached"]."""
+    prefixes (DeepSeek) reuses it across rows; cached input tokens are counted in usage["cached"].
+    `label` names the kind of call in CALL_LOG."""
     b = BACKENDS[backend_name]
     key = os.environ.get(b.key_env) if b.key_env else None
     fallback = ""
@@ -144,6 +162,10 @@ def ask(backend_name: str, prompt: str, images: list[Path] = (), json_mode: bool
         content.append({"type": "text", "text": prompt})
         messages = ([{"role": "system", "content": system}] if system else []) + [{"role": "user", "content": content}]
         payload = {"model": b.model, "messages": messages, "temperature": temperature}
+        if reasoning_effort is not None:
+            if b.name != 'zhipu' or reasoning_effort not in ('low', 'high', 'max'):
+                raise ValueError('reasoning_effort is supported here only for Zhipu low/high/max')
+            payload['reasoning_effort'] = reasoning_effort
     reply.usage = {"prompt": 0, "completion": 0, "reasoning": 0, "cached": 0}
     if b.key_env:
         retries = max(retries, 2)                  # cloud: proxy and rate-limit errors are usually transient
@@ -152,6 +174,7 @@ def ask(backend_name: str, prompt: str, images: list[Path] = (), json_mode: bool
         if attempt and b.url == OLLAMA_URL:
             payload.pop("format", None)
         t0 = time.monotonic()
+        usage = {}
         try:
             data = _post(b.url, payload, key, timeout)
         except urllib.error.HTTPError as exc:
@@ -173,10 +196,13 @@ def ask(backend_name: str, prompt: str, images: list[Path] = (), json_mode: bool
                          "cached": u.get("prompt_cache_hit_tokens") or (u.get("prompt_tokens_details") or {}).get("cached_tokens", 0)}
             reply.usage = {k: reply.usage[k] + (usage.get(k) or 0) for k in reply.usage}
             reply.data = extract_json(reply.text, required)
-        reply.seconds = round(reply.seconds + time.monotonic() - t0, 2)
+        spent = time.monotonic() - t0
+        reply.seconds = round(reply.seconds + spent, 2)
+        if reply.data is None:
+            reply.error = reply.error or "回复里没有可解析的 JSON" + (f"（需要 {'、'.join(required)}）" if required else "")
+        _log_call(b, label, spent, usage, "" if reply.data is not None else reply.error)
         if reply.data is not None:
             break
-        reply.error = reply.error or "回复里没有可解析的 JSON" + (f"（需要 {'、'.join(required)}）" if required else "")
         if attempt < retries:
             transient = reply.error.startswith(("HTTP 429", "HTTP 5", "URLError", "TimeoutError", "IncompleteRead",
                                                 "RemoteDisconnected", "ConnectionResetError"))

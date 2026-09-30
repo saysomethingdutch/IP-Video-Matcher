@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import math
 import re
 import subprocess
 from pathlib import Path
@@ -120,32 +121,43 @@ def keyframes_to(video: Path, box, out_dir: Path) -> list[tuple[float, Path]]:
     return list(zip(times, files))
 
 
-def sample(video: Path, span: tuple[float, float], step: float, box, out_dir: Path) -> list[dict]:
-    """A player crop about every `step` seconds of the span, saved as JPEG: [{"t", "path"}] (t = recording
-    seconds). Keyframes are thinned to the step; a gap longer than 1.5 steps is filled by exact seeks."""
-    out_dir.mkdir(parents=True, exist_ok=True)
+def grid_pick(keys: list[float], span: tuple[float, float], step: float) -> list[tuple[float, float | None]]:
+    """For every grid point k·step inside the span, the nearest keyframe within half a step, or None (an exact
+    seek at the grid point). The grid starts at 0 s of the recording, not at the span: a shorter span later
+    picks a subset of the same frames, so their cached answers are reused (WO-102-R1 §0)."""
     a, b = span
+    out, used = [], set()
+    for k in range(math.ceil(a / step - 1e-9), math.floor(b / step + 1e-9) + 1):
+        g = k * step
+        near = [t for t in keys if abs(t - g) <= step / 2 and t not in used and a - 0.5 <= t <= b + 0.5]
+        best = min(near, key=lambda t: abs(t - g)) if near else None
+        if best is not None:
+            used.add(best)
+        out.append((round(g, 2), best))
+    return out
+
+
+def sample(video: Path, span: tuple[float, float], step: float, box, out_dir: Path) -> list[dict]:
+    """A player crop per grid point of the span (grid_pick), saved as JPEG named by its recording time:
+    [{"t", "path"}]. Frames already on disk are kept, so reruns do not decode them again."""
+    out_dir.mkdir(parents=True, exist_ok=True)
     tmp = out_dir / "_keyframes"
-    picked, last = [], None
-    for t, path in keyframes_to(video, box, tmp):
-        if a - 0.5 <= t <= b + 0.5 and (last is None or t - last >= step - 0.6):
-            picked.append((round(t, 2), path))
-            last = t
-    filled, prev = [], a - step
-    for t, path in picked + [(b + step, None)]:
-        while t - prev > step * 1.5:                      # long GOP or missing keyframes: exact seek
-            prev = round(prev + step, 2)
-            if a <= prev <= b and (g := grab(video, prev, box=box)) is not None:
-                cv2.imwrite(str(out_dir / f"{prev:08.2f}.jpg"), g, [cv2.IMWRITE_JPEG_QUALITY, 90])
-                filled.append(prev)
-        if path is not None:
-            path.replace(out_dir / f"{t:08.2f}.jpg")
-            filled.append(t)
-        prev = t
+    keys = dict(keyframes_to(video, box, tmp))
+    frames = []
+    for g, t in grid_pick(sorted(keys), span, step):
+        name = out_dir / f"{(t if t is not None else g):08.2f}.jpg"
+        if not name.exists():
+            if t is not None:
+                keys[t].replace(name)
+            elif (img := grab(video, g, box=box)) is not None:           # long GOP or missing keyframe
+                cv2.imwrite(str(name), img, [cv2.IMWRITE_JPEG_QUALITY, 90])
+            else:
+                continue
+        frames.append({"t": round(t if t is not None else g, 2), "path": str(name)})
     for leftover in tmp.glob("k*.jpg"):
         leftover.unlink()
     tmp.rmdir()
-    return [{"t": t, "path": str(out_dir / f"{t:08.2f}.jpg")} for t in sorted(filled)]
+    return frames
 
 
 def thumb(path: str) -> np.ndarray:
