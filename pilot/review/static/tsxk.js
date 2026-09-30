@@ -6,6 +6,17 @@ const masthead = document.querySelector('.masthead');
 const syncHeaderHeight = () => document.documentElement.style.setProperty('--review-header-height', `${Math.ceil(masthead.getBoundingClientRect().height)}px`);
 syncHeaderHeight();
 new ResizeObserver(syncHeaderHeight).observe(masthead);
+const rowLayoutObserver = new ResizeObserver(syncRowLayout);
+function syncRowLayout(){
+  for(const [selector,property] of [['#row-toolbar','--review-toolbar-height'],['.video-panel','--review-player-height']]){
+    const node=app.querySelector(selector);
+    document.documentElement.style.setProperty(property, `${node?Math.ceil(node.getBoundingClientRect().height):0}px`);
+  }
+}
+function watchRowLayout(){
+  rowLayoutObserver.disconnect();syncRowLayout();
+  app.querySelectorAll('#row-toolbar,.video-panel').forEach(node=>rowLayoutObserver.observe(node));
+}
 actor.value = localStorage.getItem('tsxk-review-actor') || '';
 actor.addEventListener('input', () => localStorage.setItem('tsxk-review-actor', actor.value.trim()));
 let rows = [];
@@ -26,6 +37,7 @@ function listPage(){
   app.innerHTML=`<div class="pagehead"><div><h1>沈瑞曦 · 7813–8212</h1><p>逐列核对机器值；未核验的列导出时仍用机器值。</p></div><div class="count">当前显示 ${visible.length} / ${rows.length} 行</div></div>
     <div class="filters"><label>提示 <select id="flag-filter"><option value="all">全部</option><option value="focus">待核重点</option><option value="red">有标红</option><option value="technical">有技术说明</option></select></label><label>核验 <select id="state-filter"><option value="all">全部</option><option value="unreviewed">只看未核验</option></select></label><label>类别 <select id="category-filter"><option value="all">全部类别</option>${categories.map(c=>`<option value="${esc(c)}">${esc(c)}</option>`).join('')}</select></label><label>搜索 <input id="query-filter" value="${esc(filters.query)}" placeholder="序号或标题"></label></div>
     <div class="tablewrap"><table><thead><tr><th>序号</th><th>视频标题</th><th>类别</th><th>核验</th><th>提示</th></tr></thead><tbody>${visible.map(r=>`<tr><td><a href="/row/${r.row_id}">${r.row_id}</a></td><td><a href="/row/${r.row_id}">${esc(r.title||'（无标题）')}</a></td><td>${esc(r.category)}</td><td>${r.reviewed}/${r.total} ${esc(r.status)}</td><td>${pills(r)}</td></tr>`).join('')}</tbody></table></div>`;
+  watchRowLayout();
   for(const [id,key] of [['flag-filter','flag'],['state-filter','state'],['category-filter','category']]){const node=document.getElementById(id);node.value=filters[key];node.onchange=()=>{filters[key]=node.value;listPage()}}
   document.getElementById('query-filter').oninput=e=>{filters.query=e.target.value;const start=e.target.selectionStart;listPage();const next=document.getElementById('query-filter');next.focus();next.setSelectionRange(start,start)};
 }
@@ -38,6 +50,26 @@ function evidenceHTML(d){
   const player=d.video_url?`<section class="panel video-panel"><h2>本地取证录像</h2><video id="evidence-video" controls preload="metadata" src="${esc(d.video_url)}"></video><p class="muted">播放器随滚动保持可见；点击时间点跳到录像对应位置。</p></section>`:'<section class="panel"><h2>本地取证录像</h2><p class="muted">文件未挂载</p></section>';
   return `<aside class="evidence-column">${player}<div class="evidence-details">${timelineHTML(d)}${ledgerHTML(d)}${soundHTML(d)}</div></aside>`;
 }
+function focusHTML(flags,jump=false){
+  return flags.map(f=>`<div class="focus-item"><p class="${esc(f.level)}"><b>${f.level==='red'?'标红':'标黄'}：</b>${esc(f.reason)} ${jump?'':`<small>${esc(f.columns.join('、'))}</small>`}</p>${jump?`<div class="focus-columns"><small>核对列：</small>${f.columns.map(col=>`<button type="button" data-focus-col="${esc(col)}">${esc(col)}</button>`).join('')}</div>`:''}</div>`).join('');
+}
+function rowToolsHTML(d,before,after,flags){
+  const level=flags.some(f=>f.level==='red')?'red':'yellow';
+  return `<div class="rowtools" id="row-toolbar" aria-label="当前行核验操作">
+    <strong class="row-context">${d.row_id} · ${d.reviewed}/${d.total} 列已核</strong>
+    <div class="dock-nav">${before?`<a href="/row/${before.row_id}">← 上一行</a>`:''}${after?`<a href="/row/${after.row_id}">下一行 →</a>`:''}</div>
+    <button id="approve-rest" type="button">本行其余全部批准</button><button id="approve-next" type="button">批准并到下一行</button><button id="next-focus" type="button">下一个重点行</button>
+    <button id="focus-toggle" class="${flags.length?level:''}" type="button" aria-expanded="false" aria-controls="focus-menu" ${flags.length?'':'disabled'}>重点提示（${flags.length}）</button>
+    <span class="shortcuts">K/J 上下行 · A 批准余列 · N 下一重点 · P 提示；输入时停用</span>
+    ${flags.length?`<section id="focus-menu" class="focus-menu" aria-label="${d.row_id} 的重点提示" hidden><div class="focus-menu-head"><b>${d.row_id} · 重点提示</b><button id="focus-close" type="button" aria-label="关闭重点提示">关闭</button></div>${focusHTML(flags,true)}</section>`:''}
+  </div>`;
+}
+function toggleFocusMenu(force){
+  const menu=document.getElementById('focus-menu'),button=document.getElementById('focus-toggle');
+  if(!menu||!button)return;
+  const open=typeof force==='boolean'?force:menu.hidden;
+  menu.hidden=!open;button.setAttribute('aria-expanded',String(open));
+}
 function fieldHTML(f){
   const ac=f.column==='AC', source=f.by?`由 ${esc(f.by)}`:'机器';
   const state=f.reviewed?(f.modified?'已修改':'已批准'):'未核验';
@@ -47,15 +79,22 @@ function fieldHTML(f){
   return `<section class="field ${!f.reviewed?esc(f.flag_level||''):''}" data-col="${f.column}"><div class="fieldtop"><h3>${f.column} · ${esc(f.name)}</h3><span class="state">${state}</span></div>${focus}${technical}<details><summary>机器值与依据</summary><div class="machine">${esc(f.machine_value||'（空）')}</div><p class="muted">${source}；${esc(f.basis||'未给依据')}</p></details>${ac?`<div class="ac-sections">${f.sections.map(s=>`<label>${esc(s.heading)}<textarea data-ac-heading="${esc(s.heading)}">${esc(s.text)}</textarea></label>`).join('')}</div>`:`<textarea data-value="${f.column}" rows="${Math.max(2,Math.min(5,Math.ceil(f.value.length/70)))}">${esc(f.value)}</textarea>`}${retain}<div class="fieldactions"><button type="button" data-action="approve">批准当前值</button><button type="button" data-action="modify">保存修改</button><small>${f.reviewer?`${esc(f.reviewer)} · ${esc(f.reviewed_at)}`:''}</small></div></section>`
 }
 function rowPage(d){current=d;const pos=rows.findIndex(r=>r.row_id===d.row_id);const before=rows[pos-1],after=rows[pos+1],bili=safeBili(d.bilibili_url),focusFlags=d.flags.filter(f=>f.tier==='focus'),technicalFlags=d.flags.filter(f=>f.tier==='technical');app.innerHTML=`<div class="pagehead"><div><a href="/">← 返回列表</a><h1>${d.row_id} · ${esc(d.title)}</h1><p>${bili?`<a href="${esc(bili)}" target="_blank" rel="noopener">B 站播放页</a> · `:''}沈瑞曦表第 ${d.excel_row} 行 · ${d.reviewed}/${d.total} 列已核</p></div><div class="nav">${before?`<a href="/row/${before.row_id}">← 上一行</a>`:''}${after?`<a href="/row/${after.row_id}">下一行 →</a>`:''}</div></div>
-    <div class="rowtools"><button id="approve-rest" type="button">本行其余全部批准</button><button id="approve-next" type="button">批准并到下一行</button><button id="next-focus" type="button">下一个重点行</button><span>快捷键：K 上一行 · J 下一行 · A 批准余列 · N 下一重点；输入时停用</span></div>
-    ${focusFlags.length?`<div class="flagbox"><b>重点核对</b>${focusFlags.map(f=>`<p class="${esc(f.level)}"><b>${f.level==='red'?'标红':'标黄'}：</b>${esc(f.reason)} <small>${esc(f.columns.join('、'))}</small></p>`).join('')}</div>`:''}
+    ${rowToolsHTML(d,before,after,focusFlags)}
+    ${focusFlags.length?`<div class="flagbox"><b>重点核对</b>${focusHTML(focusFlags)}</div>`:''}
     ${technicalFlags.length?`<details class="flagbox technical"><summary>技术说明（${technicalFlags.length}，不标色）</summary>${technicalFlags.map(f=>`<p>${esc(f.reason)} <small>${esc(f.columns.join('、'))}</small></p>`).join('')}</details>`:''}
     <div class="review-grid">${evidenceHTML(d)}<div><section class="panel"><h2>机器填值与逐列核验</h2><p class="muted">批准或保存修改会立即写入本地追加记录。AC 分五段编辑，导出时合为一个单元格。</p><div class="fields">${d.fields.map(fieldHTML).join('')}</div></section><section class="panel"><h2>修改与批准记录</h2>${d.history.length?`<div class="history">${d.history.map(e=>`<p><b>${esc(e.field)}</b> ${esc(e.action==='modify'?'修改':e.action==='mark'?'导出标记':'批准')} · ${esc(e.who)} · ${esc(e.when)}${e.retain_mark?' · 保留标记：'+esc(e.mark_note):''}<br>${esc(e.old)} → ${esc(e.new)}</p>`).join('')}</div>`:'<p class="muted">尚无记录</p>'}</section></div></div>`;
+  watchRowLayout();
   app.querySelectorAll('.field button[data-action]').forEach(button=>button.onclick=()=>saveField(button.closest('.field'),button.dataset.action));
   app.querySelectorAll('.field textarea[data-value],.field textarea[data-ac-heading]').forEach(input=>input.oninput=()=>{input.closest('.field').dataset.dirty='1'});
   document.getElementById('approve-rest').onclick=()=>approveRest(false);
   document.getElementById('approve-next').onclick=()=>approveRest(true);
   document.getElementById('next-focus').onclick=nextFocus;
+  document.getElementById('focus-toggle').onclick=()=>toggleFocusMenu();
+  const close=document.getElementById('focus-close');if(close)close.onclick=()=>toggleFocusMenu(false);
+  app.querySelectorAll('[data-focus-col]').forEach(button=>button.onclick=()=>{
+    toggleFocusMenu(false);
+    app.querySelector(`.field[data-col="${button.dataset.focusCol}"]`)?.scrollIntoView({behavior:'smooth',block:'start'});
+  });
   app.querySelectorAll('[data-seek]').forEach(button=>button.onclick=()=>{const video=document.getElementById('evidence-video');if(!video){notify('本地录像不可用');return}const t=Number(button.dataset.seek);const go=()=>{video.currentTime=t;video.play().catch(()=>{})};if(video.readyState)go();else video.addEventListener('loadedmetadata',go,{once:true})});
 }
 function fieldValue(card,col){if(col!=='AC')return card.querySelector('[data-value]').value;return [...card.querySelectorAll('[data-ac-heading]')].map(node=>`${node.dataset.acHeading}\n${node.value.trim()}`).join('\n\n')}
@@ -100,13 +139,17 @@ async function approveRest(goNext){
   }
 }
 document.addEventListener('keydown',event=>{
+  const menu=document.getElementById('focus-menu');
+  if(event.key==='Escape'&&menu&&!menu.hidden){toggleFocusMenu(false);document.getElementById('focus-toggle')?.focus();return}
   if(!current||event.repeat||event.isComposing||event.ctrlKey||event.metaKey||event.altKey||event.target.closest('input,textarea,select,[contenteditable="true"]'))return;
   const key=event.key.toLowerCase();
   if(key==='k'){event.preventDefault();adjacent(-1)}
   else if(key==='j'){event.preventDefault();adjacent(1)}
   else if(key==='a'){event.preventDefault();approveRest(false)}
   else if(key==='n'){event.preventDefault();nextFocus()}
+  else if(key==='p'){event.preventDefault();toggleFocusMenu()}
 });
+document.addEventListener('click',event=>{if(!event.target.closest('#row-toolbar'))toggleFocusMenu(false)});
 async function loadRow(rid){const d=await api('/api/row/'+rid);rowPage(d)}
 function route(){const match=location.pathname.match(/^\/row\/(\d+)$/);if(match)loadRow(match[1]).catch(e=>{app.innerHTML=`<p class="empty">${esc(e.message)}</p>`});else listPage()}
 document.addEventListener('click',event=>{const link=event.target.closest('a[href^="/row/"],a[href="/"]');if(link&&!event.metaKey&&!event.ctrlKey){event.preventDefault();history.pushState({},'',link.getAttribute('href'));route();scrollTo(0,0)}});

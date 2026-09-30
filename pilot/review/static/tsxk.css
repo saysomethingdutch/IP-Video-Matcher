@@ -8,9 +8,9 @@
   display:flex;
   flex-direction:column;
   position:sticky;
-  top:calc(var(--review-header-height,60px) + 12px);
+  top:calc(var(--review-sticky-top) + 12px);
   align-self:start;
-  height:calc(100dvh - var(--review-header-height,60px) - 24px);
+  height:calc(100dvh - var(--review-sticky-top) - 24px);
 }
 .evidence-details{min-height:0;overflow:auto;padding-right:4px}
 .video-panel{
@@ -23,16 +23,51 @@
 .video-panel video{
   display:block;
   object-fit:contain;
-  max-height:min(500px,48dvh,calc(100dvh - var(--review-header-height,60px) - 260px));
+  max-height:min(500px,48dvh,calc(100dvh - var(--review-sticky-top) - 260px));
 }
 @media(max-width:1050px){
   .evidence-column,.evidence-details{display:contents}
   .video-panel{
     position:sticky;
-    top:calc(var(--review-header-height,60px) + 12px);
+    top:calc(var(--review-sticky-top) + 12px);
     align-self:start;
     padding:12px;
   }
   .video-panel video{max-height:min(260px,35dvh)}
   .video-panel p{display:none}
+}
+:root{--review-sticky-top:calc(var(--review-header-height,60px) + var(--review-toolbar-height,0px))}
+.rowtools{
+  position:sticky;
+  top:var(--review-header-height,60px);
+  z-index:4;
+  box-shadow:0 4px 14px #1232;
+}
+.row-context{white-space:nowrap;font-size:13px}
+.dock-nav{display:flex;gap:10px;white-space:nowrap;font-size:13px}
+#approve-rest,#approve-next{background:#e6f3ed;font-weight:600}
+.rowtools .shortcuts{font-size:11px}
+.focus-menu{
+  position:absolute;
+  top:calc(100% + 8px);
+  right:0;
+  width:min(720px,100%);
+  max-height:min(360px,45dvh);
+  overflow:auto;
+  padding:0 12px 12px;
+  background:white;
+  border:1px solid var(--line);
+  border-radius:8px;
+  box-shadow:0 8px 24px #1233;
+}
+.focus-menu[hidden]{display:none}
+.focus-menu-head{position:sticky;top:0;background:white;display:flex;align-items:center;justify-content:space-between;gap:12px;padding:10px 0;z-index:1}
+.focus-menu .focus-item{border-top:1px solid var(--line);padding:8px 0}
+.focus-menu p{padding:7px 9px;border-radius:4px;margin:0 0 6px;overflow-wrap:anywhere}
+.focus-columns{display:flex;flex-wrap:wrap;align-items:center;gap:5px}
+.focus-columns button{padding:2px 8px;font-size:12px}
+.focus-columns small{color:var(--muted)}
+.field{scroll-margin-top:calc(var(--review-sticky-top) + 12px)}
+@media(max-width:1050px){
+  .field{scroll-margin-top:calc(var(--review-sticky-top) + var(--review-player-height,0px) + 24px)}
 }
