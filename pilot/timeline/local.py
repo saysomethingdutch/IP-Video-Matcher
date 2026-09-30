@@ -20,9 +20,13 @@ import cv2
 import numpy as np
 import yaml
 
+from pilot.content.extract import MUSIC_TAG            # B站's "music detected" chip, the note read as "J"
+
 RULES = Path(__file__).resolve().parents[1] / "semantic" / "rules_tsxk.yaml"
 SITE_DOMAINS = ("bilibili.com", "b23.tv", "biliapi", "hdslb.com", "acg.tv")      # the page itself, not traffic
 READING = re.compile(r"(?<!\d)(\d{1,2}:\d{2}(?::\d{2})?)\s*/\s*(\d{1,2}:\d{2}(?::\d{2})?)(?!\d)")
+LYRIC = re.compile(r"[♪♫]|歌词|作词|作曲|^\s*[词曲]\s*[:：]")        # WO-102-R1 §1.5: lyric captions
+CJK = re.compile(r"[\u4e00-\u9fff]")
 WEAK_WORDS = ("扫码", "扫一扫", "完整版", "全集资源", "资源已外泄", "付费")           # only with another cue
 TENCENT_PATTERNS = (r"(?:加|\+)\s*(?:vx|VX|v信|V信|威信|wx|WX)", r"微信\s*(?:号|群|扫|搜)", r"QQ\s*群", r"企鹅群")
 
@@ -71,6 +75,11 @@ class Screen:
         self.logo_where, self.logo_text, self.logo_min = logo["where"], logo["text"], logo.get("min_match", 2)
         self.films = rules["work"]["film_watermarks"]
         self.ignore = tr.get("ignore_words") or []
+        self.login_words = tr.get("login_box_words") or []
+        self.undecoded_to_cloud = tr.get("undecoded_qr") == "cloud"
+        self.ai_note = re.compile(rules["timeline"]["ai_note_pattern"], re.I) if rules["timeline"].get("ai_note_pattern") else None
+        fuzzy = rules["timeline"].get("ai_note_top_fuzzy")
+        self.ai_note_top = re.compile(fuzzy) if fuzzy else None
 
     def _in(self, item: dict, where) -> bool:
         x, y, w, h = where
@@ -84,9 +93,18 @@ class Screen:
             return "tencent"
         return "other"
 
+    def login_box(self, items: list[dict], qrs: list[str]) -> bool:
+        """B站's own login popup (WO-102-R2 A2): two sign-in methods on screen, or one and a QR code."""
+        text = re.sub(r"\s", "", "".join(i["text"] for i in items))
+        hits = {w for w in self.login_words if w in text}
+        return len(hits) >= 2 or (len(hits) == 1 and bool(qrs))
+
     def traffic(self, items: list[dict], qrs: list[str]) -> dict | None:
-        """{"platforms": [...], "kinds": [...], "evidence": [...]} or None."""
+        """{"platforms": [...], "kinds": [...], "evidence": [...]} or None. A code that cannot be read is not
+        traffic on its own when undecoded_qr is "cloud" (WO-102-R2 A3): the frame goes to the cloud instead."""
         platforms, kinds, evidence = set(), set(), []
+        if self.undecoded_to_cloud:
+            qrs = [q for q in qrs if q]
         for q in qrs:
             host = domain(q) if q else ""
             if q and any(s in host for s in SITE_DOMAINS):
@@ -122,6 +140,17 @@ class Screen:
         if not platforms:
             return None
         return {"platforms": sorted(platforms), "kinds": sorted(kinds), "evidence": evidence}
+
+    def text_platforms(self, texts: list[str]) -> set[str]:
+        """Platforms the frame's own words point to (D-065 ⑤-2: when the providers disagree on the platform,
+        the side with text evidence wins)."""
+        blob = " ".join(texts)
+        out = set()
+        if self.group.search(blob) or any(p.search(blob) for p in self.tencent):
+            out.add("tencent")
+        if any(w in blob for w in self.strong_other) or any(d in blob for d in self.tr["other_domains"]):
+            out.add("other")
+        return out
 
     def logo_like(self, text: str) -> bool:
         """The calligraphic logo as OCR reads it: 3–5 characters ending in 空, at least min_match of them in the
@@ -161,10 +190,22 @@ class Screen:
                     return cur, total
         return None
 
-    def screen(self, frame: dict, items: list[dict], img: np.ndarray) -> dict:
+    def ai_note_on_top(self, top_items: list[dict]) -> bool:
+        """The AI label read from the top band OCR'd again at 2× (WO-102-R2 A4)."""
+        return bool(self.ai_note_top) and any(self.ai_note_top.search(re.sub(r"\s", "", i["text"])) or
+                                              (self.ai_note and self.ai_note.search(i["text"])) for i in top_items)
+
+    def screen(self, frame: dict, items: list[dict], img: np.ndarray, top_items: list[dict] = ()) -> dict:
         """frame["local"]: content (or None), form, traffic, evidence; frame["ocr"]: text lines."""
         qrs = qr_codes(img)
         local = {"content": None, "form": "", "traffic": None, "evidence": []}
+        if self.login_box(items, qrs):                   # the platform's own popup: neither traffic nor content
+            local.update(login_box=True, evidence=["B站登录弹窗"])
+            frame["local"] = local
+            frame["ocr"] = [i["text"] for i in items if i.get("conf", 1) >= 0.3]
+            return local
+        if self.undecoded_to_cloud and "" in qrs:
+            local["qr_undecoded"] = True                 # asked in the cloud; traffic only if both providers see it
         if self.blank(img):
             local.update(content="blank", evidence=["黑屏或无画面"])
         elif (film := self.film_hit(items)):
@@ -176,6 +217,14 @@ class Screen:
             local["evidence"] += tr["evidence"]
         frame["local"] = local
         frame["ocr"] = [i["text"] for i in items if i.get("conf", 1) >= 0.3]
+        frame["captions"] = [i["text"] for i in items if i["y"] + i["h"] / 2 >= 0.72 and len(CJK.findall(i["text"])) >= 4
+                             and not self.logo_like(i["text"]) and not READING.search(i["text"])
+                             and not MUSIC_TAG.match(i["text"].strip())]
+        frame["music_tag"] = any(MUSIC_TAG.match(i["text"].strip()) for i in items)
+        frame["lyric"] = any(LYRIC.search(i["text"]) for i in items)
+        frame["ai_note"] = bool(self.ai_note and any(self.ai_note.search(i["text"]) for i in items)) or bool(
+            self.ai_note_top and any(i["y"] + i["h"] / 2 < 0.2 and self.ai_note_top.search(re.sub(r"\s", "", i["text"]))
+                                     for i in items)) or self.ai_note_on_top(top_items)
         if (r := self.reading(items)):
             frame["reading"] = list(r)
         return local
