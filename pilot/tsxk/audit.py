@@ -68,8 +68,10 @@ def issues(row: dict, original: dict, novel_evidence: str = "") -> list[tuple[st
         add("TRAFFIC_TIME", "X,AC", "X 有引流，但说明未同时给出引流时间与内容", notes)
     if v["T"] and v["T"] != "否":
         forms = [name for name in FORMS if name in v["T"]]
+        aliases = {"小说": ("原著", "原作小说"), "手游": ("游戏",),
+                   "动画剧场版": ("血洛大陆", "决战原始星"), "有声书": ("朗读音频",)}
         missing = [name for name in forms if name not in ac and
-                   not (name == "动画剧场版" and ("血洛大陆" in ac or "决战原始星" in ac))]
+                   not any(alias in ac for alias in aliases.get(name, ()))]
         if missing:
             add("FORM_AC", "T,AC", "T 所列形式在 AC 未说明", "、".join(missing))
         if "小说" in forms and not NOVEL.search(novel_evidence):
