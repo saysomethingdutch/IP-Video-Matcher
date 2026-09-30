@@ -116,7 +116,7 @@ def test_review_decisions_and_precise_export(tmp_path):
     assert copied["沈瑞曦"]["F2"].value == "所有者修订的网址"
     assert copied["沈瑞曦"]["Q2"].comment.text.startswith("标红：Q")
     assert copied["沈瑞曦"]["Q2"].fill.fgColor.rgb == "FFF7C8C3"
-    assert copied["沈瑞曦"]["T3"].comment.text.startswith("标黄：T")
+    assert copied["沈瑞曦"]["T3"].comment is None  # ordinary technical hint stays uncolored
     assert copied["沈瑞曦"]["Q4"].value == "别的行原值"
     allowed = {f"{col}{row}" for col in OUTPUT for row in (2, 3)}
     for row in original["沈瑞曦"]:
@@ -143,6 +143,54 @@ def test_missing_machine_row_blocks_export(tmp_path):
 
 def test_equals_sign_flag_targets_its_column():
     assert flag_columns({"reason": "Q=是：判为完全不含动画，交人判断"}) == ["Q"]
+
+
+def test_row_approval_skips_modified_cells_and_attaches_audit(tmp_path):
+    _, config, data = fixture(tmp_path)
+    audit = data / "audit"
+    audit.mkdir()
+    (audit / "findings.csv").write_text(
+        "row,type,columns,explanation,evidence\n7813,W_AC_VISUAL,\"W,AC\",画面矛盾,AI配图\n",
+        encoding="utf-8")
+    store = TsxkReviewStore(TsxkCase(config))
+    detail = store.detail("7813")
+    assert any(f["source"] == "audit" and f["tier"] == "focus" and "W" in f["columns"]
+               for f in detail["flags"])
+    assert any("来自独立审计" in x for x in next(f for f in detail["fields"] if f["column"] == "W")["flag_reasons"])
+    store.decide("7813", "modify", {"F": "所有者修订"}, actor="Owner")
+    assert store.approve_row("7813", actor="Owner")["approved_now"] == 15
+    assert store.approve_row("7813", actor="Owner")["approved_now"] == 0
+    reopened = TsxkReviewStore(TsxkCase(config))
+    assert reopened.summary("7813")["reviewed"] == 16
+    assert next(f for f in reopened.fields("7813") if f["column"] == "F")["value"] == "所有者修订"
+    assert next(f for f in reopened.fields("7813") if f["column"] == "F")["modified"]
+    assert len(reopened.events["7813"]) == 16
+
+
+def test_reviewed_export_is_clean_unless_owner_keeps_mark(tmp_path):
+    source, config, _ = fixture(tmp_path)
+    store = TsxkReviewStore(TsxkCase(config))
+    value = next(f for f in store.fields("7813") if f["column"] == "Q")["value"]
+    store.decide("7813", "approve", {"Q": value}, actor="Owner")
+    clean = export_tsxk(store, tmp_path / "clean.xlsx")
+    workbook = openpyxl.load_workbook(clean)
+    original = openpyxl.load_workbook(source)
+    assert workbook["沈瑞曦"]["Q2"].comment is None
+    assert workbook["沈瑞曦"]["Q2"].style_id == original["沈瑞曦"]["Q2"].style_id
+    workbook.close()
+    original.close()
+    store.decide("7813", "mark", {"Q": value}, actor="Owner",
+                 retain_mark=True, mark_note="已经核对，仍需在副本提示")
+    marked = export_tsxk(store, tmp_path / "marked.xlsx")
+    workbook = openpyxl.load_workbook(marked)
+    assert workbook["沈瑞曦"]["Q2"].fill.fgColor.rgb == "FFF7C8C3"
+    assert workbook["沈瑞曦"]["Q2"].comment.text == "所有者说明：已经核对，仍需在副本提示"
+    workbook.close()
+    store.decide("7813", "mark", {"Q": value}, actor="Owner", retain_mark=False)
+    cleared = export_tsxk(store, tmp_path / "cleared.xlsx")
+    workbook = openpyxl.load_workbook(cleared)
+    assert workbook["沈瑞曦"]["Q2"].comment is None
+    workbook.close()
 
 
 def test_case_commands_dispatch_to_tsxk(tmp_path, capsys):
@@ -182,6 +230,13 @@ def test_loopback_review_and_video_range(tmp_path, monkeypatch):
             assert "吞噬星空" in response.read().decode()
         with urllib.request.urlopen(base + "/api/row/7813", timeout=5) as response:
             assert json.load(response)["row_id"] == "7813"
+        request = urllib.request.Request(base + "/api/approve-row",
+            data=json.dumps({"row_id": "7813", "actor": "Owner"}).encode(),
+            headers={"Content-Type": "application/json"}, method="POST")
+        with urllib.request.urlopen(request, timeout=5) as response:
+            assert json.load(response)["approved_now"] == 16
+        with urllib.request.urlopen(base + "/api/row/7813", timeout=5) as response:
+            assert json.load(response)["reviewed"] == 16
         request = urllib.request.Request(base + "/api/video/7813", headers={"Range": "bytes=0-3"})
         with urllib.request.urlopen(request, timeout=5) as response:
             assert response.status == 206

@@ -23,10 +23,14 @@ def digest(path: Path) -> str:
     return sha.hexdigest()
 
 
-def run(config_path: str | Path, trial_dir: str | Path | None = None) -> dict:
+def run(config_path: str | Path, trial_dir: str | Path | None = None,
+        decisions_path: str | Path | None = None) -> dict:
     case = TsxkCase(config_path)
-    store = TsxkReviewStore(case)
-    if store.latest:
+    formal = case.case_dir / "review" / "decisions.jsonl"
+    if decisions_path is not None and Path(decisions_path).resolve() == formal.resolve():
+        raise ValueError("trial must not use formal owner decisions")
+    store = TsxkReviewStore(case, decisions_path=Path(decisions_path) if decisions_path else None)
+    if decisions_path is None and store.latest:
         raise ValueError("trial requires no formal owner decisions")
     temporary = Path(trial_dir) if trial_dir else Path(tempfile.mkdtemp(prefix="wo105-tsxk-export-"))
     temporary.mkdir(parents=True, exist_ok=True)
@@ -62,11 +66,13 @@ def run(config_path: str | Path, trial_dir: str | Path | None = None) -> dict:
                 ):
                     changed += 1
                 level = field["flag_level"]
-                if level:
+                if level and (not field["reviewed"] or field["retain_mark"]):
                     color = "FFFFF2B2" if level == "yellow" else "FFF7C8C3"
                     if cell_b.fill.patternType != "solid" or cell_b.fill.fgColor.rgb != color:
                         raise AssertionError(f"missing {level} fill at {address}")
                     flagged.add(address)
+                elif field["reviewed"] and getattr(cell_a, "_style_id", 0) != getattr(cell_b, "_style_id", 0):
+                    raise AssertionError(f"reviewed cell gained a machine fill at {address}")
     finally:
         source_book.close()
         output_book.close()
@@ -81,20 +87,29 @@ def run(config_path: str | Path, trial_dir: str | Path | None = None) -> dict:
         if not all(name.startswith("xl/comments/") or name.startswith("xl/drawings/commentsDrawing")
                    or name == sheet_rels for name in added):
             raise AssertionError(f"unexpected OOXML parts: {added}")
-        comment_refs = set()
+        comment_text = {}
         for name in added:
             if name.startswith("xl/comments/"):
                 xml = etree.fromstring(result.read(name))
-                comment_refs.update(node.get("ref") for node in xml.xpath("//*[local-name()='comment']"))
+                for node in xml.xpath("//*[local-name()='comment']"):
+                    comment_text[node.get("ref")] = "".join(node.itertext())
+        comment_refs = set(comment_text)
         if comment_refs != flagged:
             raise AssertionError(f"comments differ from colored cells: {len(comment_refs)} vs {len(flagged)}")
+        for rid in store.row_ids:
+            for col, field in expected[rid].items():
+                if field["reviewed"] and field["retain_mark"]:
+                    address = f"{col}{store.excel_rows[rid]}"
+                    if field["mark_note"] not in comment_text.get(address, ""):
+                        raise AssertionError(f"owner note missing from comment at {address}")
     explanation = dest.with_suffix(".md").read_text(encoding="utf-8")
-    if "未核验（400 行）" not in explanation or "D、F、L" not in explanation:
+    pending = sum(any(not f["reviewed"] for f in expected[rid].values()) for rid in store.row_ids)
+    if f"未核验（{pending} 行）" not in explanation or (pending and "D、F、L" not in explanation):
         raise AssertionError("export explanation lacks unreviewed rows or columns")
     report = {"trial_dir": str(temporary), "source_sha256_unchanged": before,
               "target_cells": len(permitted), "changed_cells": changed,
               "colored_commented_cells": len(flagged), "other_ooxml_parts_identical": True,
-              "unreviewed_rows": 400}
+              "unreviewed_rows": pending}
     (temporary / "verification.json").write_text(json.dumps(report, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     return report
 

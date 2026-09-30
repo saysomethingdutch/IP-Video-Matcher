@@ -1,6 +1,7 @@
 """Review data and append-only owner decisions for the 吞噬星空 workbook."""
 from __future__ import annotations
 
+import csv
 import json
 import os
 import re
@@ -19,6 +20,7 @@ CLASSIFICATION = OUTPUT[3:]
 LEVELS = {"yellow": 1, "red": 2}
 FIELD_MENTION = re.compile(r"(?<![A-Za-z0-9])(?:AA|AB|AC|D|F|L|Q|R|S|T|U|V|W|X|Y|Z)(?=[:：=＝、，\s]|$)")
 AC_HEADING = re.compile(r"【(?:主题概括|段落情节|新增创作要素情况|比对意见|其他)】")
+FOCUS_REASON = re.compile(r"复核后两家仍有分歧|画面未能判定|画面仍待定|争议帧.*待定|分类.*待定|R[：:=＝].*(?:待核|复核)|完整播放.*(?:待核|复核)")
 
 
 def parse_ac(value: str) -> list[dict]:
@@ -50,29 +52,56 @@ def flag_columns(flag: dict) -> list[str]:
     return list(OUTPUT)
 
 
-def normalize_flags(machine: dict | None, ledger: dict | None) -> list[dict]:
+def normalize_flags(machine: dict | None, ledger: dict | None,
+                    audit: list[dict] | None = None) -> list[dict]:
     raw = list((machine or {}).get("flags") or [])
     if not machine:
         raw.append({"level": "red", "reason": "正式行分类输出尚未完成", "columns": list(OUTPUT)})
     if (ledger or {}).get("complete_needs_review"):
         raw.append({"level": "yellow", "reason": "R：台账完整播放判断需要人工复核", "columns": ["R"]})
+    values = {col: str(((machine or {}).get("fields") or {}).get(col, {}).get("value") or "").strip()
+              for col in ("Q", "R", "Y", "Z")}
+    for col, value, reason in (("Z", "高", "Z=高：合理使用可能性需人工确认"),
+                               ("Q", "是", "Q=是：请核对完全不含动画的判断")):
+        if values[col] == value and not any(col in flag_columns(x) and
+                (str(x.get("level", "")).lower() in ("red", "error") or
+                 (col == "Z" and "Z 高" in str(x.get("reason", ""))))
+                for x in raw if isinstance(x, dict)):
+            raw.append({"level": "yellow", "reason": reason, "columns": [col], "tier": "focus"})
+    if "偷渡" in values["Y"]:
+        raw.append({"level": "yellow", "reason": "Y=偷渡：请核对无关内容及时间段", "columns": ["Y"], "tier": "focus"})
+    if not values["R"] and not (ledger or {}).get("complete_needs_review"):
+        raw.append({"level": "yellow", "reason": "R 待核：完整播放尚不能确定", "columns": ["R"], "tier": "focus"})
+    for finding in audit or []:
+        columns = [col.strip() for col in str(finding.get("columns") or "").split(",")]
+        reason = f"来自独立审计（{finding.get('type', '')}）：{finding.get('explanation', '')}"
+        if finding.get("evidence"):
+            reason += f"；线索：{finding['evidence']}"
+        raw.append({"level": "yellow", "reason": reason,
+                    "columns": [col for col in OUTPUT if col in columns], "tier": "focus",
+                    "source": "audit"})
     seen = set()
     result = []
     for item in raw:
         item = item if isinstance(item, dict) else {"level": "yellow", "reason": str(item)}
         reason = str(item.get("reason") or item.get("message") or "").strip()
         level = "red" if str(item.get("level") or "").lower() in ("red", "error") else "yellow"
-        if not reason or (level, reason) in seen:
+        columns = flag_columns(item)
+        tier = "focus" if level == "red" or item.get("tier") == "focus" or FOCUS_REASON.search(reason) or (
+            "Z 高" in reason or "Q=是" in reason) else "technical"
+        key = (level, reason, tuple(columns))
+        if not reason or key in seen:
             continue
-        seen.add((level, reason))
-        result.append({"level": level, "reason": reason, "columns": flag_columns(item)})
+        seen.add(key)
+        result.append({"level": level, "reason": reason, "columns": columns,
+                       "tier": tier, "source": item.get("source", "machine")})
     return result
 
 
 class TsxkReviewStore:
     kind = "tsxk"
 
-    def __init__(self, case: TsxkCase):
+    def __init__(self, case: TsxkCase, decisions_path: Path | None = None):
         self.config = case
         self.case = case.case_dir
         self.row_ids = case.rows
@@ -86,7 +115,14 @@ class TsxkReviewStore:
         self.source_path = case.path_of(case.raw["workbook"]["path"])
         self.output_columns = tuple(openpyxl.utils.column_index_from_string(col) for col in OUTPUT)
         self.export_name = "【G组】吞噬星空视频比对-机器核对"
-        self.decisions_path = self.case / "review" / "decisions.jsonl"
+        self.decisions_path = Path(decisions_path) if decisions_path is not None else self.case / "review" / "decisions.jsonl"
+        self.audit: dict[str, list[dict]] = defaultdict(list)
+        audit_path = self.case / "audit" / "findings.csv"
+        if audit_path.is_file():
+            with audit_path.open(encoding="utf-8-sig", newline="") as handle:
+                for finding in csv.DictReader(handle):
+                    if str(finding.get("row") or "") in case.rows:
+                        self.audit[str(finding["row"])].append(finding)
         self.lock = threading.RLock()
         self.latest: dict[str, dict[str, dict]] = defaultdict(dict)
         self.events: dict[str, list[dict]] = defaultdict(list)
@@ -135,7 +171,7 @@ class TsxkReviewStore:
 
     def flags(self, rid: str, machine: dict | None = None, ledger: dict | None = None) -> list[dict]:
         return normalize_flags(machine if machine is not None else self.machine(rid),
-                               ledger if ledger is not None else self.ledger(rid))
+                               ledger if ledger is not None else self.ledger(rid), self.audit.get(rid))
 
     def fields(self, rid: str, machine: dict | None = None, flags: list[dict] | None = None) -> list[dict]:
         machine = machine if machine is not None else self.machine(rid)
@@ -151,7 +187,9 @@ class TsxkReviewStore:
             event = self.latest[rid].get(col)
             final = str(event["new"]) if event else machine_value
             related = [flag for flag in flags if col in flag["columns"]]
-            level = max((flag["level"] for flag in related), key=lambda x: LEVELS[x], default=None)
+            focus = [flag for flag in related if flag["tier"] == "focus"]
+            technical = [flag for flag in related if flag["tier"] == "technical"]
+            level = max((flag["level"] for flag in focus), key=lambda x: LEVELS[x], default=None)
             index = openpyxl.utils.column_index_from_string(col) - 1
             modified = any(e["field"] == col and e["action"] == "modify" for e in self.events[rid])
             result.append({"column": col, "name": str(self.headers[index] or col),
@@ -160,8 +198,11 @@ class TsxkReviewStore:
                            "reviewed": bool(event), "modified": modified,
                            "reviewer": event.get("who") if event else None,
                            "reviewed_at": event.get("when") if event else None,
-                           "flag_level": level, "flag_reasons": [x["reason"] for x in related],
-                           "flag_details": [{"level": x["level"], "reason": x["reason"]} for x in related],
+                           "retain_mark": bool(event.get("retain_mark")) if event else False,
+                           "mark_note": str(event.get("mark_note") or "") if event else "",
+                           "flag_level": level, "flag_reasons": [x["reason"] for x in focus],
+                           "technical_reasons": [x["reason"] for x in technical],
+                           "flag_details": [{"level": x["level"], "reason": x["reason"]} for x in focus],
                            "sections": parse_ac(final) if col == "AC" else None})
         return result
 
@@ -174,12 +215,16 @@ class TsxkReviewStore:
         y = self.latest[rid].get("Y")
         category = str(y["new"]) if y else str(((machine or {}).get("fields") or {}).get("Y", {}).get("value") or "待分类")
         reviewed = len(self.latest[rid])
+        focus = [flag for flag in flags if flag["tier"] == "focus"]
+        unresolved = any(col not in self.latest[rid] for flag in focus for col in flag["columns"])
         return {"row_id": rid, "title": str(self.inputs.get(rid, {}).get("C") or (ledger or {}).get("title") or ""),
                 "category": category, "status": "待核" if reviewed < len(OUTPUT) else
                 "已修改" if any(e["action"] == "modify" for e in self.events[rid]) else "已通过",
                 "reviewed": reviewed, "total": len(OUTPUT), "machine_ready": machine is not None,
-                "yellow": sum(f["level"] == "yellow" for f in flags),
-                "red": sum(f["level"] == "red" for f in flags)}
+                "yellow": sum(f["level"] == "yellow" for f in focus),
+                "red": sum(f["level"] == "red" for f in focus),
+                "technical": sum(f["tier"] == "technical" for f in flags),
+                "priority_unreviewed": unresolved}
 
     def all_summaries(self) -> list[dict]:
         return [self.summary(rid) for rid in self.row_ids]
@@ -232,8 +277,20 @@ class TsxkReviewStore:
                           "played_seconds": sound.get("played_seconds")},
                 "evidence": (machine or {}).get("evidence") or []}
 
-    def decide(self, rid: str, action: str, edits: dict | None = None, actor: str | None = None) -> dict:
-        if rid not in self.excel_rows or action not in ("approve", "modify"):
+    def _write_events(self, events: list[dict]) -> None:
+        self.decisions_path.parent.mkdir(parents=True, exist_ok=True)
+        with self.decisions_path.open("a", encoding="utf-8") as handle:
+            handle.write("".join(json.dumps(event, ensure_ascii=False) + "\n" for event in events))
+            handle.flush()
+            os.fsync(handle.fileno())
+        for event in events:
+            rid, col = event["row"], event["field"]
+            self.latest[rid][col] = event
+            self.events[rid].append(event)
+
+    def decide(self, rid: str, action: str, edits: dict | None = None, actor: str | None = None,
+               retain_mark: bool = False, mark_note: str = "") -> dict:
+        if rid not in self.excel_rows or action not in ("approve", "modify", "mark"):
             raise ValueError("invalid row or action")
         actor = str(actor or "").strip()
         if not 1 <= len(actor) <= 80:
@@ -244,23 +301,45 @@ class TsxkReviewStore:
         col, requested = next(iter(edits.items()))
         if self.machine(rid) is None:
             raise ValueError("该行机器输出尚未生成")
+        if type(retain_mark) is not bool:
+            raise ValueError("导出标记必须是勾选状态")
+        mark_note = str(mark_note or "").strip()
+        if len(mark_note) > 1000 or retain_mark and not mark_note:
+            raise ValueError("保留标记时请写所有者说明（最多 1000 字）")
         with self.lock:
             field = next(x for x in self.fields(rid) if x["column"] == col)
             old = field["value"]
-            new = old if action == "approve" else str(requested)
+            new = str(requested) if action == "modify" else old
             if action == "modify" and new == old:
                 raise ValueError("修改值与当前值相同")
+            if action == "mark" and not field["reviewed"]:
+                raise ValueError("请先核验该格，再设置导出标记")
+            if retain_mark and not field["flag_level"]:
+                raise ValueError("此格没有重点标记可保留")
+            if action == "mark" and retain_mark == field["retain_mark"] and mark_note == field["mark_note"]:
+                raise ValueError("导出标记没有变化")
             event = {"when": datetime.now(timezone.utc).isoformat(), "who": actor,
                      "row": rid, "field": col, "action": action, "old": old, "new": new,
-                     "machine": field["machine_value"]}
-            self.decisions_path.parent.mkdir(parents=True, exist_ok=True)
-            with self.decisions_path.open("a", encoding="utf-8") as handle:
-                handle.write(json.dumps(event, ensure_ascii=False) + "\n")
-                handle.flush()
-                os.fsync(handle.fileno())
-            self.latest[rid][col] = event
-            self.events[rid].append(event)
+                     "machine": field["machine_value"], "retain_mark": retain_mark,
+                     "mark_note": mark_note if retain_mark else ""}
+            self._write_events([event])
             return self.summary(rid)
+
+    def approve_row(self, rid: str, actor: str | None = None) -> dict:
+        if rid not in self.excel_rows or self.machine(rid) is None:
+            raise ValueError("该行机器输出尚未生成")
+        actor = str(actor or "").strip()
+        if not 1 <= len(actor) <= 80:
+            raise ValueError("请填写核验人（1–80 字）")
+        with self.lock:
+            stamp = datetime.now(timezone.utc).isoformat()
+            events = [{"when": stamp, "who": actor, "row": rid, "field": field["column"],
+                       "action": "approve", "old": field["value"], "new": field["value"],
+                       "machine": field["machine_value"], "retain_mark": False, "mark_note": ""}
+                      for field in self.fields(rid) if not field["reviewed"]]
+            if events:
+                self._write_events(events)
+            return {**self.summary(rid), "approved_now": len(events)}
 
     def export_row(self, rid: str) -> tuple[list[dict], list[dict]]:
         machine = self.machine(rid)
