@@ -59,10 +59,11 @@ class TsxkAudioR1Tests(unittest.TestCase):
                    for t, a, b in [('逗你玩的喜欢的话会', 42, 45),
                                    ('本视频需要一个硬币才能观看', 49, 52),
                                    ('关注投币支持一下', 53, 57)]]
-        uploader, promotions, seconds = speech_selection(clauses)
+        uploader, promotions, seconds, candidate_seconds = speech_selection(clauses, 100)
         self.assertEqual(uploader, [])
         self.assertEqual(len(promotions), 3)
         self.assertEqual(seconds, 0)
+        self.assertEqual(candidate_seconds, 0)
 
     def test_sustained_unscripted_commentary_remains(self):
         clauses = [{'text': t, 'recording_start': a, 'recording_end': a + 4,
@@ -70,10 +71,11 @@ class TsxkAudioR1Tests(unittest.TestCase):
                    for t, a in [('这集剧情交代了反派的计划', 0),
                                 ('我觉得这里角色动机仍不清楚', 4),
                                 ('后来这一段的转折才解释了它', 8)]]
-        uploader, promotions, seconds = speech_selection(clauses)
+        uploader, promotions, seconds, candidate_seconds = speech_selection(clauses, 300)
         self.assertEqual(len(uploader), 3)
         self.assertEqual(promotions, [])
         self.assertEqual(seconds, 12)
+        self.assertEqual(candidate_seconds, 12)
 
     def test_generic_redub_needs_a_continuous_mismatch(self):
         clauses = [{'text': '我现在要去见那个人', 'recording_start': 0,
