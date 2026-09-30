@@ -156,9 +156,12 @@ def serve(case: Path, port: int = 8765, config=None, store=None):
                 if path == "/api/decision":
                     if tsxk:
                         answer = store.decide(str(payload["row_id"]), payload["action"],
-                                              payload.get("edits"), payload.get("actor"))
+                                              payload.get("edits"), payload.get("actor"),
+                                              payload.get("retain_mark", False), payload.get("mark_note", ""))
                     else:
                         answer = store.decide(str(payload["row_id"]), payload["action"], payload.get("edits"))
+                elif path == "/api/approve-row" and tsxk:
+                    answer = store.approve_row(str(payload["row_id"]), payload.get("actor"))
                 elif path == "/api/batch":
                     if tsxk:
                         return self.send_error(404)

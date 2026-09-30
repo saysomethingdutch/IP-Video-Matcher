@@ -150,7 +150,8 @@ def _add_comments(source: zipfile.ZipFile, sheet, sheet_path: str,
 def _explanation(store: TsxkReviewStore, dest: Path, pending: list[tuple[str, list[str]]]) -> Path:
     lines = ["# 吞噬星空导出说明", "",
              f"副本：{dest.name}", f"工作表：{store.sheet_name}；序号 {store.row_ids[0]}–{store.row_ids[-1]}。",
-             "仅写 D、F、L、Q–AC；未核验的列照机器值写入。标黄、标红单元格的批注记录原因。", "",
+             "仅写 D、F、L、Q–AC；未核验的列照机器值写入，重点标记带颜色与机器批注。",
+             "已核验的格子默认不带机器标记；勾选保留的格子按原级别上色，批注为所有者说明。", "",
              f"## 未核验（{len(pending)} 行）", ""]
     lines += [f"- {rid}：{'、'.join(columns)}" for rid, columns in pending] or ["无"]
     changes = store.corrections()
@@ -198,10 +199,11 @@ def export_tsxk(store: TsxkReviewStore, destination: Path | None = None) -> Path
                 cell = ensure_cell(row, index, row_number)
                 set_cell(cell, field["value"])
                 level = field["flag_level"]
-                if level:
+                if level and (not field["reviewed"] or field["retain_mark"]):
                     cell.set("s", str(_fill_style(styles, int(cell.get("s", "0")), level, cache)))
-                    reason = "\n".join(f"{'标红' if x['level'] == 'red' else '标黄'}：{x['reason']}"
-                                       for x in field["flag_details"])
+                    reason = (f"所有者说明：{field['mark_note']}" if field["reviewed"] else
+                              "\n".join(f"{'标红' if x['level'] == 'red' else '标黄'}：{x['reason']}"
+                                        for x in field["flag_details"]))
                     comments.append((address, row_number, index, reason))
         changed = {sheet_path: xml_bytes(sheet)}
         if cache:
