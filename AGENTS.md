@@ -17,7 +17,7 @@
 
 | 路径 | 内容 | 进 git |
 |---|---|---|
-| `pilot/` | 全部代码：ledger 取证台账、textindex / content 台词与集数、audio 声音、asr 语音转写、vlm 画面、semantic 分类与四格、opinion 意见、review 核对页与导出、integration 一条命令；吞噬星空另有 tsxk 分类与视频说明、timeline 内容时间线，以及 ezcun 下载、webledger 网页台账（后两个还在 WO-101 分支上） | 是 |
+| `pilot/` | 全部代码：ledger 取证台账、textindex / content 台词与集数、audio 声音、asr 语音转写、vlm 画面、semantic 分类与四格、opinion 意见、review 核对页与导出、integration 一条命令；吞噬星空另有 ezcun 易存云下载、webledger 网页台账、timeline 内容时间线、tsxk 分类与视频说明，核对页与导出也支持 `cases/tsxk.yaml`（已并入 main，D-075） | 是 |
 | `cases/` | 案件配置：`qsjx.yaml`、`qsjx_4086.yaml`、`qsjx_2591.yaml`、`tsxk.yaml`（吞噬星空，格式不同，由 `pilot/tsxk/config.py` 读取）；新案子从 `_template.yaml` 复制 | 是 |
 | `docs/workorders/` | 工单、各单交付说明、`DECISIONS.md` | 是 |
 | `workspace/` | 运行产物和缓存，含声音环境 `workspace/pilot/audio_env`。**多个工作树共用主仓库的这个目录**：在工作树里给 `workspace/<案件>`、`workspace/pilot`、`models` 建软链接，不要各存一份（D-059） | 否 |
