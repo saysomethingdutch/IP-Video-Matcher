@@ -2,6 +2,10 @@ const app = document.getElementById('app');
 const actor = document.getElementById('actor');
 const progress = document.getElementById('progress');
 const toast = document.getElementById('toast');
+const masthead = document.querySelector('.masthead');
+const syncHeaderHeight = () => document.documentElement.style.setProperty('--review-header-height', `${Math.ceil(masthead.getBoundingClientRect().height)}px`);
+syncHeaderHeight();
+new ResizeObserver(syncHeaderHeight).observe(masthead);
 actor.value = localStorage.getItem('tsxk-review-actor') || '';
 actor.addEventListener('input', () => localStorage.setItem('tsxk-review-actor', actor.value.trim()));
 let rows = [];
@@ -30,6 +34,10 @@ function textEntries(items){return items.length?items.map(item=>{const value=typ
 function ledgerHTML(d){const l=d.ledger||{};return `<section class="panel"><h2>网页台账</h2><div class="facts"><div><b>目标播放</b><br>${fmt(l.play_start)}–${fmt(l.play_end)}（录屏）</div><div><b>实际内容</b><br>${fmt(l.content_start)}–${fmt(l.content_end)}（录屏）</div><div><b>R 完整播放</b><br>${l.complete===true?'是':l.complete===false?'否':'待核'}${l.complete_needs_review?' · 需复核':''}</div></div><p><b>内容区间依据：</b>${esc(l.content_basis||'—')}</p><p><b>R 依据：</b>${esc(l.complete_reason||l.complete_basis||'—')}</p>${l.passes?.length?`<details><summary>逐遍记录（${l.passes.length}）</summary><pre>${esc(JSON.stringify(l.passes,null,2))}</pre></details>`:''}${l.other_pages?.length?`<details><summary>目标视频后的其他页面（${l.other_pages.length}）</summary><ul class="other-pages">${l.other_pages.map(p=>`<li>${seekButton(p.start,'录像 '+fmt(p.start))}–${fmt(p.end)} · ${esc(p.title||p.bv||'其他页面')}${p.autoplay?' · 自动连播':''}</li>`).join('')}</ul></details>`:''}</section>`}
 function timelineHTML(d){const segments=d.timeline?.segments||[];return `<section class="panel"><h2>内容时间线</h2>${segments.length?`<div class="segments">${segments.map(s=>`<article class="segment">${s.thumbnail?`<img src="${esc(s.thumbnail)}" alt="录像 ${fmt(s.start)} 的画面">`:'<div class="noimage">无缩略图</div>'}<div><b>${esc(s.content||'未定')}${s.form?' · '+esc(s.form):''}</b><div>${seekButton(s.start,`录像 ${fmt(s.start)}`)}–${fmt(s.end)}</div><small>${esc((s.sources||[]).join('、'))}</small></div></article>`).join('')}</div>`:'<p class="muted">暂无时间线</p>'}</section>`}
 function soundHTML(d){const sound=d.sound||{};return `<section class="panel"><h2>声音</h2><p class="muted">${sound.status==='ok'?'本机声音处理完成':'声音状态：'+esc(sound.status||'未生成')} · 播放 ${fmt(sound.played_seconds)}</p><h3>UP 主口播</h3><ul class="utterances">${textEntries(sound.uploader_speech?.length?sound.uploader_speech:sound.uploader_text||[])}</ul><h3>推广口播</h3><ul class="utterances">${textEntries(sound.promotional_speech||[])}</ul></section>`}
+function evidenceHTML(d){
+  const player=d.video_url?`<section class="panel video-panel"><h2>本地取证录像</h2><video id="evidence-video" controls preload="metadata" src="${esc(d.video_url)}"></video><p class="muted">播放器随滚动保持可见；点击时间点跳到录像对应位置。</p></section>`:'<section class="panel"><h2>本地取证录像</h2><p class="muted">文件未挂载</p></section>';
+  return `<aside class="evidence-column">${player}<div class="evidence-details">${timelineHTML(d)}${ledgerHTML(d)}${soundHTML(d)}</div></aside>`;
+}
 function fieldHTML(f){
   const ac=f.column==='AC', source=f.by?`由 ${esc(f.by)}`:'机器';
   const state=f.reviewed?(f.modified?'已修改':'已批准'):'未核验';
@@ -42,13 +50,13 @@ function rowPage(d){current=d;const pos=rows.findIndex(r=>r.row_id===d.row_id);c
     <div class="rowtools"><button id="approve-rest" type="button">本行其余全部批准</button><button id="approve-next" type="button">批准并到下一行</button><button id="next-focus" type="button">下一个重点行</button><span>快捷键：K 上一行 · J 下一行 · A 批准余列 · N 下一重点；输入时停用</span></div>
     ${focusFlags.length?`<div class="flagbox"><b>重点核对</b>${focusFlags.map(f=>`<p class="${esc(f.level)}"><b>${f.level==='red'?'标红':'标黄'}：</b>${esc(f.reason)} <small>${esc(f.columns.join('、'))}</small></p>`).join('')}</div>`:''}
     ${technicalFlags.length?`<details class="flagbox technical"><summary>技术说明（${technicalFlags.length}，不标色）</summary>${technicalFlags.map(f=>`<p>${esc(f.reason)} <small>${esc(f.columns.join('、'))}</small></p>`).join('')}</details>`:''}
-    <div class="review-grid"><div>${d.video_url?`<section class="panel"><h2>本地取证录像</h2><video id="evidence-video" controls preload="metadata" src="${esc(d.video_url)}"></video><p class="muted">点击下方时间点跳到录像对应位置。证据只在本机打开。</p></section>`:'<section class="panel"><h2>本地取证录像</h2><p class="muted">文件未挂载</p></section>'}${timelineHTML(d)}${ledgerHTML(d)}${soundHTML(d)}</div><div><section class="panel"><h2>机器填值与逐列核验</h2><p class="muted">批准或保存修改会立即写入本地追加记录。AC 分五段编辑，导出时合为一个单元格。</p><div class="fields">${d.fields.map(fieldHTML).join('')}</div></section><section class="panel"><h2>修改与批准记录</h2>${d.history.length?`<div class="history">${d.history.map(e=>`<p><b>${esc(e.field)}</b> ${esc(e.action==='modify'?'修改':e.action==='mark'?'导出标记':'批准')} · ${esc(e.who)} · ${esc(e.when)}${e.retain_mark?' · 保留标记：'+esc(e.mark_note):''}<br>${esc(e.old)} → ${esc(e.new)}</p>`).join('')}</div>`:'<p class="muted">尚无记录</p>'}</section></div></div>`;
+    <div class="review-grid">${evidenceHTML(d)}<div><section class="panel"><h2>机器填值与逐列核验</h2><p class="muted">批准或保存修改会立即写入本地追加记录。AC 分五段编辑，导出时合为一个单元格。</p><div class="fields">${d.fields.map(fieldHTML).join('')}</div></section><section class="panel"><h2>修改与批准记录</h2>${d.history.length?`<div class="history">${d.history.map(e=>`<p><b>${esc(e.field)}</b> ${esc(e.action==='modify'?'修改':e.action==='mark'?'导出标记':'批准')} · ${esc(e.who)} · ${esc(e.when)}${e.retain_mark?' · 保留标记：'+esc(e.mark_note):''}<br>${esc(e.old)} → ${esc(e.new)}</p>`).join('')}</div>`:'<p class="muted">尚无记录</p>'}</section></div></div>`;
   app.querySelectorAll('.field button[data-action]').forEach(button=>button.onclick=()=>saveField(button.closest('.field'),button.dataset.action));
   app.querySelectorAll('.field textarea[data-value],.field textarea[data-ac-heading]').forEach(input=>input.oninput=()=>{input.closest('.field').dataset.dirty='1'});
   document.getElementById('approve-rest').onclick=()=>approveRest(false);
   document.getElementById('approve-next').onclick=()=>approveRest(true);
   document.getElementById('next-focus').onclick=nextFocus;
-  app.querySelectorAll('[data-seek]').forEach(button=>button.onclick=()=>{const video=document.getElementById('evidence-video');if(!video){notify('本地录像不可用');return}const t=Number(button.dataset.seek);const go=()=>{video.currentTime=t;video.play().catch(()=>{});video.scrollIntoView({behavior:'smooth',block:'center'})};if(video.readyState)go();else video.addEventListener('loadedmetadata',go,{once:true})});
+  app.querySelectorAll('[data-seek]').forEach(button=>button.onclick=()=>{const video=document.getElementById('evidence-video');if(!video){notify('本地录像不可用');return}const t=Number(button.dataset.seek);const go=()=>{video.currentTime=t;video.play().catch(()=>{})};if(video.readyState)go();else video.addEventListener('loadedmetadata',go,{once:true})});
 }
 function fieldValue(card,col){if(col!=='AC')return card.querySelector('[data-value]').value;return [...card.querySelectorAll('[data-ac-heading]')].map(node=>`${node.dataset.acHeading}\n${node.value.trim()}`).join('\n\n')}
 async function saveField(card,action){
