@@ -12,6 +12,7 @@ from lxml import etree
 
 from pilot.review.tsxk import OUTPUT, TsxkReviewStore
 from pilot.review.tsxk_export import _sheet_path, export_tsxk
+from pilot.review.tsxk_views import load_views
 from pilot.tsxk.config import TsxkCase
 
 
@@ -38,19 +39,31 @@ def run(config_path: str | Path, trial_dir: str | Path | None = None,
     dest = export_tsxk(store, temporary / "tsxk-trial.xlsx")
     if digest(store.source_path) != before:
         raise AssertionError("original workbook changed")
+    views = load_views(case)
+    columns = (*OUTPUT, "AD") if views is not None else OUTPUT
+    header_added = views is not None and (len(store.headers) < 30 or
+                                        str(store.headers[29] or "").strip() != "播放量")
     permitted = {(store.excel_rows[rid], openpyxl.utils.column_index_from_string(col)): (rid, col)
-                 for rid in store.row_ids for col in OUTPUT}
+                 for rid in store.row_ids for col in columns}
     expected = {rid: {f["column"]: f for f in store.export_row(rid)[0]} for rid in store.row_ids}
+    if views is not None:
+        for rid in store.row_ids:
+            expected[rid]["AD"] = views[rid]
     source_book = openpyxl.load_workbook(store.source_path, read_only=True, data_only=False)
     output_book = openpyxl.load_workbook(dest, read_only=True, data_only=False)
     try:
         a, b = source_book[store.sheet_name], output_book[store.sheet_name]
-        assert (a.max_row, a.max_column) == (b.max_row, b.max_column)
+        assert a.max_row == b.max_row
+        assert b.max_column == max(a.max_column, 30 if views is not None else a.max_column)
         changed, flagged = 0, set()
-        for row_number, (row_a, row_b) in enumerate(zip(a.iter_rows(), b.iter_rows(), strict=True), 1):
+        for row_number, (row_a, row_b) in enumerate(zip(a.iter_rows(max_col=b.max_column), b.iter_rows(), strict=True), 1):
             for column_number, (cell_a, cell_b) in enumerate(zip(row_a, row_b, strict=True), 1):
                 key = (row_number, column_number)
                 address = f"{openpyxl.utils.get_column_letter(column_number)}{row_number}"
+                if header_added and key == (1, 30):
+                    if cell_b.value != "播放量" or getattr(cell_a, "_style_id", 0) != getattr(cell_b, "_style_id", 0):
+                        raise AssertionError("wrong AD header or header style changed")
+                    continue
                 if key not in permitted:
                     if (cell_a.value, cell_a.data_type, getattr(cell_a, "_style_id", 0)) != (
                         cell_b.value, cell_b.data_type, getattr(cell_b, "_style_id", 0)
@@ -59,7 +72,10 @@ def run(config_path: str | Path, trial_dir: str | Path | None = None,
                     continue
                 rid, col = permitted[key]
                 field = expected[rid][col]
-                if str(cell_b.value or "") != str(field["value"] or ""):
+                correct = (cell_b.value == field["value"] and cell_b.data_type == "n") if (
+                    col == "AD" and isinstance(field["value"], int)) else (
+                        str(cell_b.value or "") == str(field["value"] or ""))
+                if not correct:
                     raise AssertionError(f"wrong machine value at {address}")
                 if (cell_a.value, cell_a.data_type, getattr(cell_a, "_style_id", 0)) != (
                     cell_b.value, cell_b.data_type, getattr(cell_b, "_style_id", 0)
@@ -103,11 +119,12 @@ def run(config_path: str | Path, trial_dir: str | Path | None = None,
                     if field["mark_note"] not in comment_text.get(address, ""):
                         raise AssertionError(f"owner note missing from comment at {address}")
     explanation = dest.with_suffix(".md").read_text(encoding="utf-8")
-    pending = sum(any(not f["reviewed"] for f in expected[rid].values()) for rid in store.row_ids)
+    pending = sum(any(not expected[rid][col]["reviewed"] for col in OUTPUT) for rid in store.row_ids)
     if f"未核验（{pending} 行）" not in explanation or (pending and "D、F、L" not in explanation):
         raise AssertionError("export explanation lacks unreviewed rows or columns")
     report = {"trial_dir": str(temporary), "source_sha256_unchanged": before,
               "target_cells": len(permitted), "changed_cells": changed,
+              "ad_header_added": header_added,
               "colored_commented_cells": len(flagged), "other_ooxml_parts_identical": True,
               "unreviewed_rows": pending}
     (temporary / "verification.json").write_text(json.dumps(report, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")

@@ -1,5 +1,5 @@
 # 吞噬星空（WO-101、WO-102；DECISIONS D-056、D-057）。
-# 网页录屏案件，列的布局与七时吉祥不同（产出列是 D、F、L、Q–AC），由 pilot/tsxk/config.py 读取，
+# 网页录屏案件，核验列是 D、F、L、Q–AC；另由 views.csv 导出 AD 播放量。由 pilot/tsxk/config.py 读取，
 # 不走七时吉祥的 CaseConfig。
 schema: tsxk-web-1
 case_id: tsxk
@@ -46,6 +46,9 @@ webledger:
 
 output:
   dir: workspace/tsxk
+
+views:                                    # WO-106：独立核对，不进入逐列核验或进度计数
+  csv: workspace/tsxk/views.csv
 
 timeline:
   step: 10

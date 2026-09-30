@@ -18,6 +18,7 @@ from lxml import etree
 from .data import MAIN, R, col_name
 from .export import ensure_cell, set_cell, xml_bytes
 from .tsxk import OUTPUT, TsxkReviewStore
+from .tsxk_views import load_views
 
 PKG_REL = "http://schemas.openxmlformats.org/package/2006/relationships"
 CT = "http://schemas.openxmlformats.org/package/2006/content-types"
@@ -147,12 +148,16 @@ def _add_comments(source: zipfile.ZipFile, sheet, sheet_path: str,
     return changed
 
 
-def _explanation(store: TsxkReviewStore, dest: Path, pending: list[tuple[str, list[str]]]) -> Path:
+def _explanation(store: TsxkReviewStore, dest: Path, pending: list[tuple[str, list[str]]],
+                 views: dict | None = None, header_added: bool = False) -> Path:
     lines = ["# 吞噬星空导出说明", "",
              f"副本：{dest.name}", f"工作表：{store.sheet_name}；序号 {store.row_ids[0]}–{store.row_ids[-1]}。",
-             "仅写 D、F、L、Q–AC；未核验的列照机器值写入，重点标记带颜色与机器批注。",
+             f"仅写 D、F、L、Q–AC{'、AD' if views is not None else ''}；未核验的列照机器值写入，重点标记带颜色与机器批注。",
              "已核验的格子默认不带机器标记；勾选保留的格子按原级别上色，批注为所有者说明。", "",
              f"## 未核验（{len(pending)} 行）", ""]
+    if views is not None:
+        lines[7:7] = ["AD 来自独立播放量核对表 views.csv，不计入逐列核验。读数待核的 AD 带黄标与批注。",
+                      "副本补上 AD1 表头“播放量”。原表未改。" if header_added else "AD1 原有“播放量”表头保留。", ""]
     lines += [f"- {rid}：{'、'.join(columns)}" for rid, columns in pending] or ["无"]
     changes = store.corrections()
     lines += ["", f"## 修改记录（{len(changes)} 次）", ""]
@@ -172,12 +177,15 @@ def export_tsxk(store: TsxkReviewStore, destination: Path | None = None) -> Path
     dest.parent.mkdir(parents=True, exist_ok=True)
     prepared = {}
     pending = []
+    views = load_views(store.config)
     for rid in store.row_ids:
         fields, flags = store.export_row(rid)
         prepared[rid] = fields
         unreviewed = [f["column"] for f in fields if not f["reviewed"]]
         if unreviewed:
             pending.append((rid, unreviewed))
+        if views is not None:
+            fields.append(views[rid])
     tmp = dest.with_suffix(dest.suffix + ".tmp")
     with zipfile.ZipFile(store.source_path) as source:
         sheet_path = _sheet_path(source, store.sheet_name)
@@ -187,6 +195,22 @@ def export_tsxk(store: TsxkReviewStore, destination: Path | None = None) -> Path
         styles = etree.fromstring(source.read("xl/styles.xml"))
         cache = {}
         comments = []
+        header_added = False
+        if views is not None:
+            header_added = len(store.headers) < 30 or str(store.headers[29] or "").strip() != "播放量"
+            if header_added:
+                header = rows.get(1)
+                if header is None:
+                    header = etree.Element(f"{{{MAIN}}}row", r="1")
+                    data.insert(0, header)
+                set_cell(ensure_cell(header, 30, 1), "播放量")
+            dimension = sheet.find(f"{{{MAIN}}}dimension")
+            if dimension is not None:
+                bounds = dimension.get("ref").split(":")
+                last = bounds[-1]
+                match = re.fullmatch(r"([A-Z]+)(\d+)", last)
+                if match and openpyxl_column(match[1]) < 30:
+                    dimension.set("ref", f"{bounds[0]}:AD{match[2]}")
         for rid in store.row_ids:
             row_number = store.excel_rows[rid]
             row = rows.get(row_number)
@@ -197,7 +221,13 @@ def export_tsxk(store: TsxkReviewStore, destination: Path | None = None) -> Path
                 index = openpyxl_column(col)
                 address = f"{col}{row_number}"
                 cell = ensure_cell(row, index, row_number)
-                set_cell(cell, field["value"])
+                if col == "AD" and isinstance(field["value"], int):
+                    for child in list(cell):
+                        cell.remove(child)
+                    cell.set("t", "n")
+                    etree.SubElement(cell, f"{{{MAIN}}}v").text = str(field["value"])
+                else:
+                    set_cell(cell, field["value"])
                 level = field["flag_level"]
                 if level and (not field["reviewed"] or field["retain_mark"]):
                     cell.set("s", str(_fill_style(styles, int(cell.get("s", "0")), level, cache)))
@@ -219,7 +249,7 @@ def export_tsxk(store: TsxkReviewStore, destination: Path | None = None) -> Path
             os.replace(tmp, dest)
         finally:
             tmp.unlink(missing_ok=True)
-    _explanation(store, dest, pending)
+    _explanation(store, dest, pending, views, header_added)
     return dest
 
 
