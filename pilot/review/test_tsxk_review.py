@@ -16,7 +16,7 @@ import pytest
 import yaml
 from openpyxl.comments import Comment
 
-from pilot.review.tsxk import OUTPUT, TsxkReviewStore, parse_ac
+from pilot.review.tsxk import OUTPUT, TsxkReviewStore, flag_columns, parse_ac
 from pilot.review.tsxk_export import export_tsxk
 from pilot.tsxk.config import TsxkCase
 
@@ -139,6 +139,10 @@ def test_missing_machine_row_blocks_export(tmp_path):
     with pytest.raises(ValueError, match="7814"):
         export_tsxk(TsxkReviewStore(TsxkCase(config)), tmp_path / "no.xlsx")
     assert not (tmp_path / "no.xlsx").exists()
+
+
+def test_equals_sign_flag_targets_its_column():
+    assert flag_columns({"reason": "Q=是：判为完全不含动画，交人判断"}) == ["Q"]
 
 
 def test_case_commands_dispatch_to_tsxk(tmp_path, capsys):

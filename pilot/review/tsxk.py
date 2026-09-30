@@ -17,7 +17,7 @@ from pilot.tsxk.config import TsxkCase
 OUTPUT = ("D", "F", "L", "Q", "R", "S", "T", "U", "V", "W", "X", "Y", "Z", "AA", "AB", "AC")
 CLASSIFICATION = OUTPUT[3:]
 LEVELS = {"yellow": 1, "red": 2}
-FIELD_MENTION = re.compile(r"(?<![A-Za-z0-9])(?:AA|AB|AC|D|F|L|Q|R|S|T|U|V|W|X|Y|Z)(?=[:：、，\s]|$)")
+FIELD_MENTION = re.compile(r"(?<![A-Za-z0-9])(?:AA|AB|AC|D|F|L|Q|R|S|T|U|V|W|X|Y|Z)(?=[:：=＝、，\s]|$)")
 AC_HEADING = re.compile(r"【(?:主题概括|段落情节|新增创作要素情况|比对意见|其他)】")
 
 

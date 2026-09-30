@@ -164,7 +164,6 @@ def _explanation(store: TsxkReviewStore, dest: Path, pending: list[tuple[str, li
 
 def export_tsxk(store: TsxkReviewStore, destination: Path | None = None) -> Path:
     export_dir = store.case / "export"
-    export_dir.mkdir(parents=True, exist_ok=True)
     stamp = datetime.now(ZoneInfo("Asia/Shanghai")).strftime("%Y%m%d-%H%M%S-%f")
     dest = Path(destination) if destination else export_dir / f"{store.export_name}-{stamp}.xlsx"
     if dest.resolve() == store.source_path.resolve():
