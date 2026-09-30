@@ -68,6 +68,9 @@
 .focus-columns button{padding:2px 8px;font-size:12px}
 .focus-columns small{color:var(--muted)}
 .field{scroll-margin-top:calc(var(--review-sticky-top) + 12px)}
+.views-badge{white-space:nowrap;font-size:12px;padding:5px 8px;background:#edf5f2;border:1px solid var(--line);border-radius:5px}
+.views-card .views-value{font-size:23px;font-weight:650;margin:6px 0}
+.views-card .views-crop{display:block;width:100%;height:auto;border:1px solid var(--line);border-radius:5px;margin-top:8px}
 @media(max-width:1050px){
   .field{scroll-margin-top:calc(var(--review-sticky-top) + var(--review-player-height,0px) + 24px)}
 }

@@ -31,6 +31,8 @@ def load_views(case: TsxkCase) -> dict[str, dict] | None:
             confidence = row["把握程度"].strip()
             needs_review = not approved and (confidence != "多帧一致" or not value)
             result[rid] = {"value": int(value) if value else "", "reviewed": approved,
+                           "raw": row["原始读数"], "confidence": confidence,
+                           "frame_times": row["用到的帧时刻"], "agreeing_frames": row["一致的帧数"],
                            "retain_mark": False, "column": "AD", "mark_note": "",
                            "flag_level": "yellow" if needs_review else None,
                            "flag_details": [{"level": "yellow", "reason":
@@ -41,3 +43,16 @@ def load_views(case: TsxkCase) -> dict[str, dict] | None:
                          f"missing={sorted(set(case.rows)-set(result))[:5]}, "
                          f"extra={sorted(set(result)-set(case.rows))[:5]}")
     return result
+
+
+def view_count_detail(case: TsxkCase, rid: str) -> dict | None:
+    """Read-only AD display. It does not participate in per-cell decisions."""
+    views = load_views(case)
+    if views is None:
+        return None
+    field = views[rid]
+    crop = case.case_dir / "views" / "crops" / f"{rid}.png"
+    return {"value": field["value"], "raw": field["raw"], "reviewed": field["reviewed"],
+            "confidence": field["confidence"], "frame_times": field["frame_times"],
+            "agreeing_frames": field["agreeing_frames"],
+            "crop_url": f"/asset/views/crops/{rid}.png" if crop.is_file() else None}

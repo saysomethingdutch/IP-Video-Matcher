@@ -147,6 +147,15 @@ def test_owner_approval_clears_only_ad_marks_and_is_bound_to_csv(tmp_path):
     case = TsxkCase(config)
     store = TsxkReviewStore(case, decisions_path=tmp_path / "temporary-decisions.jsonl")
     assert len(store.fields("7813")) == 16 and store.summary("7813")["reviewed"] == 0
+    crops = folder / "crops"
+    crops.mkdir()
+    Image.new("RGB", (400,60), "white").save(crops / "7813.png")
+    detail = store.detail("7813")
+    assert detail["view_count"]["value"] == 123000
+    assert detail["view_count"]["raw"] == "12.3万"
+    assert detail["view_count"]["reviewed"]
+    assert detail["view_count"]["crop_url"] == "/asset/views/crops/7813.png"
+    assert len(detail["fields"]) == detail["total"] == 16
     dest = export_tsxk(store,tmp_path / "approved.xlsx")
     book = openpyxl.load_workbook(dest)
     sheet = book["沈瑞曦"]

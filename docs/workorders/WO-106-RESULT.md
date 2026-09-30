@@ -6,4 +6,4 @@
 - **产物**：共用目录 `workspace/tsxk/views.csv`；`views/crops/` 400 张截图；`views/check.html` 待核优先、可筛序号；清单 `views/needs_review.csv`。换算测试：12.3万→123000、10万+→100000、1.2亿→120000000；7909 的倒读已用周边文字校正为 6900。
 - **导出**：AD 为整数，核对页仍为 16 列。临时副本逐格比对通过：仅目标 400×17 列中 6796 格及新增 AD1“播放量”变化；其他格子、其他 OOXML 不变，原表哈希不变。记录：`views/export-verification.json`。
 - **测试**：确认后重验 415 项、11 项子测试通过，无跳过；临时副本再次逐格比对通过，AD 无黄标或机器批注。HTML 排序和图片引用通过；工具禁止 file URL，未自动验收页面渲染。提取：`python -m pilot.webledger.views cases/tsxk.yaml`（普通后台）。
-- **接入（2026-09-30）**：所有者确认 400 行全部无误，`views/approval.json` 绑定 CSV 哈希；AD 不再带机器标记。已合入 main，并经授权重启同一 8765 服务。74 行/1184 格已核进度及记录哈希不变；含这些核验记录的临时导出逐格验证通过。核验页仍为 16 列。记录：`views/live-integration.json`；未 push。
+- **接入（2026-09-30）**：所有者确认 400 行全部无误，`views/approval.json` 绑定 CSV 哈希；AD 不再带机器标记。已合入 main 并更新 8765 服务，74 行/1184 格已核记录哈希不变；含核验记录的临时导出逐格验证通过。补齐页面显示：固定操作栏的 AD 快捷入口、AC 下方的只读播放量卡片及截图；核验仍为 16 列。记录：`views/live-integration.json`；未 push。

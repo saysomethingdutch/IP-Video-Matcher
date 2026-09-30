@@ -246,6 +246,7 @@ class TsxkReviewStore:
         return video if video.is_file() else None
 
     def detail(self, rid: str) -> dict:
+        from .tsxk_views import view_count_detail
         if rid not in self.excel_rows:
             raise KeyError(rid)
         machine = self.machine(rid)
@@ -263,6 +264,7 @@ class TsxkReviewStore:
                             | {"thumbnail": thumb})
         speech = [s for s in sound.get("segments") or [] if s.get("kind") == "uploader"]
         return {**self.summary(rid), "fields": self.fields(rid, machine, flags),
+                "view_count": view_count_detail(self.config, rid),
                 "flags": flags, "history": self.events[rid], "excel_row": self.excel_rows[rid],
                 "bilibili_url": self.inputs.get(rid, {}).get("E") or ledger.get("address"),
                 "video_url": f"/api/video/{rid}" if self.video_path(rid) else None,
