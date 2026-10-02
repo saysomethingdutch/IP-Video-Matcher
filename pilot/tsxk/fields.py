@@ -140,7 +140,7 @@ def timeline_fields(tl: dict | None, led: dict | None, title: str, rules: dict) 
         basis = "有无关内容或引流画面" if w else "画面都来自吞噬星空（含 UP 主自制画面）"
     else:                                                       # WO-102-R2 B2 (default)
         extra = [x for x, on in (("其他作品或无关画面", unrelated), ("引流画面", platforms),
-                                 ("UP 主自制画面", s.get("creator_frames")), ("真人出镜", s.get("face_frames")),
+                                 ("UP 主自制画面", s.get("creator_frames")), ("真人出镜", s.get("face_frames", 0) >= 2),
                                  ("AI 生成画面（有 AI 创作声明）", s.get("ai_note_frames")),
                                  ("吞噬星空其他形式（" + "、".join(f for f in s["forms"] if f != "动画剧场版") + "）",
                                   [f for f in s["forms"] if f != "动画剧场版"])) if on]
@@ -152,10 +152,7 @@ def timeline_fields(tl: dict | None, led: dict | None, title: str, rules: dict) 
         out["X"] = _f(f"是（{label}）", "timeline", "画面" + ("或评论区" if (led or {}).get("comments", {}).get("traffic") else "") + "里有引流信息")
     else:
         out["X"] = _f(NO, "timeline", "画面里没有引流信息" + ("" if ((led or {}).get("comments") or {}).get("visible") else "；录屏未显示评论区"))
-    forms = (["动画剧场版"] if s.get("film_watermark") else []) + \
-        [f for f in s["forms"] if f in ("漫画", "手游", "有声书")] + (["小说"] if s.get("novel_frames") else [])
-    if "动画剧场版" in s["forms"] and not s.get("film_watermark"):
-        flags.append(flag("yellow", "T：画面像剧场版，但没有看到片名水印，T 不填剧场版（WO-102-R2 A5）"))
+    forms = [f for f in s["forms"] if f in ("漫画", "手游", "有声书")] + (["小说"] if s.get("novel_frames") else [])
     hints = {"forms": forms, "y_fixed": None, "z_default": None, "ai_note": bool(s.get("ai_note_frames"))}
     film_as_series = ((rules.get("policies") or {}).get("film_only") or {}).get("value", "按正片判") == "按正片判"
     if not anime and s.get("disputed_pending"):                 # WO-102-R4 §1: nothing adopted, disputes remain
@@ -183,8 +180,9 @@ def timeline_fields(tl: dict | None, led: dict | None, title: str, rules: dict) 
         out["Y"] = _f(hints["y_fixed"], "code", basis)
         z = rules["columns"]["Z"]["code_defaults"].get(hints["y_fixed"])
         if z is None:
-            z = {"完全无关内容": "高", "错权": "低"}[hints["y_fixed"]]
-            flags.append(flag("yellow", f"Z：指引没有给{hints['y_fixed']}的标准，按示例填{z}，请所有者确认"))
+            z = {"完全无关内容": "不涉及", "错权": "低"}[hints["y_fixed"]]
+            if hints["y_fixed"] != "完全无关内容":
+                flags.append(flag("yellow", f"Z：指引没有给{hints['y_fixed']}的标准，按示例填{z}，请所有者确认"))
         out["Z"] = _f(z, "code", "指引 Z 的示例" if hints["y_fixed"] == "引流" else "示例表同类行")
     return out, hints, flags
 

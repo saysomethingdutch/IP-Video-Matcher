@@ -146,8 +146,9 @@ def section(audio: dict | None, music: dict) -> str:
         return "【声音】未提供（本行没有声音分析结果）"
     speech = uploader_speech(audio)
     secs = audio.get("uploader_speech_seconds")
-    said = f"UP主口播（过滤后）{len(speech)} 句" + (f"（约 {round(secs)} 秒）" if secs else "") + \
-        ("：" + " / ".join(speech[:12]) if speech else "")
+    said = f"人声转写 {len(speech)} 句" + (f"（约 {round(secs)} 秒）" if secs else "") + \
+        "（人声和字幕里可能既有原片台词，也有 UP 主的讲述，请按句子本身判断）" + \
+        ("：" + " / ".join(speech[:24]) if speech else "")
     parts = [said]
     if (rd := redubs(audio)):
         parts.append(f"改配音候选 {len(rd)} 句（配音与画面字幕不一致）")
