@@ -10,7 +10,7 @@ from . import classify as K
 from . import fields as FD
 from . import samples as SM
 from . import sound as SD
-from .ac_filter import filter_ac
+from .ac_filter import filter_ac, sync_z_opinion
 from .config import TsxkCase
 
 
@@ -43,6 +43,10 @@ def text_evidence(tl: dict | None, audio: dict | None) -> dict[str, bool]:
 def process_row(inputs: dict, led: dict | None, tl: dict | None, rules: dict, system: str, backend: str = "zhipu",
                 audio: dict | None = None, *, fixed_y: str | None = None, fixed_u: str | None = None,
                 disallow_y: tuple = ()) -> dict:
+    from pilot.audio.attribution import repair_cached_audio
+    from pilot.facts import clean_platform_timeline,form_evidence,writing_timeline
+    audio=repair_cached_audio(audio)
+    tl=writing_timeline(clean_platform_timeline(tl),inputs.get('G') or (led or {}).get('uploader_text') or '') if tl else tl
     title = (led or {}).get("title") or inputs.get("C") or ""
     f1, fl1 = FD.ledger_fields(inputs, led)
     f2, notes, fl2 = FD.page_fields(led, rules)
@@ -117,12 +121,17 @@ def process_row(inputs: dict, led: dict | None, tl: dict | None, rules: dict, sy
         flags.append(FD.flag("yellow", f"X：有推广口播（{'、'.join(dict.fromkeys(k for p in promo for k in p['kinds']))}），"
                                        "画面上没有网盘、群号等旁证，X 暂按否，请核对（D-061）"))
     lines = FD.time_lines(tl, fields, y) + (promo_lines if fields.get("X", {}).get("value") != FD.NO else []) + notes + [x for x in (FD.episode_note(title),) if x]
-    sections, removed = filter_ac(data.get("AC") or {}, fields, tl)
-    fields["AC"] = FD._f(A.assemble(sections, lines), "model+code", "四段由 GLM 写，【其他】只由代码填（D-077）")
+    sections, removed = filter_ac(data.get("AC") or {}, fields, tl,support=form_evidence(tl,audio))
+    sections=SD.audio_sections(sections,audio,y)
+    assembled=A.assemble(sections,lines)
+    if fields.get('Z',{}).get('value') in ('高','中','低','不涉及'):
+        assembled=sync_z_opinion(assembled,fields['Z']['value'])
+    fields["AC"] = FD._f(assembled, "model+code", "四段由 GLM 写，【其他】只由代码填（D-077）；Z 等级同步")
     return {"fields": fields, "flags": flags, "evidence": data.get("evidence") or [], "calls": res["calls"],
             "errors": res["errors"], "prompt": res["prompt"], "z_basis": data.get("Z_basis"),
             "sound": {"music": music, "uploader_speech": res["speech"], "promotions": promo},
-            "ac_removed": removed, "ac_code_lines": lines, "owner_feedback_version": "D-077-1"}
+            "ac_removed": removed, "ac_code_lines": lines,
+            "speech_evidence": (audio or {}).get("uploader_speech_evidence", []), "owner_feedback_version": "D-077-1"}
 
 
 def save(result: dict, path: Path) -> None:

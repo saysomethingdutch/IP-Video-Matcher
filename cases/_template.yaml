@@ -102,3 +102,15 @@ visual:
 
 cache:
   adopt_existing: false  # true only when verified old outputs predate integration manifests.
+
+# WO-108: drafting/review defaults for a new case. An adapter reads these values.
+drafting:
+  facts_only: true  # Describe observed content; no defensive or speculative language.
+  separate_code_facts: true  # Store program facts and model prose in separate fields.
+  visual_facts: two_provider_agreement  # Single-provider descriptions are not facts.
+  require_timed_evidence: true  # Non-default values need recording time + quote/image.
+review:
+  fixed_values: {}  # column -> allowed values; shared fixedSelect renders a dropdown.
+  alternatives: {}  # ambiguous category -> prepared versions; Owner click applies.
+  text_sync: {}  # changed column -> associated text field + synchronizer.
+  batch_cleanup: preview_then_confirm  # Never automatically clean Owner-written text.

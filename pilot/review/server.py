@@ -97,6 +97,8 @@ def serve(case: Path, port: int = 8765, config=None, store=None):
                 return self.send_file(STATIC / ("tsxk.html" if tsxk else "index.html"))
             if tsxk and path in ("/static/tsxk.js", "/static/tsxk.css"):
                 return self.send_file(STATIC / path.removeprefix("/static/"))
+            if path == "/static/components.js":
+                return self.send_file(STATIC / "components.js")
             if path == "/static/app.js":
                 return self.send_file(STATIC / "app.js")
             if path == "/static/style.css":
@@ -172,6 +174,12 @@ def serve(case: Path, port: int = 8765, config=None, store=None):
                 elif path == '/api/opinion-preview' and tsxk:
                     from pilot.tsxk.ac_filter import sync_z_opinion
                     old=str(payload['AC']);answer={'AC':sync_z_opinion(old,str(payload['Z']))}
+                elif path in ('/api/batch-preview','/api/batch-apply'):
+                    if not self.local_request():return self.send_error(403)
+                    from .batch import preview,apply
+                    if path.endswith('preview'):answer=preview(store,payload.get('items'))
+                    else:answer=apply(store,payload.get('items'),delegate=payload.get('delegate'),
+                        confirmed=payload.get('confirmed'),preview_token=payload.get('token'))
                 elif path == "/api/batch":
                     if tsxk:
                         return self.send_error(404)

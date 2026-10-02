@@ -41,9 +41,10 @@ function listPage(){
   const categories=[...new Set(rows.map(r=>r.category))].sort();
   const visible=rows.filter(r=>(filters.flag==='all'||(filters.flag==='focus'&&r.priority_unreviewed)||(filters.flag==='red'&&r.red>0)||(filters.flag==='technical'&&r.technical>0))&&(filters.state==='all'||r.reviewed<r.total)&&(filters.category==='all'||r.category===filters.category)&&(!filters.query||`${r.row_id} ${r.title}`.toLowerCase().includes(filters.query.toLowerCase())));
   app.innerHTML=`<div class="pagehead"><div><h1>沈瑞曦 · 7813–8212</h1><p>逐列核对机器值；未核验的列导出时仍用机器值。</p></div><div class="count">当前显示 ${visible.length} / ${rows.length} 行</div></div>
-    <p><button type="button" id="cleanup-preview">查看已核行【其他】清理清单</button> <span class="muted">查看不修改；确认后才记录为你的修改。</span></p><div class="filters"><label>提示 <select id="flag-filter"><option value="all">全部</option><option value="focus">待核重点</option><option value="red">有标红</option><option value="technical">有技术说明</option></select></label><label>核验 <select id="state-filter"><option value="all">全部</option><option value="unreviewed">只看未核验</option></select></label><label>类别 <select id="category-filter"><option value="all">全部类别</option>${categories.map(c=>`<option value="${esc(c)}">${esc(c)}</option>`).join('')}</select></label><label>搜索 <input id="query-filter" value="${esc(filters.query)}" placeholder="序号或标题"></label></div>
+    <p><button type="button" id="cleanup-preview">查看已核行【其他】清理清单</button> <span class="muted">查看不修改；确认后才记录为你的修改。</span></p><p><button type="button" id="batch-delegation">Owner 代办 · 导入修改清单</button></p><div class="filters"><label>提示 <select id="flag-filter"><option value="all">全部</option><option value="focus">待核重点</option><option value="red">有标红</option><option value="technical">有技术说明</option></select></label><label>核验 <select id="state-filter"><option value="all">全部</option><option value="unreviewed">只看未核验</option></select></label><label>类别 <select id="category-filter"><option value="all">全部类别</option>${categories.map(c=>`<option value="${esc(c)}">${esc(c)}</option>`).join('')}</select></label><label>搜索 <input id="query-filter" value="${esc(filters.query)}" placeholder="序号或标题"></label></div>
     <div class="tablewrap"><table><thead><tr><th>序号</th><th>视频标题</th><th>类别</th><th>核验</th><th>提示</th></tr></thead><tbody>${visible.map(r=>`<tr><td><a href="/row/${r.row_id}">${r.row_id}</a></td><td><a href="/row/${r.row_id}">${esc(r.title||'（无标题）')}</a></td><td>${esc(r.category)}</td><td>${r.reviewed}/${r.total} ${esc(r.status)}</td><td>${pills(r)}</td></tr>`).join('')}</tbody></table></div>`;
   document.getElementById('cleanup-preview').onclick=cleanupPage;
+  document.getElementById('batch-delegation').onclick=()=>{current=null;ReviewComponents.batchPage(app,api,()=>{reloadRows().then(listPage)});watchRowLayout()};
   document.getElementById('cleanup-preview').textContent='查看已核行清理与一致性修改清单';
   watchRowLayout();
   for(const [id,key] of [['flag-filter','flag'],['state-filter','state'],['category-filter','category']]){const node=document.getElementById(id);node.value=filters[key];node.onchange=()=>{filters[key]=node.value;listPage()}}
@@ -85,17 +86,15 @@ function fieldHTML(f){
   const focus=f.flag_reasons.length?`<div class="reasons">${f.flag_reasons.map(x=>`<p><b>重点：</b>${esc(x)}</p>`).join('')}</div>`:'';
   const technical=f.technical_reasons.length?`<details class="technical"><summary>技术说明（${f.technical_reasons.length}）</summary>${f.technical_reasons.map(x=>`<p>${esc(x)}</p>`).join('')}</details>`:'';
   const retain=f.flag_level?`<div class="retain"><label><input type="checkbox" data-retain ${f.retain_mark?'checked':''}>导出时保留标记</label><textarea data-mark-note rows="2" placeholder="保留标记时填写所有者说明">${esc(f.mark_note||'')}</textarea>${f.reviewed?'<button type="button" data-action="mark">保存导出标记</button>':''}</div>`:'';
-  return `<section class="field ${f.invalid_value?'red':!f.reviewed?esc(f.flag_level||''):''}" data-col="${f.column}"><div class="fieldtop"><h3>${f.column} · ${esc(f.name)}</h3><span class="state">${state}</span></div>${f.invalid_value?'<p class="invalid-value">当前值不合规，请从下拉框重选并保存。</p>':''}${focus}${technical}<details><summary>机器值与依据</summary><div class="machine">${esc(f.machine_value||'（空）')}</div><p class="muted">${source}；${esc(f.basis||'未给依据')}</p></details>${ac?`<div class="ac-sections">${f.sections.map(s=>`<div class="ac-section"><label>${esc(s.heading)}<textarea data-ac-heading="${esc(s.heading)}">${esc(s.text)}</textarea></label>${["【新增创作要素情况】","【其他】"].includes(s.heading)?`<div class="ac-item-buttons" data-item-heading="${esc(s.heading)}">${listItems(s.text).map((item,i)=>`<p><span>${i+1}. ${esc(item)}</span><button type="button" data-delete-item="${i}" data-delete-heading="${esc(s.heading)}" aria-label="删除${esc(s.heading)}第${i+1}条">删除此条</button></p>`).join('')}</div>`:''}</div>`).join('')}</div>`:f.options?`<select data-value="${f.column}" aria-label="${esc(f.column)} ${esc(f.name)}">${f.invalid_value?`<option value="" disabled selected>请选择（当前：${esc(f.value)}）</option>`:''}${f.options.map(v=>`<option value="${esc(v)}" ${v===f.value?'selected':''}>${esc(v)}</option>`).join('')}</select>`:`<textarea data-value="${f.column}" rows="${Math.max(2,Math.min(5,Math.ceil(f.value.length/70)))}">${esc(f.value)}</textarea>`}${retain}<div class="fieldactions"><button type="button" data-action="approve">批准当前值</button><button type="button" data-action="modify">保存修改</button><small>${f.reviewer?`${esc(f.reviewer)} · ${esc(f.reviewed_at)}`:''}</small></div></section>`
+  return `<section class="field ${f.invalid_value||f.evidence_missing?'red':!f.reviewed?esc(f.flag_level||''):''}" data-col="${f.column}"><div class="fieldtop"><h3>${f.column} · ${esc(f.name)}</h3><span class="state">${state}</span></div>${f.invalid_value?'<p class="invalid-value">当前值不合规，请从下拉框重选并保存。</p>':''}${focus}${technical}<details><summary>机器值与依据</summary><div class="machine">${esc(f.machine_value||'（空）')}</div><p class="muted">${source}；${esc(f.basis||'未给依据')}</p></details>${ReviewComponents.evidence(f)}${ac?`<div class="ac-sections">${f.sections.map(s=>`<div class="ac-section"><label>${esc(s.heading)}<textarea data-ac-heading="${esc(s.heading)}">${esc(s.text)}</textarea></label>${["【新增创作要素情况】","【其他】"].includes(s.heading)?`<div class="ac-item-buttons" data-item-heading="${esc(s.heading)}">${listItems(s.text).map((item,i)=>`<p><span>${i+1}. ${esc(item)}</span><button type="button" data-delete-item="${i}" data-delete-heading="${esc(s.heading)}" aria-label="删除${esc(s.heading)}第${i+1}条">删除此条</button></p>`).join('')}</div>`:''}</div>`).join('')}</div>`:f.options?`${ReviewComponents.fixedSelect(f.options,f.value,`data-value="${f.column}" aria-label="${esc(f.column)} ${esc(f.name)}"`)}`:`<textarea data-value="${f.column}" rows="${Math.max(2,Math.min(5,Math.ceil(f.value.length/70)))}">${esc(f.value)}</textarea>`}${retain}<div class="fieldactions"><button type="button" data-action="approve">批准当前值</button><button type="button" data-action="modify">保存修改</button><small>${f.reviewer?`${esc(f.reviewer)} · ${esc(f.reviewed_at)}`:''}</small></div></section>`
 }
 function viewCountHTML(view){
   if(!view)return '';
   const value=view.value === '' ? '待核' : String(view.value);
   return `<section class="field views-card" id="view-count" aria-label="AD 播放量"><div class="fieldtop"><h3>AD · 播放量</h3><span class="state">${view.reviewed?'已确认':'待确认'}</span></div><p class="views-value">${esc(value)}</p><p class="muted">页面读数：${esc(view.raw||'未读到')}${view.reviewed?' · 所有者已确认':''} · 随工作簿副本导出</p>${view.crop_url?`<details><summary>查看播放量截图</summary><a href="${esc(view.crop_url)}" target="_blank" rel="noopener"><img class="views-crop" src="${esc(view.crop_url)}" loading="lazy" alt="本行标题下方的播放量截图"></a></details>`:''}</section>`;
 }
-function alternativeHTML(alt){
-  if(!alt?.eligible)return '';
-  return `<div class="alternative-block"><button type="button" id="apply-alternative" ${alt.ready?'':'disabled'}>${alt.ready?'改判单IP混剪（换用备好的版本）':'备用版生成中'}</button>${alt.ready?`<details><summary>预览备用版</summary><p>Y：${esc(alt.values.Y)} · U：${esc(alt.values.U)} · V：${esc(alt.values.V)} · Z：${esc(alt.values.Z)}</p><pre>${esc(alt.values.AC)}</pre></details>`:''}</div>`;
-}
+function alternativeHTML(alt){return ReviewComponents.alternative(alt,'改判单IP混剪（换用备好的版本）')}
+
 async function applyAlternative(){
   if(app.querySelector('.field[data-dirty="1"]')){notify('先保存当前修改，再换用备用版');return}
   const who=actor.value.trim();if(!who||who==='WO104 临时试跑'){actor.focus();notify('请先填写自己的核验人名字');return}
@@ -111,7 +110,7 @@ async function previewOpinion(input){
   const card=app.querySelector('.field[data-col="AC"]'),zCard=input.closest('.field'),rid=current.row_id,z=input.value,sequence=++opinionSequence;
   const button=zCard.querySelector('[data-action="modify"]');button.disabled=true;zCard.dataset.previewPending='1';
   try{
-    const result=await api('/api/opinion-preview',{method:'POST',body:JSON.stringify({AC:fieldValue(card,'AC'),Z:z})});
+    const result=await ReviewComponents.syncText(api,'/api/opinion-preview',fieldValue(card,'AC'),z,{text:'AC',grade:'Z'});
     if(current?.row_id!==rid||sequence!==opinionSequence)return;
     const opinion=result.AC.split('【比对意见】')[1]?.split('【其他】')[0]?.trim();
     const node=card.querySelector('[data-ac-heading="【比对意见】"]');
@@ -125,7 +124,7 @@ function rowPage(d){current=d;const pos=rows.findIndex(r=>r.row_id===d.row_id);c
     ${rowToolsHTML(d,before,after,focusFlags)}
     ${focusFlags.length?`<div class="flagbox"><b>重点核对</b>${focusHTML(focusFlags)}</div>`:''}
     ${technicalFlags.length?`<details class="flagbox technical"><summary>技术说明（${technicalFlags.length}，不标色）</summary>${technicalFlags.map(f=>`<p>${esc(f.reason)} <small>${esc(f.columns.join('、'))}</small></p>`).join('')}</details>`:''}
-    <div class="review-grid">${evidenceHTML(d)}<div><section class="panel"><h2>机器填值与逐列核验</h2><p class="muted">批准或保存修改会立即写入本地追加记录。AC 分五段编辑，导出时合为一个单元格。</p><div class="fields">${d.fields.map(fieldHTML).join('')}${viewCountHTML(d.view_count)}</div></section><section class="panel"><h2>修改与批准记录</h2>${d.history.length?`<div class="history">${d.history.map(e=>`<p><b>${esc(e.field)}</b> ${esc(e.action==='modify'?'修改':e.action==='mark'?'导出标记':'批准')} · ${esc(e.who)} · ${esc(e.when)}${e.retain_mark?' · 保留标记：'+esc(e.mark_note):''}<br>${esc(e.old)} → ${esc(e.new)}</p>`).join('')}</div>`:'<p class="muted">尚无记录</p>'}</section></div></div>`;
+    <div class="review-grid">${evidenceHTML(d)}<div><section class="panel"><h2>机器填值与逐列核验</h2><p class="muted">批准或保存修改会立即写入本地追加记录。AC 分五段编辑，导出时合为一个单元格。</p><div class="fields">${d.fields.map(fieldHTML).join('')}${viewCountHTML(d.view_count)}</div></section><section class="panel"><h2>修改与批准记录</h2>${d.history.length?`<div class="history">${d.history.map(e=>`<p><b>${esc(e.field)}</b> ${esc(e.action==='modify'?'修改':e.action==='mark'?'导出标记':'批准')} · ${esc(e.who)} · ${esc(e.when)}${e.retain_mark?' · 保留标记：'+esc(e.mark_note):''}${e.delegate?' · 代办人：'+esc(e.delegate):''}${e.reason?' · 理由：'+esc(e.reason):''}<br>${esc(e.old)} → ${esc(e.new)}</p>`).join('')}</div>`:'<p class="muted">尚无记录</p>'}</section></div></div>`;
   watchRowLayout();
   const yCard=app.querySelector('.field[data-col="Y"]');yCard.querySelector('.fieldactions').insertAdjacentHTML('beforebegin',alternativeHTML(d.alternative));
   const altButton=document.getElementById('apply-alternative');if(altButton&&d.alternative?.ready)altButton.onclick=applyAlternative;
@@ -149,8 +148,7 @@ async function deleteItem(button){
   const card=button.closest('.field'),heading=button.dataset.deleteHeading;
   if(card.dataset.dirty==='1'){notify('先保存现有修改，再删除条目');return}
   const node=[...card.querySelectorAll('[data-ac-heading]')].find(n=>n.dataset.acHeading===heading);
-  const items=listItems(node.value);items.splice(Number(button.dataset.deleteItem),1);
-  node.value=items.length?items.map((x,i)=>`${i+1}.${x}`).join('\n'):(heading==='【新增创作要素情况】'?'无':'');
+  node.value=ReviewComponents.removeItem(node.value,Number(button.dataset.deleteItem))||(heading==='【新增创作要素情况】'?'无':'');
   card.dataset.dirty='1';await saveField(card,'modify');
 }
 async function cleanupPage(){

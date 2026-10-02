@@ -88,6 +88,8 @@ def examples_text(guide: list[dict], colleague: list[str]) -> str:
 
 def facts_text(inputs: dict, led: dict | None, tl: dict | None, fixed: dict, hints: dict, audio: dict | None = None,
                music: dict | None = None) -> str:
+    from pilot.facts import writing_timeline
+    tl=writing_timeline(tl,inputs.get('G') or (led or {}).get('uploader_text') or '')
     title = (led or {}).get("title") or inputs.get("C") or ""
     lines = [f"【视频标题】{title}", f"【UP主】{inputs.get('G') or '未知'}"]
     led = led or {}
@@ -113,8 +115,9 @@ def facts_text(inputs: dict, led: dict | None, tl: dict | None, fixed: dict, hin
             if f.get("ignored"):                   # outside the actual playback, or B站's login popup
                 continue
             answers = ((f.get("cloud") or {}).get("answers") or {}).values()
-            why = "；".join(dict.fromkeys(a["why"].replace("解说字幕", "字幕") for a in answers
-                       if a and a.get("why") and "剧场版" not in a["why"] and a.get("content") == f.get("content")))
+            from pilot.facts import description
+            why = description(f).replace("解说字幕", "字幕")
+            if '剧场版' in why:why=''
             if why and why not in seen:
                 seen.add(why)
                 notes.append(f"{mmss(f['t'])} {why}")

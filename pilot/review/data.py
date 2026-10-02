@@ -94,7 +94,7 @@ def load_json(path: Path):
 
 
 class ReviewStore:
-    def __init__(self, case: Path, config=None):
+    def __init__(self, case: Path, config=None, decisions_path=None):
         self.case = Path(case).resolve()
         self.rows = {x["row_id"]: x for x in (json.loads(line) for line in (self.case / "ledger.jsonl").read_text(encoding="utf-8").splitlines())}
         self.row_ids = config.row_ids if config else [str(n) for n in range(1051, 1220)]
@@ -110,7 +110,7 @@ class ReviewStore:
         self.headers, self.source_rows = read_source(self.source_path, self.sheet_name, source_rows,
                                                     max(36, *self.output_columns),
                                                     source_rows if config and config.raw["workbook"].get("blind_holdout") else None)
-        self.decisions_path = self.case / "review" / "decisions.jsonl"
+        self.decisions_path = Path(decisions_path) if decisions_path else self.case / "review" / "decisions.jsonl"
         self.lock = threading.RLock()
         self.decisions: dict[str, dict] = {rid: {"status": "待核", "edits": {}, "modified": []} for rid in self.rows}
         if self.decisions_path.exists():

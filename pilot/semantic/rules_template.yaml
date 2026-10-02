@@ -1,0 +1,14 @@
+# New cases must customize the guidance and default values before inference.
+work: {title: 作品名}
+drafting:
+  facts_only: true
+  banned_language: ['不据此认定', '未检测到UP主', '变体']
+  model_sections: [主题概括, 段落情节, 新增创作要素, 比对意见]
+  program_sections: [其他]
+  visual_fact_policy: two_provider_agreement_or_local_evidence
+review_defaults: {}  # Web-recording evidence adapter: logical column → default value.
+review:
+  require_timed_evidence: true
+  fixed_values: {}
+  ambiguous_categories: {}  # Prepare alternatives instead of forcing an uncertain choice.
+  batch_changes: {requires_confirmation: true, old_value_mismatch: skip, log_delegate_and_reason: true}

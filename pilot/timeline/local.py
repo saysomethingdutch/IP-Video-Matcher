@@ -114,7 +114,8 @@ class Screen:
                 platforms.add(p)
                 kinds.add("网盘二维码" if any(d in host for d in self.tr["other_domains"]) else "二维码")
                 evidence.append(f"二维码：{host or '未能解码'}")
-        text = " ".join(i["text"] for i in items if not any(w in i["text"] for w in self.ignore))
+        from pilot.facts import platform_kind
+        text = " ".join(i["text"] for i in items if not any(w in i["text"] for w in self.ignore) and not platform_kind(i['text']))
         for m in self.url.finditer(text):
             p = self.platform_of_domain(domain(m.group(0)))
             if p:
@@ -216,6 +217,7 @@ class Screen:
             local["traffic"] = tr
             local["evidence"] += tr["evidence"]
         frame["local"] = local
+        frame['ocr_items'] = [dict(i) for i in items if i.get('conf',1)>=.3]
         frame["ocr"] = [i["text"] for i in items if i.get("conf", 1) >= 0.3]
         frame["captions"] = [i["text"] for i in items if i["y"] + i["h"] / 2 >= 0.72 and len(CJK.findall(i["text"])) >= 4
                              and not self.logo_like(i["text"]) and not READING.search(i["text"])

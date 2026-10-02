@@ -271,7 +271,7 @@ def run_video(video: Path, out_dir: Path, rules: dict, *, row: str | None = None
               "flags": flags, "calls": calls, "usage": usage, "seconds": round(time.monotonic() - t0, 1),
               "prompt_digest": digest, "calls_cached": sum(1 for f in send + probes if (f.get("cloud") or {}).get("cached")),
               "frames": [{k: f.get(k) for k in ("t", "v", "content", "form", "source", "traffic", "kinds", "face", "text",
-                                                "dup_of", "ignored", "ocr", "captions", "music_tag", "lyric", "ai_note",
+                                                "dup_of", "ignored", "ocr", "ocr_items", "captions", "music_tag", "lyric", "ai_note",
                                                 "reading", "local", "cloud")}
                          for f in frames]}
     result_path.write_text(json.dumps(result, ensure_ascii=False, indent=1), encoding="utf-8")

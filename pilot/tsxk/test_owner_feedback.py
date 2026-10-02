@@ -103,7 +103,13 @@ def test_cleanup_requires_explicit_owner_confirmation_and_no_stale_token(tmp_pat
     _, config, data = fixture(tmp_path)
     store = TsxkReviewStore(TsxkCase(config), decisions_path=tmp_path/'decisions.jsonl')
     text = assemble({'主题概括':'打斗。', '新增创作要素':['音乐'], '其他':['模型说明']}, ['录屏未显示简介区'])
-    store.decide('7813', 'modify', {'AC': text}, actor='Owner')
+    # An approved machine draft is eligible for a cleanup proposal; text the
+    # owner has manually modified is protected (covered by test_lessons).
+    path = data/'rows/7813.json'
+    row = json.loads(path.read_text())
+    row['fields']['AC']['value'] = text
+    path.write_text(json.dumps(row, ensure_ascii=False))
+    store.decide('7813', 'approve', {'AC': text}, actor='Owner')
     before = store.decisions_path.read_bytes()
     proposal = store.cleanup_preview()
     assert proposal['row_count'] == proposal['sentence_count'] == 1

@@ -7,11 +7,11 @@ import re
 from .ac import HEADINGS, assemble
 
 BANNED = re.compile(r"剧场版|血洛|原始星|结束页|重播|连播|推荐(?:界面|页|卡片|列表)|播放器界面|登录框|"
-                    r"未能判定|无法确认|难以认定|依据不足|不据此|未据此|不计入|不判为|不认定|"
+                    r"未检测到\s*UP\s*主|变体|未能判定|无法确认|难以认定|依据不足|不据此|未据此|不计入|不判为|不认定|"
                     r"非\s*UP\s*主新增|属平台|水印|建议核实|需注意|如经|若经|不按.{0,12}(?:处理|认定)|不影响类别认定|未检出UP主|非其他作品内容", re.I)
 SENTENCES = re.compile(r"[^。！？!?\n]+[。！？!?]?")
 CLAUSES = re.compile(r"[^，,；;。！？!?\n]+[，,；;。！？!?]?")
-CODE_OTHER = re.compile(r"^(?:录屏未显示(?:标签|简介)区|标题标注第\d+集|\d+:\d+(?::\d+)?(?:[-–]\d+:\d+(?::\d+)?)?(?:为无关内容|为《吞噬星空》|出现))")
+CODE_OTHER = re.compile(r"^(?:录屏未显示(?:标签|简介)区|标题标注第\d+集|\d+:\d+(?::\d+)?(?:[-–]\d+:\d+(?::\d+)?)?(?:为无关内容|为《[^》]+》|为引流画面|为UP主自制画面|为黑屏或无画面|出现))")
 
 
 def items(text: str) -> list[str]:
@@ -25,7 +25,7 @@ def parse(text: str) -> dict:
             for k, h in HEADINGS}
 
 
-def filter_ac(sections: dict, fixed: dict | None = None, timeline: dict | None = None) -> tuple[dict, list[dict]]:
+def filter_ac(sections: dict, fixed: dict | None = None, timeline: dict | None = None, *, support=None) -> tuple[dict, list[dict]]:
     out, removed = deepcopy(sections), []
     for key in ("主题概括", "段落情节", "新增创作要素", "比对意见", "其他"):
         listed = key in ("新增创作要素", "其他")
@@ -33,6 +33,9 @@ def filter_ac(sections: dict, fixed: dict | None = None, timeline: dict | None =
         keep = []
         for chunk in chunks:
             why = "模型不填写其他" if key == "其他" else ("禁用说法" if BANNED.search(chunk) else "")
+            if support is not None and key != '其他':
+                from pilot.facts import supported_clause
+                if not supported_clause(chunk,support):why='没有程序确认的形式依据'
             if key == "新增创作要素" and fixed is not None:
                 if re.search(r"引流|广告|导流|带货|推广", chunk) and fixed.get("X", {}).get("value") == "否":
                     why = "X 未确认"
@@ -63,7 +66,10 @@ def sync_z_opinion(text: str, z: str) -> str:
     replacement = '合理使用判断不涉及' if z == '不涉及' else '合理使用可能性为' + ('中等' if z == '中' else z)
     for i in range(1, len(parts)-1, 2):
         if parts[i] == '【比对意见】':
-            parts[i+1] = Z_WORDS.sub(replacement, parts[i+1])
+            def substitute(match):
+                old=next((grade for grade in ('不涉及','高','中','低') if grade in match.group()),None)
+                return match.group() if old==z else replacement
+            parts[i+1] = Z_WORDS.sub(substitute, parts[i+1])
     return ''.join(parts)
 
 

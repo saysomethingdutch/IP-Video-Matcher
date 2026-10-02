@@ -170,8 +170,11 @@ class TsxkReviewStore:
         return self.config.webledger(rid)
 
     def flags(self, rid: str, machine: dict | None = None, ledger: dict | None = None) -> list[dict]:
-        return normalize_flags(machine if machine is not None else self.machine(rid),
-                               ledger if ledger is not None else self.ledger(rid), self.audit.get(rid))
+        machine=machine if machine is not None else self.machine(rid)
+        base=normalize_flags(machine,ledger if ledger is not None else self.ledger(rid),self.audit.get(rid))
+        missing=[f for f in self.fields(rid,machine,base) if f.get('evidence_missing')]
+        return base+[{'level':'red','tier':'focus','columns':[f['column']],
+                      'reason':f['column']+'：非默认值缺少时间点和原话/画面依据','source':'依据核验'} for f in missing]
 
     def fields(self, rid: str, machine: dict | None = None, flags: list[dict] | None = None) -> list[dict]:
         machine = machine if machine is not None else self.machine(rid)
@@ -207,7 +210,16 @@ class TsxkReviewStore:
                            "flag_details": [{"level": x["level"], "reason": x["reason"]} for x in focus],
                            "sections": parse_ac(final) if col == "AC" else None,
                            "options": options, "invalid_value": invalid})
-        return result
+        from .evidence import attach_evidence
+        timeline=self._timeline(rid) or {}
+        audio=self._load(self.case/'audio'/f'{rid}.json') or {}
+        def thumbnail(t):
+            f=min((f for f in timeline.get('frames',[]) if not f.get('ignored')),key=lambda f:abs(f['t']-t),default=None)
+            if not f:return None
+            name=f"{float(f['t']):08.2f}.jpg"
+            return f'/api/thumb/{rid}/{name}' if self.thumbnail_path(rid,name) else None
+        return attach_evidence(result,timeline,audio,self.ledger(rid) or {},thumbnail=thumbnail,
+            defaults=self.config.rules().get('review_defaults'))
 
     def allowed_values(self, col: str) -> list[str] | None:
         if col not in ("Q", "R", "T", "U", "V", "W", "X", "Y", "Z"):
@@ -232,7 +244,8 @@ class TsxkReviewStore:
                 if not event:
                     continue
                 current = str(event["new"])
-                replacement, removed = cleanup_other(current)
+                owner_written=any(e['field']=='AC' and e['action']=='modify' for e in self.events[rid])
+                replacement,removed=(current,[]) if owner_written else cleanup_other(current)
                 fields = {f['column']:f for f in self.fields(rid)}
                 final = {c:f['value'] for c,f in fields.items()}
                 fixes = {}

@@ -18,6 +18,9 @@ into AC【其他】 with its time and flags it when the picture shows no drive l
 """
 from __future__ import annotations
 
+from copy import deepcopy
+import re
+
 from pilot.textindex.text import normalize
 
 MUSIC_TAGS = ("BGM", "Music")
@@ -160,3 +163,28 @@ def section(audio: dict | None, music: dict) -> str:
         "（只有原片画面加纯音乐，不能证明是 UP 主加的）" if verdict == "无旁证" and music["series_music_seconds"] else "")
     parts.append(f"疑似UP主配乐：{verdict}{why}")
     return "【声音】" + "；".join(parts)
+
+
+def audio_sections(sections, audio, y=None):
+    """Correct contrary absence claims only when cached speech is confirmed.
+
+    A missing ASR attribution does not disprove narration in an existing draft.
+    New voice facts remain separate; unsupported claims are exposed in review.
+    """
+    sections = deepcopy(sections)
+    if not (audio or {}).get('uploader_speech'):
+        return sections
+    from .ac_filter import CLAUSES
+    creative = []
+    for item in sections['新增创作要素']:
+        chunks = CLAUSES.findall(item)
+        kept = [c for c in chunks if not re.search(r'(?:未检测到|未检出|没有|无).*(?:配音|口播|人声)', c)]
+        text = ''.join(kept)
+        if kept != chunks:
+            text = re.sub(r'[，,；;]+$', '。', text).strip()
+        if text:
+            creative.append(text)
+    sections['新增创作要素'] = creative
+    for key in ('主题概括', '段落情节', '比对意见'):
+        sections[key] = re.sub(r'仅以字幕形式呈现|仅以字幕形式|只有字幕', '以字幕和配音形式', sections[key])
+    return sections

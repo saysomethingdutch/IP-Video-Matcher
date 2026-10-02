@@ -70,3 +70,17 @@ def test_review_and_export_respect_case_column_mapping(tmp_path):
     assert filled["Case Sheet"]["AZ2"].value == "machine AJ"
     assert "机器来源" in filled.sheetnames
     filled.close()
+
+    # The reusable delegated-list adapter uses physical column names, including
+    # remapped cases, and records the delegate separately from the Owner.
+    from pilot.review.batch import preview, apply
+    items=[{'row':'17','column':'AK','old':'machine U','new':'approved duration','reason':'checked by Owner'}]
+    proposal=preview(store,items)
+    assert proposal['matched']==1
+    answer=apply(store,items,delegate='assistant',confirmed=True,preview_token=proposal['token'])
+    assert answer['applied']==1
+    assert store.detail('17')['fields'][36]['value']=='approved duration'
+    event=json.loads(store.decisions_path.read_text().splitlines()[-1])
+    assert event['field']=='37' and event['who']=='Owner 代办'
+    assert event['delegate']=='assistant' and event['reason']=='checked by Owner'
+    assert apply(store,items,delegate='assistant',confirmed=True,preview_token=proposal['token'])['applied']==0

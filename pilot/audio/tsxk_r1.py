@@ -25,7 +25,7 @@ from pilot.semantic.llm import ask
 VERSION = 'WO-103-R2-v2'
 MUSIC_FACTS_VERSION = 'r4'
 REDUB_VERSION = 'r7'
-SPEECH_POLICY_VERSION = 'r5'
+SPEECH_POLICY_VERSION = 'narration-caption-v1'
 ROLE_MODEL_SETTING = 'reasoning-low'
 OUTPUT = STATE / 'audio'
 TRANSCRIPTS = OUTPUT / 'transcripts_r1'
@@ -274,9 +274,8 @@ def redub_candidates(clauses, frames):
 
 def speech_selection(clauses, played):
     """Keep short calls to action visible without treating them as commentary."""
-    eligible = sorted((c for c in clauses if c.get('speech_type') == '旁白讲解'
-                       and c['caption_similarity'] < SPEECH_MATCH_THRESHOLD
-                       and len(re.findall(r'[\u4e00-\u9fff]', c['text'])) >= 6),
+    from .attribution import explanation_clause, continuous
+    eligible = sorted((c for c in clauses if explanation_clause(c)),
                       key=lambda c: c['recording_start'])
     groups = []
     for clause in eligible:
@@ -290,7 +289,7 @@ def speech_selection(clauses, played):
         if span <= 35 and len(PROMO.findall(''.join(c['text'] for c in group))) >= 2:
             promotions.extend(group)
     promo_ids = {id(c) for c in promotions}
-    candidates = [c for c in eligible if id(c) not in promo_ids]
+    candidates = continuous([c for c in eligible if id(c) not in promo_ids])
     seconds = sum(c['recording_end'] - c['recording_start'] for c in candidates)
     qualifies = seconds >= 10 and played > 0 and seconds / played >= .03
     return (candidates if qualifies else [], promotions,
@@ -348,7 +347,7 @@ def analyze(row, video, ledger, prior, fingerprint, model_box):
         kind = ('promotion' if clause in promotion else
                 'uploader' if clause in uploader else
                 'redub' if (clause['recording_start'], clause['recording_end']) in redub_keys else
-                'source' if clause['caption_similarity'] >= MATCH_THRESHOLD else 'uncertain')
+                'source' if clause.get('speech_type') == '角色台词' and clause['caption_similarity'] >= MATCH_THRESHOLD else 'uncertain')
         segments.append({**clause, 'start': a, 'end': b, 'timestamp_basis': basis,
                          'kind': kind, 'episode': None})
     speech = sum(c['recording_end'] - c['recording_start'] for c in chunks
