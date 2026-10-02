@@ -1,1 +1,0 @@
-"""Capture ledger pilot."""

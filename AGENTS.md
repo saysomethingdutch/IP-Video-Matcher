@@ -84,7 +84,8 @@ python3 -m pilot export cases/<案件>.yaml               # 导出 Excel 副本�
 
 ## 其他说明
 
-- `src/ipvm`、`tests/`、`benchmark/` 是早期"时间轴匹配"路线的代码，现有工具不依赖它们。早期实验目录和实验产物已删除（D-053）；要查看的话，git 历史里还有。
+- 早期"时间轴匹配"路线的代码和文档（`src/ipvm`、`benchmark/`、`docs/review/` 等）已从主干移除（D-084）。要看的话，检出标签 `early-route-final`。
+- 测试：`pytest` 一条命令跑 `tests/` 和 `pilot/` 下的全部测试。
 - OCR 程序 `pilot/bin/ocr_vision` 不进 git。缺失时，台账会用 `swiftc` 从 `pilot/tools/ocr_vision.swift` 自动编译，需要装好 Xcode 命令行工具。
 - 迁移到别的电脑：见外置盘上的发布包 `IP-Video-Matcher-release-*/MIGRATION.md`。
 
