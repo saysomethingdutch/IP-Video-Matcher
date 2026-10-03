@@ -1,4 +1,4 @@
-# WO-110 结果（2026-10-03，待 Gate 独立验收）
+# WO-110 结果（2026-10-03，D-090 有条件通过，账单待核）
 
 D-089 摸底材料保留于 `workspace/audio-exp/`。A 仅用百炼 `qwen-audio-3.1-asr-flash`，B 仅用 `qwen3.8-omni-flash`，两模型实调成功。样本种子 20261003；A 全属开发组，B 开发 38 段、工单指定的保留组 1 段。每段 24 秒，均来自吞噬星空 B 站台账内容区间。先冻结清单与预算，再上传；B 仅收音频及固定问题，A 仅收音频，无标题、字幕或热词。
 
@@ -20,6 +20,6 @@ D-089 摸底材料保留于 `workspace/audio-exp/`。A 仅用百炼 `qwen-audio-
 
 B 基线为整行 `uploader_speech` 是否非空，云端为 24 秒切片；角色组另要求判为角色对白。7815 抽中原片对白，与整行“有解说”答案口径不同；7840 被云端判为角色对白；修正规则在 8105、8204 多报口播。人数及合成判断留存原答，未设人工真值；仅开发组抽读，无保留组调参。
 
-成本：ASR 44 次、Omni 39 次，共 **83 次音频提交，失败/重试 0**，含被排除的 4 次；请求耗时合计 152.9 秒。输入/输出 Token 分别为 ASR 15,708/3,383、Omni 11,544/3,367。[官方价目](https://help.aliyun.com/zh/model-studio/model-pricing)与账号页面均为输入 0.8、输出 2.7 元/百万 Token。首轮保守预留 35.90 元，补测前另预留 0.08 元；全部调用原价估算 **0.0400266 元**。实际账单：**待出账**；15:07 查询百炼语音/全模态用量仍无明细，新版费用页未覆盖该账期，阿里云旧账单详情未加载，未取得可核对的本次实付。[服务条款](https://terms.alicdn.com/legal-agreement/terms/common_platform_service/20230728213935489/20230728213935489.html)约定按指令处理、最小必要保存及未经授权不训练，未列固定保存天数。
+成本：ASR 44 次、Omni 39 次，共 **83 次音频提交，失败/重试 0**，含被排除的 4 次；请求耗时合计 152.9 秒。输入/输出 Token 分别为 ASR 15,708/3,383、Omni 11,544/3,367。[官方价目](https://help.aliyun.com/zh/model-studio/model-pricing)与账号页面均为输入 0.8、输出 2.7 元/百万 Token。首轮保守预留 35.90 元，补测前另预留 0.08 元；全部调用原价估算 **0.0400266 元**。账单补验：**待出账**。15:29 查询（时间窗 09:29–15:29、账期 2026-10）：平台 ASR 40 次、17,358 Token，Omni 39 次、14,911 Token，合计 79 次、32,269 Token，与本地前 79 次逐项吻合；后补 4 次、1,733 Token 未显示。费用概览 ¥0 无本实验逐项明细，实付及免费额度抵扣均未核齐；本轮已停止查询。[服务条款](https://terms.alicdn.com/legal-agreement/terms/common_platform_service/20230728213935489/20230728213935489.html)约定按指令处理、最小必要保存及未经授权不训练，未列固定保存天数。
 
-产物均在 `workspace/audio-exp/`：[汇总](/Users/lestersun/IP-Video-Matcher/workspace/audio-exp/results-summary.json)、[全部上传清单](/Users/lestersun/IP-Video-Matcher/workspace/audio-exp/final-upload-manifest.csv)、[逐次调用](/Users/lestersun/IP-Video-Matcher/workspace/audio-exp/calls.jsonl)、[参照核查](/Users/lestersun/IP-Video-Matcher/workspace/audio-exp/final-ocr-review.json)、[账单查询出处](/Users/lestersun/IP-Video-Matcher/workspace/audio-exp/billing-observation.json)、[pytest](/Users/lestersun/IP-Video-Matcher/workspace/audio-exp/pytest-final.log)。347 项通过；正式行文件及核验存储哈希未变，后台任务和子进程已退出。分支 `pilot/wo-110-audio`；未改生产、未 push，生产接入由 Gate/所有者另定。
+产物均在 `workspace/audio-exp/`：[汇总](/Users/lestersun/IP-Video-Matcher/workspace/audio-exp/results-summary.json)、[全部上传清单](/Users/lestersun/IP-Video-Matcher/workspace/audio-exp/final-upload-manifest.csv)、[逐次调用](/Users/lestersun/IP-Video-Matcher/workspace/audio-exp/calls.jsonl)、[参照核查](/Users/lestersun/IP-Video-Matcher/workspace/audio-exp/final-ocr-review.json)、[账单查询出处](/Users/lestersun/IP-Video-Matcher/workspace/audio-exp/billing-followup-20261003-1529.json)、[pytest](/Users/lestersun/IP-Video-Matcher/workspace/audio-exp/pytest-final.log)。347 项通过；正式行文件及核验存储哈希未变，后台任务和子进程已退出。分支 `pilot/wo-110-audio`；未改生产、未 push，生产接入由 Gate/所有者另定。
