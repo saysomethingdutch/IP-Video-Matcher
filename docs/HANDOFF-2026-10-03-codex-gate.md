@@ -1,5 +1,7 @@
 # 交接：Codex 临时担任 Owner/Gate（2026-10-03）
 
+> 2026-10-15 起 Codex 正式担任 Gate，新的交接见 `docs/HANDOFF-2026-10-15-codex-gate.md`（D-092）。本文第 4–6 节（规矩、验收清单、关键位置）仍然有效。
+
 写给接手的 Codex。之前的 Owner/Gate 是 Claude（2026-09-23 起）。从现在起由你临时担任，直到所有者另行安排（DECISIONS D-085）。
 
 先读：本文 → `AGENTS.md` → `docs/workorders/DECISIONS.md` 末尾的"工单状态"和 D-077 至 D-085 → `docs/LESSONS-tsxk.md`。
