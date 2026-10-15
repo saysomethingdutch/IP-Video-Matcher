@@ -25,9 +25,10 @@
 | `cases/` | 案件配置：`qsjx.yaml`、`qsjx_4086.yaml`、`qsjx_2591.yaml`、`tsxk.yaml`（吞噬星空，格式不同，由 `pilot/tsxk/config.py` 读取）；新案子从 `_template.yaml` 复制 | 是 |
 | `docs/workorders/` | 工单、各单交付说明、`DECISIONS.md` | 是 |
 | `workspace/` | 运行产物和缓存，含声音环境 `workspace/pilot/audio_env`。**多个工作树共用主仓库的这个目录**：在工作树里给 `workspace/<案件>`、`workspace/pilot`、`models` 建软链接，不要各存一份（D-059） | 否 |
-| `models/` | 本地模型：SenseVoice、whisper | 否 |
-| `real_test/` | 原剧文件（七时吉祥 32 集） | 否 |
+| `models/` | 本地模型：SenseVoice；whisper 已搬到外置盘，原位置是符号链接（D-093） | 否 |
+| `real_test/` | 原剧文件（七时吉祥 32 集），已搬到外置盘 `IP-Video-Matcher-archive/`，原位置是符号链接（D-093） | 否 |
 | 外置盘 `/Volumes/Element/...` | 客户材料，只读，不得修改 | 否 |
+| 外置盘 `/Volumes/Element/IP-Video-Matcher-archive/` | 本项目自己的归档：大件运行产物、原剧、whisper 模型（D-093）。吞噬星空的取证录屏已由所有者删除 | 否 |
 
 ## 怎么跑
 
